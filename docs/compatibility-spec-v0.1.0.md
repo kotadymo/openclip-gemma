@@ -2,7 +2,7 @@
 
 - **文書ID**: EGOC-SPEC-001
 - **対象リリース**: v0.1.0
-- **状態**: Draft / M0・M0.1・M1・M1.1完了。M2のCPU画像推論を検証済み。テキスト推論は未実装
+- **状態**: Draft / M0〜M3実装完了。M3のCPU FP32/BF16統合検証済み。CUDA未検証
 - **作成日**: 2026-10-17
 - **配布パッケージ**: `openclip-gemma`
 - **対象モデル**: `google/embeddinggemma-2`
@@ -55,9 +55,9 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 | --- | --- | --- | --- |
 | `create_model` | P0 | 対応 | 単一モデル。FP32/BF16。CPU/CUDA |
 | `create_model_and_transforms` | P0 | 対応 | `(model, preprocess_train, preprocess_val)`。Tensor入力前処理 |
-| `get_tokenizer` | P0 | 条件付き | Tensor出力と順序・バッチ処理。モデル固有プレフィックス |
+| `get_tokenizer` | P0 | M3実装 | `LongTensor[B,L]`。既定はpromptなし。公式`prompt_name`を指定可能 |
 | `encode_image` | P0 | M2実装済み | `[B,3,H,W]` → `[B,768]`。CPU FP32検証済み、BF16測定済み、CUDA未検証 |
-| `encode_text` | P0 | 対応 | `[B,L]` → `[B,768]` |
+| `encode_text` | P0 | M3実装 | 公式special tokenとright-padding規約を満たす`LongTensor[B,L]` → `[B,768]` |
 | `.eval()`, `.to()`, `.cpu()`, `.cuda()` | P0 | 対応 | `nn.Module`の契約に準拠 |
 | `forward` | P1 | 現時点で実装しない | v0.1.0のP0推論APIに含めない |
 | `get_logits` | P1 | 現時点で実装しない | CLIPの学習済みlogit scaleとの混同を避ける |
@@ -74,7 +74,7 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 `EmbeddingGemmaCLIP`がTransformers backendとProcessorを保持する。
 backendのみをPyTorch子moduleとして登録し、Processorは登録しない。
 `eval()`、`to()`、`cpu()`、`cuda()`は`nn.Module`から継承する。
-M2で`encode_image()`の推論を実装した。`encode_text()`はシグネチャのみで、推論は`NotImplementedError`とする。
+M2で`encode_image()`、M3で`get_tokenizer()`と`encode_text()`を実装する。`forward()`と`get_logits()`は現時点で実装しない。
 
 ## 5. 公開パッケージ・名前空間
 
@@ -129,16 +129,24 @@ create_model_and_transforms(
 ### 5.3 `get_tokenizer`
 
 ```python
-get_tokenizer(model_name: str = "embeddinggemma-2") -> Callable
+get_tokenizer(
+    model_name: str = "embeddinggemma-2",
+    *,
+    prompt_name: str | None = None,
+    context_length: int | None = None,
+) -> EmbeddingGemmaTokenizer
 ```
 
-- 入力：`str | list[str]`。空リストも対応し、空バッチTensorを返すか例外にするかを実装テストで確定（暫定案：明示エラー）。
-- 出力：`torch.LongTensor[B,L]`、右パディングを基本とし、モデル固有のPAD/EOSに準拠。
-- **M0検証結果**：検証したモデルrevisionではPAD IDは`0`、padding sideはright。タスクpromptなし/SearchQuery/Classificationの各サンプルで、`input_ids != pad_token_id`から得たmaskが公式`attention_mask`と一致した。これは試験したtokenizer生成列についての確認であり、任意の外部token ID列での一致は保証しない。
-- タスクプレフィックスは**トークン化前に**適用。初期値は、画像とテキストの横断比較で使用する公式推奨の設定を検証した上で固定する。検証なしに`SearchQuery`や`Classification`を流用しない。
-- トークンIDをデコードして再トークン化する変換は原則禁止。トークン化とモデル入力の低レベル橋渡しを実装する。
-- プロンプト選択の変更が必要な場合、将来の拡張設定として明示的な`text_task`等を検討。v0.1.0ではトークナイザーインスタンスとモデルのプロンプト設定の整合性を最優先。
-- 注意：トークンIDだけでは任意のカスタムプレフィックスとメタデータを保存できない。必要ならトークナイザー側で完全な入力列として符号化する。
+- 入力：単一の`str`または空でない`Sequence[str]`。空文字列は受け付け、空バッチは`ValueError`。
+- 出力：`torch.LongTensor[B,L]`。`L`はそのバッチで最長のtokenized sequence長で、右側だけをPADする。OpenCLIP tokenizerの固定context長paddingとは異なる。
+- 特殊tokenは固定revisionの公式Tokenizerが付与する。確認値はPAD ID `0`、BOS ID `2`、EOS ID `1`、right padding。
+- デフォルトではタスクpromptを付けない。`prompt_name`に固定revisionのSentence Transformers設定で定義された名前（例：`"SearchQuery"`、`"Classification"`、`"Document"`）を指定すると、定義済みprefixを**トークン化前に**一度だけ付ける。未定義のprompt名は拒否し、すでに公式prefixで始まる文字列にpromptを重ねることも拒否する。
+- `context_length`は切り詰め上限であり、固定padding幅ではない。省略時はモデル設定の`text_config.max_position_embeddings=262144`を使う。TokenizerとSentence Transformersの`model_max_length`/`max_seq_length`は実用上の上限ではなく巨大な番兵値だったため採用しない。BOS/EOSを含み最低2 token必要。上限付近の長大系列による実行時メモリ・速度は未検証。
+- truncate時は公式Tokenizerの挙動を使い、試験した`context_length=16`ではBOSを維持して末尾をEOSにした。
+- **PAD IDとattention mask**：M0で試験した通常テキストでは`input_ids != 0`が公式maskと一致した。一方、公式Tokenizerは本文中の`<pad>`を有効token ID `0`として符号化する。この列はPADとpaddingをtoken IDだけで区別できないため、`get_tokenizer()`はこの入力を明示的に拒否する。`encode_text()`もPADはright-padding suffixにのみ許可し、BOS/EOSと範囲を検証する。
+- 直接構築したTensorについて、PAD ID `0`を本文tokenとして使用することはできない。token ID-onlyのAPIでは末尾PADが本文かpaddingかを判別できないため、PADを専用のpadding IDとして予約することが入力契約である。
+- Token IDをdecodeして再tokenizeすることは禁止。`encode_text()`は受け取ったIDを変更せず、復元したattention maskとともにbackendへ渡す。
+- 例：`get_tokenizer("embeddinggemma-2", prompt_name="SearchQuery")`。promptなしは`get_tokenizer("embeddinggemma-2")`。
 
 ### 5.4 `model.encode_image`
 
@@ -167,10 +175,14 @@ encode_text(text: torch.Tensor, normalize: bool = False) -> torch.Tensor
 
 - 入力：トークンID `torch.LongTensor[B,L]`。
 - 出力：`[B,768]`、finite、デバイスはモデルと一致。
-- 注意：OpenCLIPのTensor入力から、EmbeddingGemmaのattention mask、特殊トークン、タスクプロンプトの意味を再現する必要がある。
-- `get_tokenizer()`以外から渡されたTensorも正当なID範囲であれば受け付ける。ただし「プレフィックス未付与」を推測して自動修正しない。
+- Tensorはモデルと同じdevice、モデル語彙の範囲内で、各行が公式BOSで始まり、公式EOSで終わり、PAD IDはright-padding suffixにのみ存在する必要がある。列長はモデルの`max_position_embeddings`以下。
+- attention maskは`input_ids != pad_token_id`から構築する。任意の外部TensorのPAD ID本文は判別不能なため許可しない。タスクpromptは`encode_text()`では付与せず、必ずtokenizer生成時に適用する。Token IDはdecode・再tokenizeしない。
+- backendへ`input_ids`とattention maskを渡し、公式Sentence Transformers経路と同じattention-mask付きMean Poolingおよびnative L2 Normalizeを行う。
 - `normalize`規則は `encode_image` と同様。
-- **M1.1実装状態**：メソッドのシグネチャのみ定義し、推論は`NotImplementedError`。
+- **M0検証結果**：promptなし、SearchQuery、Classificationの低レベルTransformers経路は、Mean Pooling・L2 Normalize後にSentence Transformers出力と最大絶対誤差`7.9768e-7`〜`1.3069e-6`、cosine similarity約`1.0`で一致した。
+- **M3実測結果**：固定revision `914f7f89142e33e77833254d9c9b90c3cef7303b`、CPU FP32で英語・日本語・空文字列を含むbatch、promptなし/SearchQuery/Classification、`normalize=False/True`をSentence Transformersと比較した。最大絶対誤差は`1.27e-6`〜`3.99e-6`、cosine similarityは全行`>=0.9999998`で、暫定閾値を満たした。EOS special token単体も最大絶対誤差`1.20e-7`で一致した。
+- 同revisionのCPU BF16では全比較の最大絶対誤差`0.0`、cosine similarityは約`1.0`だった。これは測定結果であり、BF16正式許容閾値を定めるものではない。
+- CUDAは利用できず、統合テストはskipされた。長さ上限近くの長大系列についても実行速度・メモリの検証はしていない。
 
 ### 5.6 `forward` （P1・現時点で実装しない）
 
@@ -220,6 +232,9 @@ M0ではpromptなし/SearchQuery/Classificationのいずれも、対応する公
 | 画像TensorにNaN/Infまたは`[0,1]`範囲外値 | `ValueError` |
 | 画像Tensorとbackendのdevice不一致 | `ValueError` |
 | Token IDのdtype/shape異常 | `TypeError` / `ValueError` |
+| Token ID範囲、BOS/EOS、padding構造異常 | `ValueError` |
+| `get_tokenizer`への未知prompt、prompt二重適用、本文PAD token | `ValueError` |
+| Tokenizerへの空batch・不正型入力 | `ValueError` / `TypeError` |
 | 利用できないCUDA指定 | `RuntimeError` |
 | モデル取得・ロード失敗 | `RuntimeError`（原因を`raise ... from ...`で保持） |
 | 異なるH/Wの画像Tensorをdense batch化 | 通常の`torch.stack()`不可。padding/resizeによる自動補正は行わない |
@@ -313,18 +328,19 @@ openclip-gemma/
 - **M1**：ファクトリと画像前処理を実装。T01とT02の前処理部分を検証する。
 - **M1.1**：`EmbeddingGemmaCLIP` wrapperにbackend/Processorを保持し、標準PyTorch操作を伝播する。固定revision統合テストでモデルロード・前処理一致を確認する。
 - **M2**：`encode_image`のTensor検証、Processor feature mapping、Mean Pooling、native normalizationを実装。CPU FP32の公式一致とCPU BF16の測定を完了。CUDAは未検証。
-- **M2**：Token ID経路とテキストプロンプトの実装、T03。
-- **M3**：数値一致・バッチ・デバイス・失敗時挙動、T04–T08。
+- **M2**：`encode_image`の実装とCPU FP32/BF16検証、完了。
+- **M3**：`get_tokenizer`、公式task prompt、Attention Mask復元、`encode_text`、参照数値比較、T03/T04/T06/T07/T08。
+- **M4**：README・互換例・制限の整理、GitHub Actions、Wheel build、未検証環境の明示。
 - **M4**：READMEに互換例・制限・数値スコアの意味、GitHub Actions、Wheel build。
 - **Release v0.1.0**：P0 APIが全受入テストを満たす。P1未完了のものは明示的な非対応として公開。
 
 ## 11. 未決定事項
 
-1. テキストと画像のCLIP用途に対する既定prompt。M0の合成画像比較では選定しない。
-2. 任意の外部token ID Tensorからattention maskを復元できる範囲。M0では公式tokenizerが生成した例のみ一致を確認。
-3. 対応するTransformersの最低バージョン。M0はTransformers 5.20.1で実行。
-4. CIで実際にサポートを保証するOS / CUDA組み合わせ。Python初期対象は3.12。CUDAは未検証。
-5. P0 dense Tensor batchで異なるH/Wを扱う方法は未解決。固定サイズ化・paddingは数値的一致の検証が必要であり、現時点では導入しない。
+1. テキスト既定promptはなしとした。用途別promptを選ぶ最適方針はタスクベンチマークの対象外。
+2. token ID-only APIではPAD IDを本文に使えない制約がある。PAD IDの本文利用とpaddingを両方厳密に扱うにはattention maskを別入力とする拡張が必要。
+3. 対応するTransformersの最低バージョン。検証環境はTransformers 5.20.1。
+4. CIで実際にサポートを保証するOS / CUDA組み合わせ。Python初期対象は3.12。CUDAは実行可能な環境で検証する。
+5. P0 dense image Tensor batchで異なるH/Wを扱う方法は未解決。固定サイズ化・paddingは数値的一致の検証が必要であり、現時点では導入しない。
 
 ## 12. 情報源
 

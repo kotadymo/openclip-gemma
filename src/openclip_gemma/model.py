@@ -9,6 +9,47 @@ from torch import nn
 from torch.nn import functional as F
 
 
+def _pool_and_normalize(
+    outputs: Any,
+    attention_mask: torch.Tensor,
+    *,
+    batch_size: int,
+    normalize: bool,
+    modality: str,
+) -> torch.Tensor:
+    hidden = outputs.last_hidden_state
+    if hidden.ndim != 3 or hidden.shape[0] != batch_size:
+        raise RuntimeError(
+            f"The backend returned an invalid {modality} last_hidden_state shape: "
+            f"{tuple(hidden.shape)}."
+        )
+    if hidden.shape[-1] != 768:
+        raise RuntimeError(
+            "The backend returned an unexpected embedding dimension "
+            f"{hidden.shape[-1]}; expected 768."
+        )
+    if tuple(attention_mask.shape) != tuple(hidden.shape[:2]):
+        raise RuntimeError(
+            "attention_mask shape does not match last_hidden_state: "
+            f"{tuple(attention_mask.shape)} != {tuple(hidden.shape[:2])}."
+        )
+
+    mask = attention_mask.to(device=hidden.device, dtype=torch.bool)
+    weights = mask.unsqueeze(-1).to(dtype=hidden.dtype)
+    counts = weights.sum(dim=1)
+    if (counts == 0).any().item():
+        raise RuntimeError("The processor returned an empty attention mask.")
+    pooled = (hidden * weights).sum(dim=1) / counts
+
+    # EmbeddingGemma's Sentence Transformers pipeline includes Normalize.
+    embeddings = F.normalize(pooled, p=2, dim=-1)
+    if normalize:
+        embeddings = F.normalize(embeddings, p=2, dim=-1)
+    if not torch.isfinite(embeddings).all().item():
+        raise RuntimeError(f"The backend produced non-finite {modality} embeddings.")
+    return embeddings
+
+
 class EmbeddingGemmaCLIP(nn.Module):
     """Wrap the Transformers backend with the planned OpenCLIP-style API."""
 
@@ -111,46 +152,109 @@ class EmbeddingGemmaCLIP(nn.Module):
 
         with torch.inference_mode():
             outputs = self.backend(**model_inputs)
-            hidden = outputs.last_hidden_state
-            attention_mask = model_inputs["attention_mask"]
-            if hidden.ndim != 3 or hidden.shape[0] != image.shape[0]:
-                raise RuntimeError(
-                    "The backend returned an invalid last_hidden_state shape: "
-                    f"{tuple(hidden.shape)}."
-                )
-            if hidden.shape[-1] != 768:
-                raise RuntimeError(
-                    "The backend returned an unexpected embedding dimension "
-                    f"{hidden.shape[-1]}; expected 768."
-                )
-            if tuple(attention_mask.shape) != tuple(hidden.shape[:2]):
-                raise RuntimeError(
-                    "attention_mask shape does not match last_hidden_state: "
-                    f"{tuple(attention_mask.shape)} != {tuple(hidden.shape[:2])}."
-                )
-
-            mask = attention_mask.to(device=hidden.device, dtype=torch.bool)
-            weights = mask.unsqueeze(-1).to(dtype=hidden.dtype)
-            counts = weights.sum(dim=1)
-            if (counts == 0).any().item():
-                raise RuntimeError("The processor returned an empty attention mask.")
-            pooled = (hidden * weights).sum(dim=1) / counts
-
-            # EmbeddingGemma's Sentence Transformers pipeline includes Normalize.
-            embeddings = F.normalize(pooled, p=2, dim=-1)
-            if normalize:
-                embeddings = F.normalize(embeddings, p=2, dim=-1)
-            if not torch.isfinite(embeddings).all().item():
-                raise RuntimeError("The backend produced non-finite image embeddings.")
-            return embeddings
+            return _pool_and_normalize(
+                outputs,
+                model_inputs["attention_mask"],
+                batch_size=image.shape[0],
+                normalize=normalize,
+                modality="image",
+            )
 
     def encode_text(
         self,
         text: torch.Tensor,
         normalize: bool = False,
     ) -> torch.Tensor:
-        """Encode token tensors; inference is implemented in a later milestone."""
-        raise NotImplementedError("encode_text is not implemented in M1.1.")
+        """Encode official EmbeddingGemma token IDs with reconstructed padding mask."""
+        if not isinstance(text, torch.Tensor):
+            raise TypeError("text must be a torch.Tensor.")
+        if text.ndim != 2:
+            raise ValueError(
+                f"text must have shape [B,L]; received {tuple(text.shape)}."
+            )
+        if text.shape[0] == 0:
+            raise ValueError("text batch must contain at least one sequence.")
+        if text.shape[1] == 0:
+            raise ValueError("text sequence length must be positive.")
+        if text.dtype != torch.long:
+            raise TypeError(
+                f"text must use torch.int64 token IDs; received {text.dtype}."
+            )
+        if not isinstance(normalize, bool):
+            raise TypeError("normalize must be a bool.")
+
+        try:
+            model_device = next(self.backend.parameters()).device
+        except StopIteration as error:
+            raise RuntimeError("The backend has no parameters to determine its device.") from error
+        if text.device != model_device:
+            raise ValueError(
+                f"text is on {text.device}, but the model backend is on {model_device}."
+            )
+
+        tokenizer = getattr(self.processor, "tokenizer", None)
+        if tokenizer is None:
+            raise RuntimeError("The processor has no tokenizer.")
+        pad_token_id = getattr(tokenizer, "pad_token_id", None)
+        bos_token_id = getattr(tokenizer, "bos_token_id", None)
+        eos_token_id = getattr(tokenizer, "eos_token_id", None)
+        vocab_size = getattr(tokenizer, "vocab_size", None)
+        text_config = getattr(getattr(self.backend, "config", None), "text_config", None)
+        max_context_length = getattr(text_config, "max_position_embeddings", None)
+        if not all(
+            isinstance(token_id, int)
+            for token_id in (pad_token_id, bos_token_id, eos_token_id, vocab_size)
+        ):
+            raise RuntimeError("The processor tokenizer has incomplete token metadata.")
+        if (
+            isinstance(max_context_length, bool)
+            or not isinstance(max_context_length, int)
+            or max_context_length < 2
+        ):
+            raise RuntimeError(
+                "The backend configuration has no valid text positional limit."
+            )
+        if text.shape[1] > max_context_length:
+            raise ValueError(
+                f"text sequence length {text.shape[1]} exceeds the model positional "
+                f"limit of {max_context_length}."
+            )
+        if (text < 0).any().item() or (text >= vocab_size).any().item():
+            raise ValueError(
+                f"text token IDs must be in the range [0, {vocab_size})."
+            )
+
+        attention_mask = text.ne(pad_token_id)
+        padding_seen = text.eq(pad_token_id).cumsum(dim=1).gt(0)
+        if (attention_mask & padding_seen).any().item():
+            raise ValueError(
+                "PAD token IDs must occur only as a right-padding suffix; PAD cannot "
+                "be represented as text content in the token-ID-only API."
+            )
+        if (text[:, 0] != bos_token_id).any().item():
+            raise ValueError("Each text sequence must begin with the official BOS token.")
+        lengths = attention_mask.sum(dim=1)
+        if (lengths < 2).any().item():
+            raise ValueError("Each text sequence must contain BOS and EOS tokens.")
+        final_tokens = text.gather(1, (lengths - 1).unsqueeze(1)).squeeze(1)
+        if (final_tokens != eos_token_id).any().item():
+            raise ValueError(
+                "Each text sequence must end with the official EOS token before "
+                "right-padding."
+            )
+
+        with torch.inference_mode():
+            outputs = self.backend(
+                input_ids=text,
+                attention_mask=attention_mask.to(dtype=torch.long),
+            )
+            return _pool_and_normalize(
+                outputs,
+                attention_mask,
+                batch_size=text.shape[0],
+                normalize=normalize,
+                modality="text",
+            )
 
     def encode(self, *args: Any, **kwargs: Any) -> NoReturn:
         """Sentence Transformers encode compatibility is not in the current scope."""
