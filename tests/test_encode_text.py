@@ -117,7 +117,11 @@ def test_encode_text_accepts_single_and_batched_tokens(
         (torch.tensor([[2, 0, 3, 1]]), ValueError, "only as a right-padding suffix"),
         (torch.tensor([[2, 3, 0]]), ValueError, "official EOS token"),
         (torch.tensor([[3, 4, 1]]), ValueError, "official BOS token"),
-        (torch.tensor([[2, 3, 4, 5, 6, 7, 8, 9, 1]]), ValueError, "positional limit"),
+        (
+            torch.tensor([[2, 3, 4, 5, 6, 7, 8, 9, 1]]),
+            ValueError,
+            "supported context limit",
+        ),
     ],
 )
 def test_encode_text_rejects_invalid_token_tensors(

@@ -2,7 +2,7 @@
 
 - **文書ID**: EGOC-SPEC-001
 - **対象リリース**: v0.1.0
-- **状態**: Draft / M0〜M3実装完了。M3のCPU FP32/BF16統合検証済み。CUDA未検証
+- **状態**: Draft / M0〜M4のCPU統合検証完了。FP32/BF16を測定済み。CUDA未検証
 - **作成日**: 2026-10-17
 - **配布パッケージ**: `openclip-gemma`
 - **対象モデル**: `google/embeddinggemma-2`
@@ -55,9 +55,9 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 | --- | --- | --- | --- |
 | `create_model` | P0 | 対応 | 単一モデル。FP32/BF16。CPU/CUDA |
 | `create_model_and_transforms` | P0 | 対応 | `(model, preprocess_train, preprocess_val)`。Tensor入力前処理 |
-| `get_tokenizer` | P0 | M3実装 | `LongTensor[B,L]`。既定はpromptなし。公式`prompt_name`を指定可能 |
+| `get_tokenizer` | P0 | M3実装 | `LongTensor[B,L]`。既定promptなし。モデルカード上限8192、動的padding |
 | `encode_image` | P0 | M2実装済み | `[B,3,H,W]` → `[B,768]`。CPU FP32検証済み、BF16測定済み、CUDA未検証 |
-| `encode_text` | P0 | M3実装 | 公式special tokenとright-padding規約を満たす`LongTensor[B,L]` → `[B,768]` |
+| `encode_text` | P0 | M3実装 | 公式special tokenとright-padding規約を満たす`LongTensor[B,L]` → `[B,768]`。列長上限8192 |
 | `.eval()`, `.to()`, `.cpu()`, `.cuda()` | P0 | 対応 | `nn.Module`の契約に準拠 |
 | `forward` | P1 | 現時点で実装しない | v0.1.0のP0推論APIに含めない |
 | `get_logits` | P1 | 現時点で実装しない | CLIPの学習済みlogit scaleとの混同を避ける |
@@ -141,7 +141,8 @@ get_tokenizer(
 - 出力：`torch.LongTensor[B,L]`。`L`はそのバッチで最長のtokenized sequence長で、右側だけをPADする。OpenCLIP tokenizerの固定context長paddingとは異なる。
 - 特殊tokenは固定revisionの公式Tokenizerが付与する。確認値はPAD ID `0`、BOS ID `2`、EOS ID `1`、right padding。
 - デフォルトではタスクpromptを付けない。`prompt_name`に固定revisionのSentence Transformers設定で定義された名前（例：`"SearchQuery"`、`"Classification"`、`"Document"`）を指定すると、定義済みprefixを**トークン化前に**一度だけ付ける。未定義のprompt名は拒否し、すでに公式prefixで始まる文字列にpromptを重ねることも拒否する。
-- `context_length`は切り詰め上限であり、固定padding幅ではない。省略時はモデル設定の`text_config.max_position_embeddings=262144`を使う。TokenizerとSentence Transformersの`model_max_length`/`max_seq_length`は実用上の上限ではなく巨大な番兵値だったため採用しない。BOS/EOSを含み最低2 token必要。上限付近の長大系列による実行時メモリ・速度は未検証。
+- `context_length`は切り詰め上限であり、固定padding幅ではない。省略時は公式モデルカードの共有context上限`8192`を使う。固定revisionの`text_config.max_position_embeddings=262144`はモデルカードの保証ではなく、TokenizerとSentence Transformersの`model_max_length`/`max_seq_length`も巨大な番兵値だったため、いずれも公開入力上限には採用しない。BOS/EOSを含み最低2 token必要。
+- 8192はモデルカード記載の最大入力長であり、batch sizeや実行環境ごとのメモリ安全性・速度を保証するものではない。長文では`context_length`を小さく設定できる。paddingはバッチ内最長長までの動的paddingであり、8192長への固定paddingはしない。
 - truncate時は公式Tokenizerの挙動を使い、試験した`context_length=16`ではBOSを維持して末尾をEOSにした。
 - **PAD IDとattention mask**：M0で試験した通常テキストでは`input_ids != 0`が公式maskと一致した。一方、公式Tokenizerは本文中の`<pad>`を有効token ID `0`として符号化する。この列はPADとpaddingをtoken IDだけで区別できないため、`get_tokenizer()`はこの入力を明示的に拒否する。`encode_text()`もPADはright-padding suffixにのみ許可し、BOS/EOSと範囲を検証する。
 - 直接構築したTensorについて、PAD ID `0`を本文tokenとして使用することはできない。token ID-onlyのAPIでは末尾PADが本文かpaddingかを判別できないため、PADを専用のpadding IDとして予約することが入力契約である。
@@ -175,7 +176,7 @@ encode_text(text: torch.Tensor, normalize: bool = False) -> torch.Tensor
 
 - 入力：トークンID `torch.LongTensor[B,L]`。
 - 出力：`[B,768]`、finite、デバイスはモデルと一致。
-- Tensorはモデルと同じdevice、モデル語彙の範囲内で、各行が公式BOSで始まり、公式EOSで終わり、PAD IDはright-padding suffixにのみ存在する必要がある。列長はモデルの`max_position_embeddings`以下。
+- Tensorはモデルと同じdevice、モデル語彙の範囲内で、各行が公式BOSで始まり、公式EOSで終わり、PAD IDはright-padding suffixにのみ存在する必要がある。列長は`min(8192, max_position_embeddings)`以下。8192は公式モデルカードの最大長で、262144というconfig値だけからより長い入力を保証しない。
 - attention maskは`input_ids != pad_token_id`から構築する。任意の外部TensorのPAD ID本文は判別不能なため許可しない。タスクpromptは`encode_text()`では付与せず、必ずtokenizer生成時に適用する。Token IDはdecode・再tokenizeしない。
 - backendへ`input_ids`とattention maskを渡し、公式Sentence Transformers経路と同じattention-mask付きMean Poolingおよびnative L2 Normalizeを行う。
 - `normalize`規則は `encode_image` と同様。
@@ -327,11 +328,9 @@ openclip-gemma/
 - **M0**：参照モデルを公式APIで稼働し、テキスト・画像の基準出力を収集。M0.1でTensor画像経路と制約を検証し、P0/P1画像API契約を決定済み。
 - **M1**：ファクトリと画像前処理を実装。T01とT02の前処理部分を検証する。
 - **M1.1**：`EmbeddingGemmaCLIP` wrapperにbackend/Processorを保持し、標準PyTorch操作を伝播する。固定revision統合テストでモデルロード・前処理一致を確認する。
-- **M2**：`encode_image`のTensor検証、Processor feature mapping、Mean Pooling、native normalizationを実装。CPU FP32の公式一致とCPU BF16の測定を完了。CUDAは未検証。
 - **M2**：`encode_image`の実装とCPU FP32/BF16検証、完了。
 - **M3**：`get_tokenizer`、公式task prompt、Attention Mask復元、`encode_text`、参照数値比較、T03/T04/T06/T07/T08。
-- **M4**：README・互換例・制限の整理、GitHub Actions、Wheel build、未検証環境の明示。
-- **M4**：READMEに互換例・制限・数値スコアの意味、GitHub Actions、Wheel build。
+- **M4**：OpenCLIP主要推論APIの互換性評価、zero-shot cosine similarityの統合実行、context長再評価、未対応事項と公開前課題の記録。
 - **Release v0.1.0**：P0 APIが全受入テストを満たす。P1未完了のものは明示的な非対応として公開。
 
 ## 11. 未決定事項
@@ -350,4 +349,4 @@ openclip-gemma/
 - OpenCLIP exports: https://github.com/mlfoundations/open_clip/blob/main/src/open_clip/__init__.py
 - EmbeddingGemma 2 official model card: https://huggingface.co/google/embeddinggemma-2
 
-**注**：本書はv0.1.0に対する**設計仕様案**であり、実装済み・数値検証済みという意味ではない。公開版仕様はM0〜M3の検証結果を反映して更新する。
+**注**：本書はv0.1.0に対する設計・実装状況を記録する文書である。CUDA、実運用メモリ上限、用途別promptのタスク品質など未検証事項はサポート保証を意味しない。

@@ -267,6 +267,25 @@ def test_processor_is_not_registered_and_module_operations_reach_backend() -> No
     assert model.cpu() is model
 
 
+@pytest.mark.parametrize(
+    "conversion",
+    [
+        lambda model: model.half(),
+        lambda model: model.to(dtype=torch.float16),
+        lambda model: model.to("cpu", torch.float16),
+        lambda model: model.to(torch.empty((), dtype=torch.float16)),
+    ],
+)
+def test_model_rejects_fp16_module_conversions(conversion: object) -> None:
+    model = EmbeddingGemmaCLIP(
+        backend=torch.nn.Linear(2, 2),
+        processor=SimpleNamespace(),
+    )
+
+    with pytest.raises(ValueError, match="FP16 is not supported"):
+        conversion(model)  # type: ignore[operator]
+
+
 def test_encode_text_requires_processor_tokenizer_and_generic_encode_is_unimplemented() -> None:
     model = EmbeddingGemmaCLIP(
         backend=torch.nn.Linear(2, 2),

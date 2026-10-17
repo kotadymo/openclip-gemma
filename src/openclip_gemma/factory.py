@@ -7,12 +7,9 @@ from typing import Any
 import torch
 from transformers import AutoModel, AutoProcessor
 
+from openclip_gemma.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
 from openclip_gemma.model import EmbeddingGemmaCLIP
 from openclip_gemma.transforms import EmbeddingGemmaPreprocess
-
-MODEL_NAME = "embeddinggemma-2"
-MODEL_ID = "google/embeddinggemma-2"
-MODEL_REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 
 
 def _validate_factory_options(

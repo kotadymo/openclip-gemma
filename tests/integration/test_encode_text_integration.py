@@ -80,6 +80,8 @@ def test_text_embeddings_match_sentence_transformers(
     comparisons: dict[str, dict[str, object]] = {}
     for prompt_name in (None, "SearchQuery", "Classification"):
         tokenizer = get_tokenizer(prompt_name=prompt_name)
+        assert tokenizer.max_context_length == 8192
+        assert tokenizer.model_max_position_embeddings == max_context_length
         assert tokenizer.prompts == reference_model.prompts
         tokens = tokenizer(TEXTS)
         prefix = (
@@ -92,7 +94,7 @@ def test_text_embeddings_match_sentence_transformers(
             add_special_tokens=True,
             padding=True,
             truncation=True,
-            max_length=max_context_length,
+            max_length=tokenizer.context_length,
             return_attention_mask=True,
             return_tensors="pt",
         )
