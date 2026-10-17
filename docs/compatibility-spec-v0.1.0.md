@@ -2,7 +2,7 @@
 
 - **文書ID**: EGOC-SPEC-001
 - **対象リリース**: v0.1.0
-- **状態**: Draft / M0・M0.1完了。M1.1 wrapper実装済み。画像・テキスト推論は未実装
+- **状態**: Draft / M0・M0.1・M1・M1.1完了。M2のCPU画像推論を検証済み。テキスト推論は未実装
 - **作成日**: 2026-10-17
 - **配布パッケージ**: `openclip-gemma`
 - **対象モデル**: `google/embeddinggemma-2`
@@ -56,7 +56,7 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 | `create_model` | P0 | 対応 | 単一モデル。FP32/BF16。CPU/CUDA |
 | `create_model_and_transforms` | P0 | 対応 | `(model, preprocess_train, preprocess_val)`。Tensor入力前処理 |
 | `get_tokenizer` | P0 | 条件付き | Tensor出力と順序・バッチ処理。モデル固有プレフィックス |
-| `encode_image` | P0 | 対応 | `[B,3,H,W]` → `[B,768]` |
+| `encode_image` | P0 | M2実装済み | `[B,3,H,W]` → `[B,768]`。CPU FP32検証済み、BF16測定済み、CUDA未検証 |
 | `encode_text` | P0 | 対応 | `[B,L]` → `[B,768]` |
 | `.eval()`, `.to()`, `.cpu()`, `.cuda()` | P0 | 対応 | `nn.Module`の契約に準拠 |
 | `forward` | P1 | 現時点で実装しない | v0.1.0のP0推論APIに含めない |
@@ -71,10 +71,10 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 | `lock_image_tower`, `lock_text_tower` | - | 非対応 | 学習目的の操作 |
 | 音声・動画埋め込み | - | 非対応 | 将来拡張 |
 
-M1.1時点では`EmbeddingGemmaCLIP`がTransformers backendとProcessorを保持する。
+`EmbeddingGemmaCLIP`がTransformers backendとProcessorを保持する。
 backendのみをPyTorch子moduleとして登録し、Processorは登録しない。
 `eval()`、`to()`、`cpu()`、`cuda()`は`nn.Module`から継承する。
-`encode_image()`と`encode_text()`の公開シグネチャは定義済みだが、推論実装は後続マイルストーンまで`NotImplementedError`とする。
+M2で`encode_image()`の推論を実装した。`encode_text()`はシグネチャのみで、推論は`NotImplementedError`とする。
 
 ## 5. 公開パッケージ・名前空間
 
@@ -146,14 +146,18 @@ get_tokenizer(model_name: str = "embeddinggemma-2") -> Callable
 encode_image(image: torch.Tensor, normalize: bool = False) -> torch.Tensor
 ```
 
-- 入力：前処理済み`[B,3,H,W]`、浮動小数点Tensor。
+- 入力：`preprocess_val`で作成したfloat32 `[B,3,H,W]` Tensor。画素値は`[0,1]`、deviceはmodel backendと一致させる。
+- `H,W`はimage patch sizeの倍数で、patch総数は公式Processorの上限以下であること。
 - 出力：`[B,768]`、数値はfinite、デバイスはモデルと一致。
-- `normalize=True`：L2再正規化（ゼロベクトルは明示的に検査）。
-- `normalize=False`：モデルのネイティブ埋め込みを維持。参照モデルが正規化済みでも逆正規化しない。
+- `normalize=False`：公式Sentence Transformers pipelineのMean Pooling後の`Normalize`層を再現し、backend固有のネイティブ埋め込みを返す。未正規化vectorを人工的に復元しない。
+- `normalize=True`：native embeddingにL2再正規化を適用。
 - 無効なshape / dtype / deviceに対して明示例外。暗黙のCPU往復やPIL復元は禁止。
 - 画像前処理は`create_model_and_transforms()`が返す公式処理と一致する決定的変換を利用する。P0のTensor経路で再びProcessorへ渡す場合は`do_resize=False, do_rescale=False`とする。
+- Processorには各画像を個別groupにして渡し、`input_ids`、`attention_mask`、`pixel_values`、`image_position_ids`をbackend deviceへ移動する。attention maskを用いてtoken次元をmean-poolする。
 - **M0.1検証結果**：公式処理順に従ったTensor前処理は、RGB・グレースケール・wide・tallの4画像で公式PIL経路とfeature単位で完全一致した。埋め込み最大絶対誤差は`2.09e-7`〜`3.23e-7`、cosine similarityは`1.0`。ただし、異なるH/Wを通常のdense Tensor batchにstackすることはできない。
-- **M1.1実装状態**：`EmbeddingGemmaCLIP.encode_image()`はシグネチャのみ実装し、推論は`NotImplementedError`。この段階ではT02の前処理一致を統合テストで確認し、埋め込み出力は主張しない。
+- **M2検証結果**：固定revision `914f7f89142e33e77833254d9c9b90c3cef7303b`、CPU FP32でSentence Transformersの画像embeddingと比較。RGB、グレースケール、wide、tall、同一shape batch、`normalize=True`の最大絶対誤差は`2.09e-7`〜`3.23e-7`、cosine similarityは全て`1.0`（丸め前の浮動小数誤差を含む）。FP32暫定閾値を全て満たした。
+- BF16では同じCPU/reference条件で最大絶対誤差`0.0`、cosine similarityは約`1.0`だった。FP32の閾値は適用せず、BF16の正式な許容誤差を確定するものではない。
+- **M2未検証**：CUDA実行。画像Tensorのdeviceはmodelと一致させる。CPU/CUDA間の暗黙転送は行わない。
 
 ### 5.5 `model.encode_text`
 
@@ -210,11 +214,15 @@ M0ではpromptなし/SearchQuery/Classificationのいずれも、対応する公
 | 未知のモデル名 | `ValueError` |
 | 未対応・危険なprecision（FP16） | `ValueError` |
 | 未対応のfactoryオプション | `NotImplementedError`または`TypeError` |
-| 画像Tensorのshape異常 | `ValueError` |
+| 画像入力がTensorでない | `TypeError` |
+| 画像Tensorのshape / patch layout異常 | `ValueError` |
+| 画像Tensorのdtypeがfloat32でない | `TypeError` |
+| 画像TensorにNaN/Infまたは`[0,1]`範囲外値 | `ValueError` |
+| 画像Tensorとbackendのdevice不一致 | `ValueError` |
 | Token IDのdtype/shape異常 | `TypeError` / `ValueError` |
 | 利用できないCUDA指定 | `RuntimeError` |
 | モデル取得・ロード失敗 | `RuntimeError`（原因を`raise ... from ...`で保持） |
-| 異なるH/Wの画像Tensorをdense batch化 | `ValueError`（将来の`encode_image`で検証） |
+| 異なるH/Wの画像Tensorをdense batch化 | 通常の`torch.stack()`不可。padding/resizeによる自動補正は行わない |
 | 学習・内部中間表現API | `NotImplementedError` |
 
 シークレット、個人情報、ローカル絶対パスを例外文やログに不用意に残さない。
@@ -225,7 +233,7 @@ M0ではpromptなし/SearchQuery/Classificationのいずれも、対応する公
 `create_model_and_transforms`は3要素を返す。`model`は`nn.Module`、残り2要素はcallable。
 
 ### T02. OpenCLIP方式の画像入力
-`preprocess_val(PIL.Image.open(...))`はfloat32の`[3,H,W]` Tensorを返す。M1では前処理を検証し、`encode_image`への接続と`[1,768]`出力は後続マイルストーンで検証する。
+`preprocess_val(PIL.Image.open(...))`はfloat32の`[3,H,W]` Tensorを返す。M2では4種類の画像と同一shape batchを`encode_image`へ渡し、CPU FP32で公式出力との一致を検証する。
 
 ### T03. OpenCLIP方式のテキスト入力
 `get_tokenizer(...)(["a cat", "a dog"])`は`LongTensor[2,L]`で、`encode_text`は`[2,768]`を返す。
@@ -303,7 +311,8 @@ openclip-gemma/
 
 - **M0**：参照モデルを公式APIで稼働し、テキスト・画像の基準出力を収集。M0.1でTensor画像経路と制約を検証し、P0/P1画像API契約を決定済み。
 - **M1**：ファクトリと画像前処理を実装。T01とT02の前処理部分を検証する。
-- **M1.1**：`EmbeddingGemmaCLIP` wrapperにbackend/Processorを保持し、標準PyTorch操作を伝播する。encode APIはシグネチャのみ定義し、`NotImplementedError`とする。固定revision統合テストでモデルロード・前処理一致を確認する。
+- **M1.1**：`EmbeddingGemmaCLIP` wrapperにbackend/Processorを保持し、標準PyTorch操作を伝播する。固定revision統合テストでモデルロード・前処理一致を確認する。
+- **M2**：`encode_image`のTensor検証、Processor feature mapping、Mean Pooling、native normalizationを実装。CPU FP32の公式一致とCPU BF16の測定を完了。CUDAは未検証。
 - **M2**：Token ID経路とテキストプロンプトの実装、T03。
 - **M3**：数値一致・バッチ・デバイス・失敗時挙動、T04–T08。
 - **M4**：READMEに互換例・制限・数値スコアの意味、GitHub Actions、Wheel build。
