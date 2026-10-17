@@ -41,16 +41,16 @@ The v0.1.0 wrapper supports text and still-image embeddings only. It does not im
 
 ## Compatibility and tested environment
 
-| Item | v0.1.0 status |
+| Item | v0.1.1 development validation |
 |---|---|
-| Python | Python 3.12 |
-| OS | Windows 11 x64 tested locally with Python 3.12. Linux and macOS are unverified. |
-| Device | CPU FP32 and BF16 tested. CUDA is implemented but has not been validated on CUDA hardware. |
+| Python | Python 3.12, 3.13, and 3.14 except 3.14.1; locally tested on CPython 3.12.10, 3.13.16, and 3.14.8. |
+| OS | Windows 11 x64 tested locally. Windows/Linux CI is configured but has not run on GitHub; Linux model inference and macOS are unverified. |
+| Device | CPU FP32 and BF16 tested on all three Python versions. CUDA is implemented but has not been validated on CUDA hardware. |
 | Precision | FP32 is the numerical baseline. BF16 was measured separately on CPU. FP16 is rejected. |
 | Model | `google/embeddinggemma-2`, pinned revision `914f7f89142e33e77833254d9c9b90c3cef7303b` |
 | Context | Up to 8192 tokens, following the model card. Batches use dynamic right padding; this is not OpenCLIP's fixed-width 77-token padding. |
 
-The environment used for the CPU reference checks was Python 3.12.10, PyTorch 2.14.1, torchvision 0.29.1, Transformers 5.20.1, Pillow 13.0.0, and Sentence Transformers 6.1.0. Development validation used uv 0.13.1, pytest 9.1.1, and Ruff 0.17.1; the optional CPU benchmark used psutil 7.2.2. Sentence Transformers and psutil are optional and are not needed by the runtime API. Other dependency versions allowed by the package metadata have not all been tested.
+The Python-version checks used PyTorch 2.14.1, torchvision 0.29.1, Transformers 5.20.1, Pillow 13.0.0, and Sentence Transformers 6.1.0 on CPython 3.12.10, 3.13.16, and 3.14.8. Development validation used uv 0.13.1, pytest 9.1.1, and Ruff 0.17.1; the optional CPU benchmark used psutil 7.2.2. Sentence Transformers and psutil are optional and are not needed by the runtime API. Other dependency versions allowed by the package metadata have not all been tested. Python 3.14.1 is excluded because torchvision 0.29.1 declares `Requires-Python: !=3.14.1,>=3.10`; a fresh pip resolver cannot install the required torchvision version there.
 
 ## Installation
 
@@ -77,6 +77,22 @@ uv sync --group dev
 The package does not contain model weights. The first `create_model()` call fetches the pinned model checkpoint and processor from Hugging Face; `get_tokenizer()` fetches the pinned configuration and tokenizer. Files are stored in the Hugging Face cache. A network connection is needed unless the required files are already cached. A custom model cache directory can be passed as `cache_dir` to the factory and tokenizer.
 
 For CUDA, install a PyTorch/torchvision build appropriate for the local driver using the [official PyTorch installation selector](https://pytorch.org/get-started/locally/), then confirm `torch.cuda.is_available()` before selecting `device="cuda"`. CUDA was unavailable in the v0.1.0 validation environment and is not claimed as verified.
+
+#### Running the CUDA integration check
+
+The opt-in CUDA integration test checks image and Japanese text embeddings for FP32 and BF16, compares them with CPU outputs, and prints the GPU name, model-load and inference times, peak allocated GPU memory, maximum absolute errors, and cosine similarities. FP32 comparisons use maximum absolute error `<= 1e-3` and cosine similarity `>= 0.9999`; BF16 uses `<= 0.05` and `>= 0.995`. The BF16 case is skipped if the GPU does not support BF16.
+
+From the repository, install the project and test dependencies first. Then replace the CPU/default PyTorch packages in `.venv` with a CUDA-enabled torch/torchvision pair selected for the machine's driver from the official selector above. Keep those versions within this package's dependency constraints. For example, use the selector's index URL in the following command:
+
+```powershell
+uv sync --locked --group dev --extra integration
+$cudaIndexUrl = "REPLACE_WITH_URL_FROM_PYTORCH_SELECTOR"
+uv pip install --python .venv\Scripts\python.exe torch torchvision --index-url $cudaIndexUrl
+$env:OPENCLIP_GEMMA_RUN_INTEGRATION = "1"
+.\.venv\Scripts\python.exe -m pytest tests\integration\test_cuda_integration.py -v
+```
+
+Replace the placeholder with the exact index URL shown by the selector. The first run needs access to the pinned Hugging Face model revision or a populated local model cache. Verify `torch.cuda.is_available()` and `torch.cuda.get_device_name(0)` before interpreting results. CUDA hardware validation has not yet been performed for this project.
 
 ## Basic image and text embeddings
 
