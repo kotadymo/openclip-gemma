@@ -19,7 +19,7 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_WHEEL_FILE_SIZE = 50_000_000
 
 
-def verify_wheel(wheel_path: Path) -> None:
+def verify_wheel(wheel_path: Path, expected_version: str = "0.1.0") -> None:
     if not wheel_path.is_file() or wheel_path.suffix != ".whl":
         raise ValueError(f"Not a wheel file: {wheel_path}")
 
@@ -68,13 +68,26 @@ def verify_wheel(wheel_path: Path) -> None:
         if len(license_files) != 1:
             raise ValueError("Wheel must contain the project LICENSE file.")
 
-        metadata = archive.read(metadata_files[0]).decode("utf-8")
+        metadata = archive.read(metadata_files[0]).decode("utf-8").replace(
+            "\r\n",
+            "\n",
+        )
         if "Name: openclip-gemma\n" not in metadata:
             raise ValueError("Wheel metadata has an unexpected distribution name.")
-        if "Version: 0.1.0\n" not in metadata:
+        if f"Version: {expected_version}\n" not in metadata:
             raise ValueError("Wheel metadata has an unexpected version.")
+        if "Author: kotadymo\n" not in metadata:
+            raise ValueError("Wheel metadata has an unexpected author.")
+        if any(line.startswith("Author-email:") for line in metadata.splitlines()):
+            raise ValueError("Wheel metadata must not contain an author email.")
         if "License-Expression: Apache-2.0\n" not in metadata:
             raise ValueError("Wheel metadata has an unexpected license expression.")
+        expected_license = (
+            Path(__file__).resolve().parents[1] / "LICENSE"
+        ).read_bytes().replace(b"\r\n", b"\n")
+        packaged_license = archive.read(license_files[0]).replace(b"\r\n", b"\n")
+        if packaged_license != expected_license:
+            raise ValueError("Wheel LICENSE does not match the project LICENSE.")
 
     print(f"Verified wheel contents: {wheel_path}")
 
@@ -82,9 +95,10 @@ def verify_wheel(wheel_path: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
+    parser.add_argument("--expected-version", default="0.1.0")
     args = parser.parse_args()
     try:
-        verify_wheel(args.wheel)
+        verify_wheel(args.wheel, expected_version=args.expected_version)
     except (OSError, ValueError, zipfile.BadZipFile) as error:
         print(f"Wheel verification failed: {error}", file=sys.stderr)
         return 1
