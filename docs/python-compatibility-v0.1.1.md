@@ -13,9 +13,12 @@ pinned EmbeddingGemma 2 revision also passed.
 This evidence supports Python 3.12, 3.13, and Python 3.14 except 3.14.1 for the
 tested Windows CPU environment. The only 3.14 patch release tested end-to-end
 is 3.14.8; this does not certify every other 3.14 patch release. It also does
-not certify other operating systems or CUDA. A Windows/Ubuntu CI matrix is
-configured, but has not run on GitHub from this branch. Linux CI results and
-Linux real-model inference are therefore both unverified.
+not certify other operating systems or CUDA. The Windows/Ubuntu CI matrix
+passed all six jobs on base commit
+[`5c861a7`](https://github.com/kotadymo/openclip-gemma/commit/5c861a7b0f696164c7c8b3a628540b496280ee06)
+([run 39041843535](https://github.com/kotadymo/openclip-gemma/actions/runs/39041843535)).
+The release version bump still needs a CI run on its exact commit. Linux CI
+quality checks passed; Linux real-model inference remains unverified.
 
 ## Compatibility evidence
 
