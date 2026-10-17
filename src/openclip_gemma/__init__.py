@@ -10,7 +10,3 @@ __all__ = [
     "create_model_and_transforms",
     "get_tokenizer",
 ]
-
-
-def main() -> None:
-    print("Hello from openclip-gemma!")
