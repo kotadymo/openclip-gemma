@@ -267,13 +267,13 @@ def test_processor_is_not_registered_and_module_operations_reach_backend() -> No
     assert model.cpu() is model
 
 
-def test_encode_text_and_generic_encode_remain_unimplemented() -> None:
+def test_encode_text_requires_processor_tokenizer_and_generic_encode_is_unimplemented() -> None:
     model = EmbeddingGemmaCLIP(
         backend=torch.nn.Linear(2, 2),
         processor=SimpleNamespace(),
     )
 
-    with pytest.raises(NotImplementedError, match="encode_text"):
+    with pytest.raises(RuntimeError, match="processor has no tokenizer"):
         model.encode_text(torch.zeros((1, 4), dtype=torch.long))
     with pytest.raises(NotImplementedError, match="encode"):
         model.encode("sample")
