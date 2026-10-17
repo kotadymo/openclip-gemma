@@ -49,11 +49,11 @@ jobs:
         run: |
           $expectedVersion = (& python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])").Trim()
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
-          uv run --locked python tools\verify_wheel.py $wheel --expected-version $expectedVersion
+          $wheel = (Get-ChildItem dist/*.whl | Select-Object -First 1).FullName
+          uv run --locked python tools/verify_wheel.py $wheel --expected-version $expectedVersion
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $sdist = (Get-ChildItem dist\*.tar.gz | Select-Object -First 1).FullName
-          uv run --locked python tools\verify_sdist.py $sdist --expected-version $expectedVersion
+          $sdist = (Get-ChildItem dist/*.tar.gz | Select-Object -First 1).FullName
+          uv run --locked python tools/verify_sdist.py $sdist --expected-version $expectedVersion
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install wheel into a clean virtual environment and import it
@@ -61,7 +61,7 @@ jobs:
         run: |
           $expectedVersion = (& python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])").Trim()
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          $wheel = (Get-ChildItem dist/*.whl | Select-Object -First 1).FullName
           uv venv --python ${{ matrix.python-version }} .venv-wheel-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $wheelPython = if ($IsWindows) { ".venv-wheel-check\Scripts\python.exe" } else { ".venv-wheel-check\bin\python" }
