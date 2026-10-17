@@ -2,7 +2,7 @@
 
 - **文書ID**: EGOC-SPEC-001
 - **対象リリース**: v0.1.0
-- **状態**: Draft / M0は部分検証済み。画像API契約は未決定
+- **状態**: Draft / M0・M0.1完了。M1.1 wrapper実装済み。画像・テキスト推論は未実装
 - **作成日**: 2026-10-17
 - **配布パッケージ**: `openclip-gemma`
 - **対象モデル**: `google/embeddinggemma-2`
@@ -41,7 +41,7 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 | モデル | `google/embeddinggemma-2` のみ |
 | モダリティ | テキスト、静止画像 |
 | 出力次元 | 768固定 |
-| dtype | FP32を基準とする。BF16は別途検証後に対応を確定 |
+| dtype | FP32基準。FP32/BF16を選択可能。BF16の数値許容誤差は未確定 |
 | FP16 | 禁止、要求時に明示エラー |
 | 音声エンコーダー | 原則未ロード (`audio_config=None`) |
 | デフォルト推論 | 推論専用、重みは学習済み |
@@ -53,8 +53,8 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 
 | API | 優先 | v0.1.0 | 仕様 / 制限 |
 | --- | --- | --- | --- |
-| `create_model` | P0 | 対応 | 主要引数のみ。単一モデル |
-| `create_model_and_transforms` | P0 | 対応 | `(model, preprocess_train, preprocess_val)` |
+| `create_model` | P0 | 対応 | 単一モデル。FP32/BF16。CPU/CUDA |
+| `create_model_and_transforms` | P0 | 対応 | `(model, preprocess_train, preprocess_val)`。Tensor入力前処理 |
 | `get_tokenizer` | P0 | 条件付き | Tensor出力と順序・バッチ処理。モデル固有プレフィックス |
 | `encode_image` | P0 | 対応 | `[B,3,H,W]` → `[B,768]` |
 | `encode_text` | P0 | 対応 | `[B,L]` → `[B,768]` |
@@ -70,6 +70,11 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 | `open_clip_train` / `ClipLoss` | - | 非対応 | 推論限定 |
 | `lock_image_tower`, `lock_text_tower` | - | 非対応 | 学習目的の操作 |
 | 音声・動画埋め込み | - | 非対応 | 将来拡張 |
+
+M1.1時点では`EmbeddingGemmaCLIP`がTransformers backendとProcessorを保持する。
+backendのみをPyTorch子moduleとして登録し、Processorは登録しない。
+`eval()`、`to()`、`cpu()`、`cuda()`は`nn.Module`から継承する。
+`encode_image()`と`encode_text()`の公開シグネチャは定義済みだが、推論実装は後続マイルストーンまで`NotImplementedError`とする。
 
 ## 5. 公開パッケージ・名前空間
 
@@ -93,7 +98,7 @@ create_model(
 **規則**
 - 許可するモデル名は`embeddinggemma-2`（正規化後）と、明示的に対応を検証したエイリアスのみ。
 - `pretrained`は`google/embeddinggemma-2`のみ受け付ける。`None`は明示的に`ValueError`とし、未学習モデルや公式重みへの暗黙解決を行わない。
-- `precision`: 初期基準は`fp32`。`bf16`は独立した数値検証が完了するまでサポートを主張しない。`fp16`は明示エラー。
+- `precision`: `fp32`と`bf16`を受け付ける。FP32を数値基準とし、BF16の数値許容誤差は別途確定する。`fp16`は明示エラー。
 - `device`: `cpu`、`cuda`、`cuda:N`、`torch.device`。利用不能なデバイスは明示エラー。
 - 未対応のOpenCLIP引数を `**kwargs`で無視することは禁止。`TypeError`または`NotImplementedError`を返す。
 - ダウンロード失敗、アクセス不能、モデル不整合の原因を元例外から保持する。
@@ -112,11 +117,14 @@ create_model_and_transforms(
 ```
 
 - **戻り値**：`(model, preprocess_train, preprocess_val)` を保証。
-- `preprocess_val(PIL.Image.Image) -> torch.Tensor[3,H,W]`、`preprocess_val(img).unsqueeze(0)`は`encode_image`に適合。
+- **P0画像入力**：`preprocess_val(PIL.Image.Image) -> torch.float32[3,H,W]`。`preprocess_val(img).unsqueeze(0)`は将来実装する`encode_image`の入力契約に適合する。
+- `preprocess_train`は学習augmentationを行わず、`preprocess_val`と同じ決定的変換を返す。
 - v0.1.0は学習サポートなし。`preprocess_train`は評価用と同一の決定的変換とする。OpenCLIP標準のaugmentationと互換だとは主張しない。
-- 画像変換はモデル固有前処理と一貫するよう実装し、二重正規化・二重リサイズを防ぐ。
-- `H,W`は参照プロセッサーの検証済み入力サイズに従い、仕様確定時に固定。任意解像度への強制変更は非対応。
-- **M0検証結果**：検証したモデルrevisionでは公式`AutoProcessor`は`input_ids`、`attention_mask`、`pixel_values`、`image_position_ids`を返し、`pixel_values`は`[B,3,H,W]`ではない。PIL入力の全processor featureを`AutoModel`へ渡す経路は公式Sentence Transformers出力とFP32暫定閾値内で一致した。したがって、現在のTensorのみの契約は未検証であり、M1開始前に再検討する。
+- 画像変換は固定したモデルrevisionの公式画像Processorメソッドを利用し、RGB変換、uint8画素でのリサイズ、1/255 rescaleの順序を保つ。返却TensorをProcessorに再投入する際はリサイズとrescaleを無効にし、二重適用を防ぐ。
+- `H,W`は画像アスペクト比により異なる。固定サイズ化、crop、paddingは、公式経路との数値的一致を検証するまで行わない。
+- 通常の`torch.stack()`による`[B,3,H,W]` batchは全画像の前処理後H/Wが同じ場合に限る。異なるH/Wの画像はdense Tensor batchにできず、可変寸法batchの専用APIは本P0契約に含めない。
+- **P1将来拡張**：公式Processor feature mappingを直接受け取るAPIを検討する。P0のOpenCLIP互換Tensor入力とは別APIとする。
+- **M0.1検証結果**：固定revision `914f7f89142e33e77833254d9c9b90c3cef7303b`で、公式メソッドを用いたTensor前処理後、Processorの`do_resize=False, do_rescale=False`で全feature mappingがPIL経路と完全一致した。RGB、グレースケール、wide、tall各画像のFP32埋め込みは最大絶対誤差`2.09e-7`〜`3.23e-7`、cosine similarity `1.0`。同一H/W batchも閾値内で一致。異なるH/Wを一つのdense Tensorにstackできるとは確認されていない。
 
 ### 5.3 `get_tokenizer`
 
@@ -143,8 +151,9 @@ encode_image(image: torch.Tensor, normalize: bool = False) -> torch.Tensor
 - `normalize=True`：L2再正規化（ゼロベクトルは明示的に検査）。
 - `normalize=False`：モデルのネイティブ埋め込みを維持。参照モデルが正規化済みでも逆正規化しない。
 - 無効なshape / dtype / deviceに対して明示例外。暗黙のCPU往復やPIL復元は禁止。
-- 画像前処理の経路と参照実装を完全に同一とする必要があるため、Tensor直接入力部分は最重要の技術検証項目。
-- **M0検証結果**：生の浮動小数Tensorをprocessorへ渡す経路はPIL経路と`pixel_values`が最大絶対誤差`0.0040472`異なり、出力埋め込みの最大絶対誤差は`0.00079144`、cosine similarityは`0.9999833`だった。暫定最大誤差閾値`1e-4`を満たさない。正確性を優先し、processor feature mappingをAPIで保持するか、Tensor経路をさらに検証するまでM1を開始しない。
+- 画像前処理は`create_model_and_transforms()`が返す公式処理と一致する決定的変換を利用する。P0のTensor経路で再びProcessorへ渡す場合は`do_resize=False, do_rescale=False`とする。
+- **M0.1検証結果**：公式処理順に従ったTensor前処理は、RGB・グレースケール・wide・tallの4画像で公式PIL経路とfeature単位で完全一致した。埋め込み最大絶対誤差は`2.09e-7`〜`3.23e-7`、cosine similarityは`1.0`。ただし、異なるH/Wを通常のdense Tensor batchにstackすることはできない。
+- **M1.1実装状態**：`EmbeddingGemmaCLIP.encode_image()`はシグネチャのみ実装し、推論は`NotImplementedError`。この段階ではT02の前処理一致を統合テストで確認し、埋め込み出力は主張しない。
 
 ### 5.5 `model.encode_text`
 
@@ -157,6 +166,7 @@ encode_text(text: torch.Tensor, normalize: bool = False) -> torch.Tensor
 - 注意：OpenCLIPのTensor入力から、EmbeddingGemmaのattention mask、特殊トークン、タスクプロンプトの意味を再現する必要がある。
 - `get_tokenizer()`以外から渡されたTensorも正当なID範囲であれば受け付ける。ただし「プレフィックス未付与」を推測して自動修正しない。
 - `normalize`規則は `encode_image` と同様。
+- **M1.1実装状態**：メソッドのシグネチャのみ定義し、推論は`NotImplementedError`。
 
 ### 5.6 `forward` （P1・現時点で実装しない）
 
@@ -183,6 +193,9 @@ encode_text(text: torch.Tensor, normalize: bool = False) -> torch.Tensor
 ## 6. 前処理・タスク指示の基本原則
 
 1. モデル固有の画像処理を参照モデルと一致させる。プロセッサーのリサイズ方式・画素正規化・画像トークン化の一致を確認する。
+   - P0では公式処理と一致する決定的なTensor前処理を使用する。TensorへのProcessor再適用ではresize/rescaleを無効にする。
+   - 前処理後のH/Wが画像ごとに異なることがある。異なる寸法をpadding/cropで揃える処理は数値的一致を検証するまで導入しない。
+   - Processor feature mappingの直接入力はP1の拡張APIとし、P0 Tensor入力と混在させない。
 2. テキスト指示プレフィックスはトークン化前に適用する。
 3. マルチモーダル画像対テキストの最適プロンプトは、公式サンプルとベンチマークの比較で確定する。
 4. 公式のタスクプレフィックス一覧（Classification、SearchQuery等）を目的と対応づける。無条件にすべての用途で1種類としない。
@@ -201,6 +214,7 @@ M0ではpromptなし/SearchQuery/Classificationのいずれも、対応する公
 | Token IDのdtype/shape異常 | `TypeError` / `ValueError` |
 | 利用できないCUDA指定 | `RuntimeError` |
 | モデル取得・ロード失敗 | `RuntimeError`（原因を`raise ... from ...`で保持） |
+| 異なるH/Wの画像Tensorをdense batch化 | `ValueError`（将来の`encode_image`で検証） |
 | 学習・内部中間表現API | `NotImplementedError` |
 
 シークレット、個人情報、ローカル絶対パスを例外文やログに不用意に残さない。
@@ -211,7 +225,7 @@ M0ではpromptなし/SearchQuery/Classificationのいずれも、対応する公
 `create_model_and_transforms`は3要素を返す。`model`は`nn.Module`、残り2要素はcallable。
 
 ### T02. OpenCLIP方式の画像入力
-`preprocess_val(PIL.Image.open(...)).unsqueeze(0)`が`encode_image`に渡せ、`[1,768]`を返す。
+`preprocess_val(PIL.Image.open(...))`はfloat32の`[3,H,W]` Tensorを返す。M1では前処理を検証し、`encode_image`への接続と`[1,768]`出力は後続マイルストーンで検証する。
 
 ### T03. OpenCLIP方式のテキスト入力
 `get_tokenizer(...)(["a cat", "a dog"])`は`LongTensor[2,L]`で、`encode_text`は`[2,768]`を返す。
@@ -287,20 +301,21 @@ openclip-gemma/
 
 ## 10. マイルストーンとリリースゲート
 
-- **M0**：参照モデルを公式APIで稼働、テキストと画像の基準出力収集。**完了判定は画像API契約の決定後**。現時点で高レベル/低レベル一致は確認済みだが、OpenCLIP形式Tensorとの互換性は未解決。
-- **M1**：ファクトリと画像前処理の実装、T01/T02。
+- **M0**：参照モデルを公式APIで稼働し、テキスト・画像の基準出力を収集。M0.1でTensor画像経路と制約を検証し、P0/P1画像API契約を決定済み。
+- **M1**：ファクトリと画像前処理を実装。T01とT02の前処理部分を検証する。
+- **M1.1**：`EmbeddingGemmaCLIP` wrapperにbackend/Processorを保持し、標準PyTorch操作を伝播する。encode APIはシグネチャのみ定義し、`NotImplementedError`とする。固定revision統合テストでモデルロード・前処理一致を確認する。
 - **M2**：Token ID経路とテキストプロンプトの実装、T03。
 - **M3**：数値一致・バッチ・デバイス・失敗時挙動、T04–T08。
 - **M4**：READMEに互換例・制限・数値スコアの意味、GitHub Actions、Wheel build。
 - **Release v0.1.0**：P0 APIが全受入テストを満たす。P1未完了のものは明示的な非対応として公開。
 
-## 11. 未決定事項（実装前に要確認）
+## 11. 未決定事項
 
-1. Tensor-only `[B,3,H,W]`契約を維持するか、公式processor feature mappingを公開するか。PIL processor feature mappingは公式出力と一致したが、raw Tensor経路は暫定最大誤差閾値を超えた。
-2. テキストと画像のCLIP用途に対する既定prompt。M0の合成画像比較では選定しない。
-3. 任意の外部token ID Tensorからattention maskを復元できる範囲。M0では公式tokenizerが生成した例のみ一致を確認。
-4. モデル読み込みの最低対応Transformers/Sentence Transformers版。M0はTransformers 5.20.1 / Sentence Transformers 6.1.0で実行。
-5. CIで実際にサポートを保証するOS / CUDA組み合わせ。Python初期対象は3.12。CUDAは未検証。
+1. テキストと画像のCLIP用途に対する既定prompt。M0の合成画像比較では選定しない。
+2. 任意の外部token ID Tensorからattention maskを復元できる範囲。M0では公式tokenizerが生成した例のみ一致を確認。
+3. 対応するTransformersの最低バージョン。M0はTransformers 5.20.1で実行。
+4. CIで実際にサポートを保証するOS / CUDA組み合わせ。Python初期対象は3.12。CUDAは未検証。
+5. P0 dense Tensor batchで異なるH/Wを扱う方法は未解決。固定サイズ化・paddingは数値的一致の検証が必要であり、現時点では導入しない。
 
 ## 12. 情報源
 
