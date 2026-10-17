@@ -23,10 +23,14 @@ Version 0.1.0 is available on PyPI.
 pip install openclip-gemma==0.1.0
 ```
 
+Version 0.1.1 is being prepared and has not yet been published to PyPI.
+
 The initial release has been validated on Windows 11 x64
 with Python 3.12 and CPU inference.
 
-CUDA, Linux, and macOS have not yet been validated.
+The Windows and Ubuntu CI matrix passed on the v0.1.1 base commit for Python
+3.12, 3.13, and 3.14. The version-bumped release commit still needs its own CI
+run. Linux model inference, CUDA, and macOS have not yet been validated.
 
 ## Features
 
@@ -44,7 +48,7 @@ The v0.1.0 wrapper supports text and still-image embeddings only. It does not im
 | Item | v0.1.1 development validation |
 |---|---|
 | Python | Python 3.12, 3.13, and 3.14 except 3.14.1; locally tested on CPython 3.12.10, 3.13.16, and 3.14.8. |
-| OS | Windows 11 x64 tested locally. Windows/Linux CI is configured but has not run on GitHub; Linux model inference and macOS are unverified. |
+| OS | Windows 11 x64 tested locally. Windows and Ubuntu CI passed for Python 3.12, 3.13, and 3.14 on the base commit; Linux model inference and macOS are unverified. |
 | Device | CPU FP32 and BF16 tested on all three Python versions. CUDA is implemented but has not been validated on CUDA hardware. |
 | Precision | FP32 is the numerical baseline. BF16 was measured separately on CPU. FP16 is rejected. |
 | Model | `google/embeddinggemma-2`, pinned revision `914f7f89142e33e77833254d9c9b90c3cef7303b` |
