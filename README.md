@@ -4,7 +4,7 @@ An independent Python inference library that exposes a small OpenCLIP-style API 
 
 > This project is not affiliated with, endorsed by, or an official distribution of Google, Google DeepMind, or the OpenCLIP project. OpenCLIP is a separate project; this package does not implement arbitrary OpenCLIP architectures.
 
-**Release status:** v0.1.0 is being prepared and has not been published to PyPI. The PyPI JSON endpoint for `openclip-gemma` returned 404 when checked on 2026-10-17. Recheck name availability before release.
+**Release status:** The `0.1.0rc1` candidate was installed from TestPyPI in a clean Python 3.12 environment, and image plus Japanese-text inference completed successfully (maintainer-confirmed). The stable `0.1.0` is prepared for release but has not been published to PyPI. Recheck package-name availability immediately before publication.
 
 ## Features
 
