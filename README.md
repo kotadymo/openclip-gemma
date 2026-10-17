@@ -22,8 +22,8 @@ The v0.1.0 wrapper supports text and still-image embeddings only. It does not im
 | Item | v0.1.0 status |
 |---|---|
 | Python | Python 3.12 |
-| OS | Windows x64 tested locally; CI is configured for Windows. Other operating systems are not yet release-validated. |
-| Device | CPU tested. CUDA can be requested when available but has not been validated for this release. |
+| OS | Windows 11 x64 tested locally with Python 3.12. Linux and macOS are unverified. |
+| Device | CPU FP32 and BF16 tested. CUDA is implemented but has not been validated on CUDA hardware. |
 | Precision | FP32 is the numerical baseline. BF16 was measured separately on CPU. FP16 is rejected. |
 | Model | `google/embeddinggemma-2`, pinned revision `914f7f89142e33e77833254d9c9b90c3cef7303b` |
 | Context | Up to 8192 tokens, following the model card. Batches use dynamic right padding; this is not OpenCLIP's fixed-width 77-token padding. |
@@ -185,10 +185,10 @@ The familiar factory/encoder shape does not imply full behavioral or numerical c
 - Image batches require a common preprocessed height and width. No extra resize or padding is applied to make different sizes stackable.
 - Tokenizer padding is dynamic, not fixed-width 77. The maximum supported context is 8192; practical memory usage at that limit has not been measured.
 - `forward()`, `get_logits()`, training, audio, and video are unsupported.
-- CPU FP32 was compared against the official Sentence Transformers inference path for the pinned revision. CUDA validation is outstanding. BF16 was measured separately and has no general numerical acceptance guarantee.
+- CPU FP32 and BF16 were tested against the official Sentence Transformers inference path for the pinned revision. CUDA validation is outstanding. BF16 was measured separately and has no general numerical acceptance guarantee.
 
 ## License and model
 
-The library source is licensed under [Apache License 2.0](LICENSE). The EmbeddingGemma 2 model card identifies the model as Apache 2.0 licensed; model weights are downloaded separately and are not redistributed in this package. See the [official model card](https://huggingface.co/google/embeddinggemma-2), [pinned model revision](https://huggingface.co/google/embeddinggemma-2/tree/914f7f89142e33e77833254d9c9b90c3cef7303b), and Google's [Gemma 4 license](https://ai.google.dev/gemma/docs/gemma_4_license) for the model's terms.
+This library is distributed under the [Apache License 2.0](LICENSE). The model card at the pinned [EmbeddingGemma 2 revision](https://huggingface.co/google/embeddinggemma-2/tree/914f7f89142e33e77833254d9c9b90c3cef7303b) declares `apache-2.0` and links Google's [Gemma 4 license](https://ai.google.dev/gemma/docs/gemma_4_license); those separate terms apply to model weights. No model weights are included in the source distribution or wheel.
 
-The project calls the Transformers/torchvision/Pillow APIs and does not bundle their code or copy OpenCLIP implementation source. Their respective licenses remain separate: [PyTorch](https://github.com/pytorch/pytorch/blob/main/LICENSE), [Transformers](https://github.com/huggingface/transformers/blob/main/LICENSE), [torchvision](https://github.com/pytorch/vision/blob/main/LICENSE), [Pillow](https://github.com/python-pillow/Pillow/blob/main/LICENSE), and [OpenCLIP (MIT)](https://github.com/mlfoundations/open_clip/blob/main/LICENSE).
+OpenCLIP is a separate project licensed under [MIT](https://github.com/mlfoundations/open_clip/blob/main/LICENSE). This package uses OpenCLIP as an API compatibility target but does not bundle or copy its implementation code. It also uses the PyTorch, Transformers, torchvision, and Pillow APIs without bundling their code; their licenses remain separate: [PyTorch](https://github.com/pytorch/pytorch/blob/main/LICENSE), [Transformers](https://github.com/huggingface/transformers/blob/main/LICENSE), [torchvision](https://github.com/pytorch/vision/blob/main/LICENSE), and [Pillow](https://github.com/python-pillow/Pillow/blob/main/LICENSE).

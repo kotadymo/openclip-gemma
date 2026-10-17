@@ -2,7 +2,7 @@
 
 - **文書ID**: EGOC-SPEC-001
 - **対象リリース**: v0.1.0
-- **状態**: Draft / M0〜M4のCPU統合検証完了。FP32/BF16を測定済み。CUDA未検証
+- **状態**: Draft / Windows 11・Python 3.12のCPU FP32/BF16実モデル統合検証完了（7 passed、2 skipped）。CUDA未検証
 - **作成日**: 2026-10-17
 - **配布パッケージ**: `openclip-gemma`
 - **対象モデル**: `google/embeddinggemma-2`
@@ -36,8 +36,8 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 | 項目 | v0.1.0 |
 | --- | --- |
 | Python | 3.12（初期サポート対象） |
-| OS | Windows x64（ローカル環境で検証。CIもWindowsに限定）。他OSは未検証のためサポートを主張しない |
-| デバイス | CPU（M0検証済み）、CUDA（未検証） |
+| OS | Windows 11 x64（ローカル環境で検証。CIもWindowsに限定）。Linux/macOSは未検証のためサポートを主張しない |
+| デバイス | CPU（FP32/BF16実モデル統合テスト済み）、CUDA（実装済み・CUDA実機未検証） |
 | モデル | `google/embeddinggemma-2` のみ |
 | モダリティ | テキスト、静止画像 |
 | 出力次元 | 768固定 |
@@ -47,13 +47,13 @@ OpenCLIPの全モデル対応、OpenCLIP学習基盤、損失関数の完全互�
 | デフォルト推論 | 推論専用、重みは学習済み |
 | モデル配布 | 重みは同梱せずHugging Faceから取得 |
 
-注：確認済み環境はPython 3.12.10 / Windows x64 / PyTorch 2.14.1 / torchvision 0.29.1 / Transformers 5.20.1 / Pillow 13.0.0。依存範囲内の全バージョン組み合わせを検証したものではない。CUDAは未検証。
+注：確認済み環境はPython 3.12.10 / Windows 11 x64 / PyTorch 2.14.1+cpu / torchvision 0.29.1 / Transformers 5.20.1 / Sentence Transformers 6.1.0 / Pillow 13.0.0。全実モデル統合テストは7 passed、2 skipped（CUDAテスト）、0 failed。依存範囲内の全バージョン組み合わせを検証したものではない。GitHub Actionsの成功はメンテナー報告に基づくが、その成功コミットと現在のrelease candidateの一致は未確認。CUDA実機およびLinux/macOSは未検証。
 
 ## 4. APIマトリックス
 
 | API | 優先 | v0.1.0 | 仕様 / 制限 |
 | --- | --- | --- | --- |
-| `create_model` | P0 | 対応 | 単一モデル。FP32/BF16。CPU/CUDA |
+| `create_model` | P0 | 対応 | 単一モデル。FP32/BF16。CPU検証済み、CUDA実機未検証 |
 | `create_model_and_transforms` | P0 | 対応 | `(model, preprocess_train, preprocess_val)`。Tensor入力前処理 |
 | `get_tokenizer` | P0 | M3実装 | `LongTensor[B,L]`。既定promptなし。モデルカード上限8192、動的padding |
 | `encode_image` | P0 | M2実装済み | `[B,3,H,W]` → `[B,768]`。CPU FP32検証済み、BF16測定済み、CUDA未検証 |
@@ -117,7 +117,7 @@ create_model_and_transforms(
 ```
 
 - **戻り値**：`(model, preprocess_train, preprocess_val)` を保証。
-- **P0画像入力**：`preprocess_val(PIL.Image.Image) -> torch.float32[3,H,W]`。`preprocess_val(img).unsqueeze(0)`は将来実装する`encode_image`の入力契約に適合する。
+- **P0画像入力**：`preprocess_val(PIL.Image.Image) -> torch.float32[3,H,W]`。`preprocess_val(img).unsqueeze(0)`は`encode_image`の入力契約に適合する。
 - `preprocess_train`は学習augmentationを行わず、`preprocess_val`と同じ決定的変換を返す。
 - v0.1.0は学習サポートなし。`preprocess_train`は評価用と同一の決定的変換とする。OpenCLIP標準のaugmentationと互換だとは主張しない。
 - 画像変換は固定したモデルrevisionの公式画像Processorメソッドを利用し、RGB変換、uint8画素でのリサイズ、1/255 rescaleの順序を保つ。返却TensorをProcessorに再投入する際はリサイズとrescaleを無効にし、二重適用を防ぐ。

@@ -5,8 +5,8 @@
 - ライブラリ: `openclip-gemma` / `openclip_gemma`
 - モデル: `google/embeddinggemma-2`
 - 固定revision: `914f7f89142e33e77833254d9c9b90c3cef7303b`
-- 評価環境: Python 3.12.10、PyTorch 2.14.1+cpu、Transformers 5.20.1、Sentence Transformers 6.1.0
-- CPU FP32を主基準とし、CPU BF16も別途測定。CUDAは利用できないため未検証。
+- 評価環境: Windows 11 x64、Python 3.12.10、PyTorch 2.14.1+cpu、Transformers 5.20.1、Sentence Transformers 6.1.0
+- CPU FP32を主基準とし、CPU BF16も別途測定。CUDA実機は利用できないため未検証。Linux/macOSも未検証。
 - M4ではOpenCLIP APIの呼び出し形状と代表的な推論フローを評価した。全OpenCLIPモデル・全入力との互換性を意味しない。
 
 数値比較の暫定FP32基準は、各埋め込みの最大絶対誤差 `<= 1e-4`、コサイン類似度 `>= 0.9999`。BF16にはこのFP32基準を適用しない。
@@ -57,7 +57,20 @@ CPU FP32では、同一revision・同一入力・同一dtype/deviceで比較し�
 
 CPU BF16では同じ統合比較で画像埋め込み、テキスト埋め込み、スコア行列の最大絶対誤差はいずれも`0.0`、コサイン類似度は約`1.0`だった。これは当該環境・revisionでの観測であり、全デバイスでのBF16一致保証ではない。CUDAは利用不可のため未検証。
 
-Zero-shot統合テストは**2 passed, 1 skipped**（CUDAケースをskip）。単体テストは当該時点で**74 passed**。
+M4時点のZero-shot統合テストは**2 passed, 1 skipped**（CUDAケースをskip）。単体テストは当該時点で**74 passed**。
+
+## M5.1 最終実モデル統合テスト
+
+Windows 11 / Python 3.12.10 / CPUで、固定revisionの全統合テストをオフライン実行した。対象はFactory/Wrapper、画像・テキストencoder、zero-shot、Sentence Transformers公式経路との比較である。
+
+```powershell
+$env:OPENCLIP_GEMMA_RUN_INTEGRATION = "1"
+$env:HF_HUB_OFFLINE = "1"
+$env:TRANSFORMERS_OFFLINE = "1"
+uv run --extra integration pytest tests/integration -v
+```
+
+結果は**7 passed, 2 skipped, 0 failed**。skipはCUDA専用テストで、実行環境にCUDAがなかったためである。CPU FP32の公式出力比較は画像・テキスト・zero-shotスコア行列の暫定閾値を満たし、CPU BF16の画像・テキスト・zero-shot検査も通過した。pytestの通常captureにより、この実行のケース別JSON数値は表示されなかった。次表は別途記録済みのM4測定値であり、今回再計測した値とは区別する。
 
 ## Tokenizerのpaddingとcontext length
 
@@ -83,12 +96,13 @@ uv run python examples\zero_shot_classification.py --demo --show-relative-softma
 
 ## 公開前の残課題
 
-1. CUDAでのFP32/BF16モデルロード、画像・テキスト推論、精度とメモリを検証する。現評価環境はCPU専用。
+1. CUDA実機でのFP32/BF16モデルロード、画像・テキスト推論、精度とメモリは未検証。公開文書ではCUDAを実装済み・実機未検証と明示し、検証済みとは主張しない。
 2. 8192 tokens近傍の実用的なメモリ・レイテンシ・バッチ上限を、対象ハードウェアごとに計測する。
-3. 公開するPyTorch/Transformers/Sentence Transformersバージョン範囲とOS/PythonのCI matrixを定め、clean installとwheel利用者経路を検証する。
-4. 入力画像のshape制約、Gemma用前処理、動的padding、Gemma token ID、`normalize=False`のネイティブ出力意味をAPIドキュメントで目立つ形で告知する。
-5. `forward()` / `get_logits()`、CLIPのlogit scale、学習APIは依然非対応。これらを前提とする既存コードは変更なしでは動作しない。
-6. BF16の誤差・可用性は環境依存であり、FP32の暫定誤差基準をBF16へ流用しない。
+3. 成功したGitHub Actions実行のコミットSHAと公開候補のコミットが一致するか確認する（今回未確認）。
+4. 著作権者およびApache-2.0で公開する権限を最終確認する。
+5. 入力画像のshape制約、Gemma用前処理、動的padding、Gemma token ID、`normalize=False`のネイティブ出力意味は公開APIの制約として維持する。
+6. `forward()` / `get_logits()`、CLIPのlogit scale、学習APIは依然非対応。これらを前提とする既存コードは変更なしでは動作しない。
+7. BF16の誤差・可用性は環境依存であり、FP32の暫定誤差基準をBF16へ流用しない。
 
 ## 参照資料
 
