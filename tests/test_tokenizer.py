@@ -183,7 +183,7 @@ def test_tokenizer_truncates_and_preserves_eos(
         ("unknown", None, None, ValueError, "Unsupported model_name"),
         ("embeddinggemma-2", "Unknown", None, ValueError, "Unsupported prompt_name"),
         ("embeddinggemma-2", None, 1, ValueError, "at least 2"),
-        ("embeddinggemma-2", None, 33, ValueError, "exceeds the model positional limit"),
+        ("embeddinggemma-2", None, 33, ValueError, "documented supported context limit"),
         ("embeddinggemma-2", None, True, ValueError, "integer of at least 2"),
     ],
 )
@@ -201,6 +201,31 @@ def test_get_tokenizer_rejects_unsupported_options(
             prompt_name=prompt_name,
             context_length=context_length,
         )
+
+
+def test_context_length_default_is_capped_by_official_model_card(
+    fake_hf_loaders: tuple[FakeHFAutoTokenizer, list[dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _ = fake_hf_loaders
+    monkeypatch.setattr(
+        tokenizer_module,
+        "AutoConfig",
+        SimpleNamespace(
+            from_pretrained=lambda *args, **kwargs: SimpleNamespace(
+                text_config=SimpleNamespace(max_position_embeddings=262144)
+            )
+        ),
+    )
+
+    tokenizer = get_tokenizer()
+
+    assert tokenizer.max_context_length == 8192
+    assert tokenizer.model_max_position_embeddings == 262144
+    assert tokenizer.context_length == 8192
+    with pytest.raises(ValueError, match="documented supported context limit of 8192"):
+        get_tokenizer(context_length=8193)
+    assert backend.padding_side == "right"
 
 
 @pytest.mark.parametrize(

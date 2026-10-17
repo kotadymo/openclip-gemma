@@ -8,6 +8,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from openclip_gemma.constants import MODEL_CARD_MAX_CONTEXT_LENGTH
+
 
 def _pool_and_normalize(
     outputs: Any,
@@ -64,6 +66,22 @@ class EmbeddingGemmaCLIP(nn.Module):
     def processor(self) -> Any:
         """Return the processor without registering it as a PyTorch submodule."""
         return self._processor
+
+    def to(self, *args: Any, **kwargs: Any) -> EmbeddingGemmaCLIP:
+        """Move the model while preventing unsupported FP16 conversions."""
+        requested_dtype = kwargs.get("dtype")
+        for argument in args:
+            if isinstance(argument, torch.dtype):
+                requested_dtype = argument
+            elif isinstance(argument, torch.Tensor):
+                requested_dtype = argument.dtype
+        if requested_dtype == torch.float16:
+            raise ValueError("FP16 is not supported; use FP32 or BF16.")
+        return super().to(*args, **kwargs)
+
+    def half(self) -> EmbeddingGemmaCLIP:
+        """Reject the PyTorch convenience conversion to unsupported FP16."""
+        raise ValueError("FP16 is not supported; use FP32 or BF16.")
 
     def encode_image(
         self,
@@ -214,10 +232,14 @@ class EmbeddingGemmaCLIP(nn.Module):
             raise RuntimeError(
                 "The backend configuration has no valid text positional limit."
             )
-        if text.shape[1] > max_context_length:
+        supported_context_length = min(
+            max_context_length,
+            MODEL_CARD_MAX_CONTEXT_LENGTH,
+        )
+        if text.shape[1] > supported_context_length:
             raise ValueError(
-                f"text sequence length {text.shape[1]} exceeds the model positional "
-                f"limit of {max_context_length}."
+                f"text sequence length {text.shape[1]} exceeds the documented "
+                f"supported context limit of {supported_context_length}."
             )
         if (text < 0).any().item() or (text >= vocab_size).any().item():
             raise ValueError(

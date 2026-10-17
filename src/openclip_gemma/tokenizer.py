@@ -8,7 +8,12 @@ from typing import Any
 import torch
 from transformers import AutoConfig, AutoTokenizer
 
-from openclip_gemma.factory import MODEL_ID, MODEL_NAME, MODEL_REVISION
+from openclip_gemma.constants import (
+    MODEL_CARD_MAX_CONTEXT_LENGTH,
+    MODEL_ID,
+    MODEL_NAME,
+    MODEL_REVISION,
+)
 
 OFFICIAL_PROMPTS = {
     "BitextMining": "task: search result | query: ",
@@ -42,11 +47,13 @@ class EmbeddingGemmaTokenizer:
         backend: Any,
         *,
         max_context_length: int,
+        model_max_position_embeddings: int,
         context_length: int,
         prompt_name: str | None,
     ) -> None:
         self.backend = backend
         self.max_context_length = max_context_length
+        self.model_max_position_embeddings = model_max_position_embeddings
         self.context_length = context_length
         self.prompt_name = prompt_name
         self.prompt = OFFICIAL_PROMPTS.get(prompt_name) if prompt_name else None
@@ -209,13 +216,17 @@ def get_tokenizer(
         raise RuntimeError(
             "The model configuration has no valid text max_position_embeddings."
         )
-    resolved_context_length = (
-        max_context_length if context_length is None else context_length
+    supported_context_length = min(
+        max_context_length,
+        MODEL_CARD_MAX_CONTEXT_LENGTH,
     )
-    if resolved_context_length > max_context_length:
+    resolved_context_length = (
+        supported_context_length if context_length is None else context_length
+    )
+    if resolved_context_length > supported_context_length:
         raise ValueError(
-            f"context_length={resolved_context_length} exceeds the model positional "
-            f"limit of {max_context_length}."
+            f"context_length={resolved_context_length} exceeds the documented "
+            f"supported context limit of {supported_context_length}."
         )
 
     try:
@@ -232,7 +243,8 @@ def get_tokenizer(
 
     return EmbeddingGemmaTokenizer(
         tokenizer,
-        max_context_length=max_context_length,
+        max_context_length=supported_context_length,
+        model_max_position_embeddings=max_context_length,
         context_length=resolved_context_length,
         prompt_name=prompt_name,
     )
