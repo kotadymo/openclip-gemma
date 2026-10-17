@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_model_integration:
+        description: Download model weights and run CPU reference integration tests
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  quality-and-wheel:
+    name: Unit tests, lint, build, and wheel install
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+          enable-cache: true
+
+      - name: Install project and development dependencies
+        run: uv sync --locked --group dev
+
+      - name: Run unit tests without model weights
+        run: uv run --locked pytest -m "not integration"
+
+      - name: Run Ruff
+        run: uv run --locked ruff check .
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Verify wheel contents
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          uv run --locked python tools\verify_wheel.py $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $sdist = (Get-ChildItem dist\*.tar.gz | Select-Object -First 1).FullName
+          uv run --locked python tools\verify_sdist.py $sdist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install wheel into a clean virtual environment and import it
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          uv venv --python 3.12 .venv-wheel-check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv pip install --python .venv-wheel-check\Scripts\python.exe $wheel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .venv-wheel-check\Scripts\python.exe -c "import importlib.metadata as m, openclip_gemma; assert m.version('openclip-gemma') == '0.1.0'; assert set(openclip_gemma.__all__) == {'EmbeddingGemmaCLIP', 'create_model', 'create_model_and_transforms', 'get_tokenizer'}; assert 'site-packages' in openclip_gemma.__file__; print(openclip_gemma.__file__)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  model-integration:
+    name: CPU model integration (manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_model_integration
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+          enable-cache: true
+
+      - name: Install integration dependencies
+        run: uv sync --locked --group dev --extra integration
+
+      - name: Run pinned-model integration tests
+        shell: pwsh
+        run: |
+          $env:OPENCLIP_GEMMA_RUN_INTEGRATION = "1"
+          uv run --locked pytest -m integration
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

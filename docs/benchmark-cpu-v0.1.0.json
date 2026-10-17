@@ -1,0 +1,73 @@
+{
+  "measured_at": "2026-10-17T06:25:34.675654+00:00",
+  "model_id": "google/embeddinggemma-2",
+  "model_revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
+  "device": "cpu",
+  "dtype": "float32",
+  "environment": {
+    "python": "3.12.10",
+    "os": "Windows 11",
+    "cpu": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "torch": "2.14.1+cpu",
+    "torch_threads": 20
+  },
+  "inputs": {
+    "image_batch_shape": [
+      2,
+      3,
+      672,
+      912
+    ],
+    "text_batch_shape": [
+      4,
+      9
+    ],
+    "text_count": 4,
+    "preprocessing_included_in_inference_latency": false
+  },
+  "warmup_runs_per_operation": 2,
+  "measurement_runs_per_operation": 5,
+  "load": {
+    "model_and_processor_ms": 4987.399900011951,
+    "tokenizer_and_config_ms": 2763.0905999976676
+  },
+  "latency": {
+    "image_one": {
+      "median_ms": 5482.224399980623,
+      "mean_ms": 5466.876439994667,
+      "min_ms": 4946.399099979317,
+      "max_ms": 5904.36720001162
+    },
+    "image_batch_2": {
+      "median_ms": 10236.21189998812,
+      "mean_ms": 10402.760239999043,
+      "min_ms": 9478.186399996048,
+      "max_ms": 11764.353300008224
+    },
+    "text_one": {
+      "median_ms": 76.52640002197586,
+      "mean_ms": 78.32480000797659,
+      "min_ms": 74.50230000540614,
+      "max_ms": 86.79550001397729
+    },
+    "text_batch_4": {
+      "median_ms": 116.65079998783767,
+      "mean_ms": 118.35200000205077,
+      "min_ms": 111.87160000554286,
+      "max_ms": 132.32620002236217
+    }
+  },
+  "memory": {
+    "baseline_rss_bytes": 340840448,
+    "after_model_and_processor_load_rss_bytes": 3632979968,
+    "peak_rss_bytes": 4272508928,
+    "peak_delta_from_baseline_bytes": 3931668480,
+    "sampling_interval_ms": 20
+  },
+  "notes": [
+    "Weights are loaded from the local Hugging Face cache or downloaded if absent.",
+    "Preprocessing and tokenization time are excluded from encoder latency.",
+    "Peak RSS is sampled and can miss short-lived allocation spikes.",
+    "This benchmark does not measure the 8192-token context limit."
+  ]
+}
