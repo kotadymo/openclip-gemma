@@ -14,7 +14,6 @@ import transformers
 from PIL import Image, ImageDraw, ImageOps
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModel, AutoProcessor
-
 from validate import (
     MODEL_ID,
     MODEL_REVISION,
