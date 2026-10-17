@@ -6,18 +6,19 @@ This checklist is a release gate, not evidence that a release has happened. Do n
 
 - [x] Distribution name `openclip-gemma`, import name `openclip_gemma`, and version `0.1.0` are declared in `pyproject.toml`.
 - [x] Python is restricted to the validated initial target, 3.12.
-- [x] Windows x64 is the only declared/CI OS target; Linux and macOS are not yet claimed.
+- [x] Windows 11 x64 is the only locally validated OS target; Linux and macOS are unverified and not claimed.
 - [x] Runtime dependency lower bounds use versions exercised in the local environment; upper major bounds avoid unreviewed major upgrades.
 - [x] Runtime requirements are limited to Pillow, PyTorch, Transformers, and torchvision; Sentence Transformers is an optional integration-test dependency.
 - [x] The model ID and revision are fixed in the package; no model weights are packaged.
 - [x] README examples use the public factory, tokenizer, and encoder APIs and explain their limits.
 - [x] Compatibility claims and unsupported APIs are documented.
-- [x] The source license is Apache-2.0. The EmbeddingGemma 2 model card specifies Apache-2.0 separately; its weights are not bundled.
-- [x] No OpenCLIP implementation source is copied into the package. OpenCLIP is referenced as the compatible API target and is separately MIT-licensed.
-- [x] The pinned EmbeddingGemma 2 model card was checked directly: its metadata states Apache-2.0 and links Google's Gemma 4 license.
+- [x] `LICENSE` contains the unmodified Apache License Version 2.0 text published by the Apache Software Foundation; `pyproject.toml` declares `Apache-2.0`. No project copyright holder was inferred or added.
+- [x] The pinned EmbeddingGemma 2 model card declares `apache-2.0` and links Google's Gemma 4 license; model weights are not bundled and remain subject to their separate terms.
+- [x] OpenCLIP is MIT-licensed. Its implementation source is neither copied nor bundled; it is referenced only as the API compatibility target.
+- [x] No third-party implementation code or `NOTICE` file is included in the project distribution; dependencies are installed separately under their own licenses.
 - [x] Reviewed direct runtime/optional dependency license files: PyTorch and torchvision are BSD-3-Clause/BSD-style; Transformers and Sentence Transformers are Apache-2.0; Pillow is MIT-CMU; psutil is BSD-3-Clause; pytest is MIT; Ruff is MIT. These libraries are installed as separate dependencies, not copied into this source package.
 - [x] PyPI availability checked on 2026-10-17: `https://pypi.org/pypi/openclip-gemma/json` returned HTTP 404. Recheck immediately before release; name availability can change.
-- [ ] Confirm the copyright holder and authority to publish under Apache-2.0.
+- [ ] Confirm contributors' authority to license the project code under Apache-2.0 before release.
 - [x] Check the exact pinned model revision's license; recheck its usage terms at release time.
 
 License sources:
@@ -36,16 +37,17 @@ License sources:
 - [x] Wheel and sdist inspections confirmed package/release files only; no tests, experiments, examples, or model weights.
 - [x] Installed the wheel and its dependencies into a fresh Python 3.12 virtual environment; import and public exports passed.
 - [x] Executed the README basic embedding, task-prompt/Japanese tokenizer, and zero-shot demo examples with the pinned cached model.
-- [ ] GitHub Actions CI has completed successfully on the target branch.
+- [x] GitHub Actions success is confirmed by the maintainer.
+- [ ] Confirm the successful GitHub Actions commit matches the current release candidate; this SHA comparison has not been verified.
 - [x] Targeted real-model wrapper/preprocessing integration passed locally: 1 passed for the pinned revision.
-- [ ] Run the complete manual reference-integration workflow, or explicitly accept the remaining CUDA limitation.
+- [x] Complete offline real-model integration suite ran on Windows 11 / Python 3.12.10 / CPU: 7 passed, 2 skipped, 0 failed; both skips are CUDA-only tests.
 
 ## Numerical and platform validation
 
 - [x] CPU FP32 image/text/zero-shot comparisons passed the provisional thresholds for the pinned revision.
 - [x] CPU BF16 was measured separately; results are environment-specific and do not establish a portable tolerance.
-- [ ] CUDA image and text integration tests pass on a documented CUDA/PyTorch combination, or CUDA is removed from the v0.1.0 supported-device claim.
-- [ ] Decide whether CPU-only validation is sufficient for the v0.1.0 P0 contract.
+- [x] Public support statement is limited to CPU FP32/BF16 validation; CUDA is implemented but explicitly unverified on hardware.
+- [x] The release policy accepts Windows 11 / Python 3.12 CPU validation while documenting CUDA and Linux/macOS as unverified.
 - [x] CPU load, inference latency, and sampled peak RSS were measured with the standalone benchmark.
 - [x] Documentation does not claim practical memory support for 8192-token sequences; measure before making that claim.
 
