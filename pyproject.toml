@@ -5,7 +5,9 @@ description = "OpenCLIP-style image and text inference with EmbeddingGemma 2"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "KotaN", email = "ai_keiba_unyou@googlegroups.com" }]
+authors = [
+    { name = "kotadymo" }
+]
 requires-python = ">=3.12,<3.13"
 keywords = [
     "embeddinggemma",
