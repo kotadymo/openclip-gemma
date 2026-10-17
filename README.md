@@ -2,9 +2,31 @@
 
 An independent Python inference library that exposes a small OpenCLIP-style API for Google's EmbeddingGemma 2. It lets compatible image-and-text embedding workflows use EmbeddingGemma 2 while keeping the model's official preprocessing, tokenizer, prompts, pooling, and normalization.
 
-> This project is not affiliated with, endorsed by, or an official distribution of Google, Google DeepMind, or the OpenCLIP project. OpenCLIP is a separate project; this package does not implement arbitrary OpenCLIP architectures.
+> [!IMPORTANT]
+> **Unofficial Project**
+>
+> `openclip-gemma` is an independent, unofficial project.
+> It is not affiliated with, endorsed by, sponsored by,
+> or officially maintained by Google, Google DeepMind,
+> or the OpenCLIP project.
+>
+> This library provides an OpenCLIP-inspired interface
+> for Google's EmbeddingGemma 2 model.
+> It is not a drop-in replacement for OpenCLIP and
+> does not claim full API compatibility.
 
-**Release status:** The `0.1.0rc1` candidate was installed from TestPyPI in a clean Python 3.12 environment, and image plus Japanese-text inference completed successfully (maintainer-confirmed). The stable `0.1.0` is prepared for release but has not been published to PyPI. Recheck package-name availability immediately before publication.
+## Release status
+
+Version 0.1.0 is available on PyPI.
+
+```bash
+pip install openclip-gemma==0.1.0
+```
+
+The initial release has been validated on Windows 11 x64
+with Python 3.12 and CPU inference.
+
+CUDA, Linux, and macOS have not yet been validated.
 
 ## Features
 
@@ -32,13 +54,13 @@ The environment used for the CPU reference checks was Python 3.12.10, PyTorch 2.
 
 ## Installation
 
-After the v0.1.0 release is published:
+Install the stable v0.1.0 release from PyPI:
 
 ```bash
-python -m pip install openclip-gemma
+python -m pip install openclip-gemma==0.1.0
 ```
 
-Install from the GitHub repository after these release changes are merged and available there:
+To install directly from the GitHub repository:
 
 ```bash
 python -m pip install "git+https://github.com/kotadymo/openclip-gemma.git"
@@ -186,6 +208,20 @@ The familiar factory/encoder shape does not imply full behavioral or numerical c
 - Tokenizer padding is dynamic, not fixed-width 77. The maximum supported context is 8192; practical memory usage at that limit has not been measured.
 - `forward()`, `get_logits()`, training, audio, and video are unsupported.
 - CPU FP32 and BF16 were tested against the official Sentence Transformers inference path for the pinned revision. CUDA validation is outstanding. BF16 was measured separately and has no general numerical acceptance guarantee.
+
+## About the name
+
+The name `openclip-gemma` reflects the purpose of this
+project: providing an OpenCLIP-inspired interface for
+Google's EmbeddingGemma 2 model.
+
+This is an independently developed library, not an
+official extension of OpenCLIP or a Google-maintained
+package.
+
+The names OpenCLIP and Gemma refer to their respective
+projects and technologies. No affiliation or endorsement
+is implied.
 
 ## License and model
 
