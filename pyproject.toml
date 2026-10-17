@@ -1,12 +1,12 @@
 [project]
 name = "openclip-gemma"
 version = "0.1.0"
-description = "Add your description here"
+description = "OpenCLIP-compatible inference API for EmbeddingGemma 2"
 readme = "README.md"
 authors = [
-    { name = "KotaN", email = "nemoto.dymo@gmail.com" }
+    { name = "KotaN", email = "ai_keiba_unyou@googlegroups.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = []
 
 [project.scripts]
@@ -15,3 +15,11 @@ openclip-gemma = "openclip_gemma:main"
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+m0 = [
+    "pillow>=13.0.0",
+    "sentence-transformers[image]>=6.1.0",
+    "torch>=2.14.1",
+    "transformers>=5.18.0.dev0",
+]
