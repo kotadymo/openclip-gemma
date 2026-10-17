@@ -64,7 +64,8 @@ jobs:
           $wheel = (Get-ChildItem dist/*.whl | Select-Object -First 1).FullName
           uv venv --python ${{ matrix.python-version }} .venv-wheel-check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $wheelPython = if ($IsWindows) { ".venv-wheel-check\Scripts\python.exe" } else { ".venv-wheel-check\bin\python" }
+          $wheelPython = if ($IsWindows) { ".venv-wheel-check/Scripts/python.exe" } else { ".venv-wheel-check/bin/python" }
+          $wheelPython = (Resolve-Path $wheelPython).Path
           uv pip install --python $wheelPython $wheel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $wheelPython -c "import importlib.metadata as m, openclip_gemma; assert m.version('openclip-gemma') == '$expectedVersion'; assert set(openclip_gemma.__all__) == {'EmbeddingGemmaCLIP', 'create_model', 'create_model_and_transforms', 'get_tokenizer'}; assert 'site-packages' in openclip_gemma.__file__; print(openclip_gemma.__file__)"
