@@ -1,8 +1,8 @@
-# Video frame search design (v0.2.0 development)
+# Video frame search design (v0.2.0rc1 candidate)
 
 ## Status and scope
 
-This branch exposes development APIs targeted for v0.2.0 to index sampled video frames and search them with Japanese or English text from `openclip_gemma.video_search`. They are not re-exported from the package root and are not part of the released `openclip-gemma==0.1.1` package. They reuse the existing image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers.
+The v0.2.0rc1 candidate exposes APIs to index sampled video frames and search them with Japanese or English text from `openclip_gemma.video_search`. They are not re-exported from the package root, are not part of the released `openclip-gemma==0.1.1` package, and have not yet been published to TestPyPI. They reuse the existing image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers.
 
 The prototype indexes frames independently. It does not recognize motion, event order, or temporal relationships across frames. Search scores are cosine similarities, not probabilities or calibrated confidence.
 

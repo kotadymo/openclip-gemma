@@ -9,17 +9,21 @@ from pathlib import Path
 
 REQUIRED_MODULES = {
     "openclip_gemma/__init__.py",
+    "openclip_gemma/batching.py",
     "openclip_gemma/constants.py",
     "openclip_gemma/factory.py",
+    "openclip_gemma/image_search.py",
+    "openclip_gemma/index_storage.py",
     "openclip_gemma/model.py",
     "openclip_gemma/tokenizer.py",
     "openclip_gemma/transforms.py",
+    "openclip_gemma/video_search.py",
 }
 WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_WHEEL_FILE_SIZE = 50_000_000
 
 
-def verify_wheel(wheel_path: Path, expected_version: str = "0.1.0") -> None:
+def verify_wheel(wheel_path: Path, expected_version: str = "0.2.0rc1") -> None:
     if not wheel_path.is_file() or wheel_path.suffix != ".whl":
         raise ValueError(f"Not a wheel file: {wheel_path}")
 
@@ -95,7 +99,7 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.1.0") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
-    parser.add_argument("--expected-version", default="0.1.0")
+    parser.add_argument("--expected-version", default="0.2.0rc1")
     args = parser.parse_args()
     try:
         verify_wheel(args.wheel, expected_version=args.expected_version)
