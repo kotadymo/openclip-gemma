@@ -1,8 +1,8 @@
-# Video frame search design (v0.2.0rc1 candidate)
+# Video frame search (v0.2.0)
 
 ## Status and scope
 
-The v0.2.0rc1 candidate exposes APIs to index sampled video frames and search them with Japanese or English text from `openclip_gemma.video_search`. They are not re-exported from the package root, are not part of the released `openclip-gemma==0.1.1` package, and have not yet been published to TestPyPI. They reuse the existing image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers.
+Version 0.2.0 exposes APIs to index sampled video frames and search them with Japanese or English text from `openclip_gemma.video_search`. They are not re-exported from the package root. They reuse the existing image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers.
 
 The prototype indexes frames independently. It does not recognize motion, event order, or temporal relationships across frames. Search scores are cosine similarities, not probabilities or calibrated confidence.
 
@@ -21,13 +21,13 @@ The wheel metadata comparison is not a substitute for install or decode tests on
 
 MP4 is the primary target. The scanner accepts `.mp4`, `.m4v`, `.mov`, `.mkv`, `.webm`, and `.avi` filename suffixes, but a suffix does not guarantee that the bundled FFmpeg build can decode every container/codec combination. Unsupported, corrupt, or empty videos fail with an error; the indexer does not silently omit them. Missing PTS, unusable time bases, and non-monotonic presentation timestamps are also explicit errors. There is no estimated-FPS fallback.
 
-The released `openclip-gemma==0.1.1` does not contain this extra or the video-search module. To use the prototype, install from a development source checkout:
+Install the optional video dependencies with `pip install "openclip-gemma[video]"`. To run the CLI examples, use a source checkout:
 
 ```bash
 uv sync --locked --group dev --extra video
 ```
 
-The optional dependency keeps video decoding out of base installs. The current prototype has been exercised with PyAV 19.0.1 on the development Windows/Python 3.12 environment; PyAV installation and actual video decoding have not been verified across every supported Python patch, Linux, or macOS.
+The optional dependency keeps video decoding out of base installs. PyAV 19.0.1 has been exercised on Windows/Python 3.12. PyAV installation and actual video decoding have not been verified across every supported Python patch, Linux, or macOS.
 
 ## Sampling and timestamp semantics
 

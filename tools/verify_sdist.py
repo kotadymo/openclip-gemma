@@ -5,7 +5,13 @@ from __future__ import annotations
 import argparse
 import sys
 import tarfile
+import tomllib
 from pathlib import Path, PurePosixPath
+
+from readme_validation import (
+    validate_distribution_metadata,
+    validate_readme,
+)
 
 REQUIRED_PATHS = {
     "LICENSE",
@@ -33,7 +39,7 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_ARCHIVE_FILE_SIZE = 50_000_000
 
 
-def verify_sdist(archive_path: Path, expected_version: str = "0.2.0rc1") -> None:
+def verify_sdist(archive_path: Path, expected_version: str = "0.2.0") -> None:
     if not archive_path.is_file() or not archive_path.name.endswith(".tar.gz"):
         raise ValueError(f"Not a source distribution archive: {archive_path}")
 
@@ -44,6 +50,37 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.2.0rc1") -> None
         missing = REQUIRED_PATHS.difference(normalized_paths)
         if missing:
             raise ValueError(f"Source distribution is missing files: {sorted(missing)}")
+
+        project_root = Path(__file__).resolve().parents[1]
+        readme_path = project_root / "README.md"
+        readme_members = [
+            member for member in members if PurePosixPath(member.name).name == "README.md"
+        ]
+        if len(readme_members) != 1:
+            raise ValueError("Source distribution must contain one README.md file.")
+        readme = (
+            archive.extractfile(readme_members[0])
+            .read()
+            .decode("utf-8")
+            .replace("\r\n", "\n")
+        )
+        source_readme = readme_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+        if readme != source_readme:
+            raise ValueError("Source distribution README does not match the project README.")
+        validate_readme(readme, readme_path, "sdist README", expected_version)
+
+        pyproject_members = [
+            member
+            for member in members
+            if PurePosixPath(member.name).name == "pyproject.toml"
+        ]
+        if len(pyproject_members) != 1:
+            raise ValueError("Source distribution must contain one pyproject.toml file.")
+        project = tomllib.loads(
+            archive.extractfile(pyproject_members[0])
+            .read()
+            .decode("utf-8")
+        )["project"]
 
         metadata_members = [
             member
@@ -57,6 +94,14 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.2.0rc1") -> None
             .read()
             .decode("utf-8")
             .replace("\r\n", "\n")
+        )
+        validate_distribution_metadata(
+            metadata,
+            expected_version,
+            project,
+            readme,
+            "sdist",
+            readme_path,
         )
         if f"Version: {expected_version}\n" not in metadata:
             raise ValueError("Source distribution metadata has an unexpected version.")
@@ -120,7 +165,7 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.2.0rc1") -> None
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
-    parser.add_argument("--expected-version", default="0.2.0rc1")
+    parser.add_argument("--expected-version", default="0.2.0")
     args = parser.parse_args()
     try:
         verify_sdist(args.archive, expected_version=args.expected_version)

@@ -7,6 +7,12 @@ import sys
 import zipfile
 from pathlib import Path
 
+from readme_validation import (
+    read_project_config,
+    validate_distribution_metadata,
+    validate_readme,
+)
+
 REQUIRED_MODULES = {
     "openclip_gemma/__init__.py",
     "openclip_gemma/batching.py",
@@ -23,9 +29,15 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_WHEEL_FILE_SIZE = 50_000_000
 
 
-def verify_wheel(wheel_path: Path, expected_version: str = "0.2.0rc1") -> None:
+def verify_wheel(wheel_path: Path, expected_version: str = "0.2.0") -> None:
     if not wheel_path.is_file() or wheel_path.suffix != ".whl":
         raise ValueError(f"Not a wheel file: {wheel_path}")
+
+    project_root = Path(__file__).resolve().parents[1]
+    readme_path = project_root / "README.md"
+    readme = readme_path.read_text(encoding="utf-8")
+    validate_readme(readme, readme_path, "README.md", expected_version)
+    project = read_project_config(project_root / "pyproject.toml")
 
     with zipfile.ZipFile(wheel_path) as archive:
         entries = archive.infolist()
@@ -76,6 +88,14 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.2.0rc1") -> None:
             "\r\n",
             "\n",
         )
+        validate_distribution_metadata(
+            metadata,
+            expected_version,
+            project,
+            readme,
+            "wheel",
+            readme_path,
+        )
         if "Name: openclip-gemma\n" not in metadata:
             raise ValueError("Wheel metadata has an unexpected distribution name.")
         if f"Version: {expected_version}\n" not in metadata:
@@ -99,7 +119,7 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.2.0rc1") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
-    parser.add_argument("--expected-version", default="0.2.0rc1")
+    parser.add_argument("--expected-version", default="0.2.0")
     args = parser.parse_args()
     try:
         verify_wheel(args.wheel, expected_version=args.expected_version)

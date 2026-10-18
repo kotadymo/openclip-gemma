@@ -1,8 +1,8 @@
-# Image indexing and text search (v0.2.0rc1 candidate)
+# Image indexing and text search (v0.2.0)
 
 ## Status and scope
 
-This candidate API builds a local image index and searches it with Japanese or English text. It is available from `openclip_gemma.image_search`, is not part of the released v0.1.1 package, and has not yet been published to TestPyPI. It may change before the v0.2.0 final release. Video and frame search are documented separately.
+Version 0.2.0 builds a local image index and searches it with Japanese or English text. The APIs are available from `openclip_gemma.image_search`. Video and frame search are documented separately.
 
 The prototype supports JPEG, PNG, and WebP files. It uses the pinned EmbeddingGemma 2 model, the supplied official image preprocessing transform, and the existing `encode_image()` and `encode_text()` methods. Image and text embeddings remain 768-dimensional. Model revision, preprocessing, tokenizer behavior, and the existing public API are unchanged.
 
@@ -48,7 +48,7 @@ Scoring operates on bounded blocks of 4,096 image vectors rather than materializ
 
 ## CLI
 
-From the repository root on the v0.2.0rc1 candidate branch:
+From the repository root in a v0.2.0 source checkout:
 
 ```bash
 uv sync --locked --group dev
@@ -71,4 +71,4 @@ uv run pytest tests/integration/test_image_search_integration.py -v
 
 Integration results validate embedding and search execution, not semantic retrieval quality. Synthetic test images must not be treated as evidence of recognition accuracy. Brute-force cosine search is appropriate for an initial correct implementation; FAISS or other indexing acceleration is deferred.
 
-The APIs are `build_or_update_image_index()` and `search_images()` in `openclip_gemma.image_search`; the batch iterator is in `openclip_gemma.batching`. They are not re-exported from the package root. No changes are made to the existing OpenCLIP-style API. These APIs are not available in the v0.1.1 PyPI distribution and have not yet been published to TestPyPI.
+The APIs are `build_or_update_image_index()` and `search_images()` in `openclip_gemma.image_search`; the batch iterator is in `openclip_gemma.batching`. They are not re-exported from the package root. No changes are made to the existing OpenCLIP-style API.
