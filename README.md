@@ -30,6 +30,10 @@ pip install openclip-gemma==0.1.1
 - 768-dimensional embeddings, task-specific text prompts, and CPU or CUDA device selection.
 - A pinned EmbeddingGemma 2 model revision; model weights are downloaded from Hugging Face on first use and are not bundled with this package.
 
+## Development roadmap
+
+The v0.1.1 public API supports image and text Tensor batches, but not file-based batch embedding. A streaming file-batch prototype is implemented and tested internally for the v0.2.0 development cycle; its interface is not part of the released public API. Image search is also planned for v0.2.0, while video-frame search is a later v0.3.0 design/prototype goal. See the [batch embedding development notes](docs/batch-embeddings-v0.2.0.md) for the current internal contract.
+
 ## Installation
 
 Python 3.12 and later are supported, up to but not including Python 3.15, except Python 3.14.1 (`>=3.12,<3.15,!=3.14.1`). Install into your active virtual environment using the command above.
