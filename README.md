@@ -77,7 +77,7 @@ The in-memory graphic only demonstrates how to call the API; it is not evidence 
 
 `create_model_and_transforms()` returns `(model, preprocess_train, preprocess_val)`. This inference-only package uses the same official preprocessing for both transforms. `encode_image()` expects the output of the supplied preprocessing function; do not resize or normalize that tensor a second time.
 
-The examples use CPU by default. To request CUDA, set `device="cuda"` when creating the model and move input tensors to the same device. This requires a compatible CUDA-enabled PyTorch installation and GPU; see the environment table below because physical GPU inference has not yet been verified for this release.
+The examples use CPU by default. To request CUDA, set `device="cuda"` when creating the model and move input tensors to the same device. CUDA inference was tested on the specific GPU listed below; this result does not guarantee support for every NVIDIA GPU or driver combination.
 
 ## Japanese text
 
@@ -184,8 +184,24 @@ This is not a drop-in replacement: an OpenCLIP tokenizer, checkpoint, or arbitra
 | Windows 11 x64, Python 3.12, 3.13, and 3.14 (except 3.14.1), CPU FP32/BF16 | Real-model image and text inference tested. Python 3.14 testing used 3.14.8. |
 | Windows and Ubuntu CI, Python 3.12, 3.13, and 3.14 | Unit tests, lint, build, and wheel checks passed. Ubuntu CI does not test real-model inference. |
 | Ubuntu/Linux real-model inference | Not verified. |
-| CUDA hardware inference | Not verified on a GPU. The implementation accepts CUDA devices when a compatible CUDA-enabled PyTorch installation and GPU are available. |
+| CUDA real-model inference | Tested on an NVIDIA GeForce RTX 4070 Ti SUPER (16 GiB), driver 610.88, with Python 3.12.10, PyTorch 2.14.1+cu130, torchvision 0.29.1+cu130, and CUDA runtime 13.0. FP32 and BF16 image and text inference passed. Other GPUs and driver/runtime combinations are not guaranteed. |
 | macOS | Not verified. |
+
+### CUDA verification results
+
+The CUDA integration tests completed with **2 passed, 0 failed, 0 skipped** on the GPU listed above. They compared CPU and CUDA results using the same precision and fixed model revision (`914f7f89142e33e77833254d9c9b90c3cef7303b`). Both modalities returned finite 768-dimensional embeddings.
+
+| Precision | Image max absolute error vs CPU | Text max absolute error vs CPU | Image cosine similarity | Text cosine similarity |
+| --- | ---: | ---: | ---: | ---: |
+| FP32 | 9.45e-8 | 6.52e-8 | 1.000000 | 1.000000 |
+| BF16 | 0.001953125 | 0.001953125 | 0.999968 | 0.999975 |
+
+| Precision | Synchronized model load | Image latency median | Text batch (2) latency median | PyTorch peak allocated |
+| --- | ---: | ---: | ---: | ---: |
+| FP32 | 4.43 s | 170.1 ms | 53.1 ms | 2,992 MiB |
+| BF16 | 4.16 s | 124.3 ms | 62.8 ms | 1,522 MiB |
+
+Latency measurements used three warm-up runs followed by ten measured runs per modality, with CUDA synchronization around each timed call. Model files were already cached, so model-load times do not include downloading. Peak allocated memory is PyTorch's measurement for the model and inference workload, not total system VRAM use. These timings are measurements from one Windows development PC, not performance guarantees.
 
 Additional input and numerical constraints:
 
@@ -214,7 +230,21 @@ $env:OPENCLIP_GEMMA_RUN_INTEGRATION = "1"
 uv run pytest tests/integration -v
 ```
 
-The implementation has CUDA test coverage that skips when CUDA is unavailable, but CUDA inference has not yet been verified on physical GPU hardware. Use a CUDA-enabled PyTorch/torchvision build compatible with your driver and GPU, then run the integration suite on that GPU; a CPU-only PyTorch installation cannot validate CUDA behavior. Linux CI success should not be interpreted as Linux real-model inference validation.
+For a CUDA test environment on Windows, create a separate environment so the existing environment is left untouched. The PyTorch and torchvision versions below were used for the RTX 4070 Ti SUPER verification. Install the CUDA wheels from PyTorch's official CUDA 13.0 index; check [PyTorch's installation selector](https://pytorch.org/get-started/locally/) for other supported configurations.
+
+```powershell
+uv venv --python 3.12 .venv-cuda
+uv pip install --python .venv-cuda\Scripts\python.exe -e ".[test,integration]"
+uv pip install --python .venv-cuda\Scripts\python.exe --reinstall --no-deps `
+  --index-url https://download.pytorch.org/whl/cu130 `
+  torch==2.14.1 torchvision==0.29.1
+
+.venv-cuda\Scripts\python.exe -c "import torch; cuda=torch.cuda.is_available(); print('PyTorch:', torch.__version__, 'CUDA runtime:', torch.version.cuda, 'CUDA available:', cuda, 'BF16 supported:', torch.cuda.is_bf16_supported() if cuda else False)"
+$env:OPENCLIP_GEMMA_RUN_INTEGRATION = "1"
+.venv-cuda\Scripts\python.exe -m pytest tests/integration/test_cuda_integration.py -v -s
+```
+
+The test skips CUDA checks when CUDA is unavailable; verify the probe reports `torch.cuda.is_available() == True` before treating a skip as a hardware validation. This CUDA result does not establish Linux real-model inference support. Linux and macOS real-model inference remain unverified.
 
 ## License and model terms
 
