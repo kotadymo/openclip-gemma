@@ -43,6 +43,9 @@ test = [
 integration = [
     "sentence-transformers[image]>=6.1.0,<7",
 ]
+video = [
+    "av>=19.0.1,<20",
+]
 benchmark = [
     "psutil>=7.1.0,<8",
 ]

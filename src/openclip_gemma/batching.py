@@ -74,6 +74,70 @@ def _stream_image_embeddings(
         yield from _encode_image_chunk(model, pending, batch_size)
 
 
+def _iter_preprocessed_embeddings[EmbeddingKey](
+    model: _ImageEncoder,
+    image_items: Iterable[tuple[EmbeddingKey, torch.Tensor]],
+    *,
+    batch_size: int = _DEFAULT_BATCH_SIZE,
+    item_kind: str = "images",
+) -> Iterator[tuple[EmbeddingKey, torch.Tensor]]:
+    """Batch preprocessed image tensors, yielding their keys and CPU embeddings."""
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int):
+        raise TypeError("batch_size must be a positive integer.")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be greater than zero.")
+    if isinstance(image_items, (str, PathLike)):
+        raise TypeError("image_items must be an iterable of keyed image tensors.")
+    try:
+        items = iter(image_items)
+    except TypeError as error:
+        raise TypeError("image_items must be an iterable of keyed image tensors.") from error
+
+    return _stream_preprocessed_embeddings(model, items, batch_size, item_kind)
+
+
+def _stream_preprocessed_embeddings[EmbeddingKey](
+    model: _ImageEncoder,
+    image_items: Iterator[tuple[EmbeddingKey, torch.Tensor]],
+    batch_size: int,
+    item_kind: str,
+) -> Iterator[tuple[EmbeddingKey, torch.Tensor]]:
+    pending: list[tuple[int, EmbeddingKey, torch.Tensor]] = []
+    for input_index, item in enumerate(image_items):
+        try:
+            key, image_tensor = item
+        except (TypeError, ValueError) as error:
+            raise TypeError(
+                f"Preprocessed item at input index {input_index} must be a (key, Tensor) pair."
+            ) from error
+        if not isinstance(image_tensor, torch.Tensor):
+            raise TypeError(
+                f"Preprocessed item at input index {input_index} is not a torch.Tensor."
+            )
+        if image_tensor.ndim != 3:
+            raise ValueError(
+                f"Preprocessed item at input index {input_index} must have shape [C,H,W]; "
+                f"received {tuple(image_tensor.shape)}."
+            )
+        pending.append((input_index, key, image_tensor))
+        if len(pending) == batch_size:
+            yield from _encode_image_chunk(
+                model,
+                pending,
+                batch_size,
+                item_kind=item_kind,
+            )
+            pending.clear()
+
+    if pending:
+        yield from _encode_image_chunk(
+            model,
+            pending,
+            batch_size,
+            item_kind=item_kind,
+        )
+
+
 def _load_preprocessed_image(
     path: Path,
     preprocess: Callable[[Image.Image], torch.Tensor],
@@ -109,17 +173,22 @@ def _load_preprocessed_image(
     return image_tensor
 
 
-def _encode_image_chunk(
+def _encode_image_chunk[EmbeddingKey](
     model: _ImageEncoder,
-    items: list[_ImageItem],
+    items: list[tuple[int, EmbeddingKey, torch.Tensor]],
     batch_size: int,
-) -> Iterator[ImageEmbedding]:
+    *,
+    item_kind: str = "images",
+) -> Iterator[tuple[EmbeddingKey, torch.Tensor]]:
     try:
         model_device = next(model.parameters()).device
     except StopIteration as error:
         raise RuntimeError("The model has no parameters to determine its device.") from error
 
-    groups: dict[tuple[int, ...], list[tuple[int, _ImageItem]]] = {}
+    groups: dict[
+        tuple[int, ...],
+        list[tuple[int, tuple[int, EmbeddingKey, torch.Tensor]]],
+    ] = {}
     for position, item in enumerate(items):
         groups.setdefault(tuple(item[2].shape), []).append((position, item))
 
@@ -134,8 +203,9 @@ def _encode_image_chunk(
                 features = model.encode_image(image_batch)
         except torch.cuda.OutOfMemoryError as error:
             raise RuntimeError(
-                "CUDA ran out of memory while embedding images at input indices "
-                f"{input_indices} (batch_size={batch_size}); reduce batch_size."
+                f"CUDA ran out of memory while embedding {item_kind} at input indices "
+                f"{input_indices} (items={[str(item[1]) for _, item in group]}, "
+                f"batch_size={batch_size}); reduce batch_size."
             ) from error
 
         expected_shape = (len(group), _EMBEDDING_DIMENSION)

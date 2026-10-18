@@ -33,7 +33,7 @@ pip install openclip-gemma==0.1.1
 
 ## Development roadmap
 
-The released v0.1.1 package supports image and text Tensor batches. The v0.2.0 development branch now contains internal streaming image embedding, incremental image indexing, a text-to-image search foundation, and a CLI demo; these features are not part of the released package API. Video-frame search remains a later v0.3.0 design/prototype goal. See the [batch embedding notes](docs/batch-embeddings-v0.2.0.md) and [image search design](docs/image-search-v0.2.0.md).
+The released v0.1.1 package supports image and text Tensor batches. This development branch also contains internal streaming image embedding, incremental image indexing, text-to-image search, and a PyAV-based video-frame search prototype. These development features are not included in the released package API. See the [batch embedding notes](docs/batch-embeddings-v0.2.0.md), [image search design](docs/image-search-v0.2.0.md), and [video search prototype notes](docs/video-search-v0.3.0.md).
 
 ## Installation
 
@@ -166,6 +166,24 @@ uv run python examples/image_search.py search \
 Indexing again updates added, changed, and deleted files. Change `--device cpu` to `--device cuda` to request CUDA inference. Lower `--batch-size` if GPU memory is limited. Search uses EmbeddingGemma's `SearchQuery` task prompt and reports unscaled cosine similarity scores, not probabilities. Results with equal scores are ordered by relative image path.
 
 The local index is a versioned NumPy `.npz` archive containing JSON metadata and float32 embeddings; it is read with pickle loading disabled and replaced atomically after a successful update. File changes are detected using relative path, size, and modification time in nanoseconds. Touching or rewriting an unchanged image can trigger an unnecessary re-embedding; rewriting a file while preserving both size and timestamp can evade detection. Remove the index and rebuild it if a full refresh is needed. A damaged image or incompatible/corrupt index stops the operation with an error rather than silently skipping data. See the [image search design and storage notes](docs/image-search-v0.2.0.md).
+
+## Video frame search development demo
+
+The development branch contains an internal prototype that samples video frames and searches them with Japanese or English text. It requires the optional PyAV dependency and is not available from the released `openclip-gemma==0.1.1` package. Install the development dependencies from a checkout:
+
+```bash
+uv sync --locked --group dev --extra video
+uv run python examples/video_search.py index \
+  --videos ./videos --output ./video-index --interval 1.0 \
+  --batch-size 8 --device cpu --recursive
+uv run python examples/video_search.py search \
+  --index ./video-index --query "人がドリルで穴を開けている" \
+  --top-k 5 --device cpu
+```
+
+MP4 is the primary target; `.mp4`, `.m4v`, `.mov`, `.mkv`, `.webm`, and `.avi` paths are considered. Actual container and codec support depends on the FFmpeg build bundled with PyAV. The decoder samples the first frame whose presentation timestamp reaches each interval target and records its PTS-derived time; the requested interval is a target, not a promise that a frame exists at that exact time. Video is decoded sequentially, while only a bounded frame batch is sent through the image encoder. Reduce `--batch-size` if GPU memory is limited.
+
+Search ranks individual sampled frames by cosine similarity. It does not understand motion, event order, or temporal relationships, and a scene between sampled timestamps can be missed. The local `video-index.npz` archive stores frame embeddings and timing metadata separately from image indexes, uses pickle-disabled NumPy loading, and is atomically replaced. Video additions, changes, and deletions are reconciled by relative path, file size, and modification time in nanoseconds; preserving both size and timestamp can evade change detection. See the [video search prototype notes](docs/video-search-v0.3.0.md) for storage, sampling, validation, and decoder limitations.
 
 ## OpenCLIP differences and compatibility
 

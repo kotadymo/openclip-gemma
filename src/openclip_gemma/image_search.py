@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
-import tempfile
-import zipfile
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -19,6 +15,12 @@ from PIL import Image
 
 from openclip_gemma.batching import ImagePath, _iter_image_embeddings
 from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
+from openclip_gemma.index_storage import (
+    IndexArchiveError,
+    _array_sha256,
+    _open_numpy_archive,
+    _save_numpy_archive_atomic,
+)
 from openclip_gemma.tokenizer import get_tokenizer
 
 _INDEX_FILENAME = "index.npz"
@@ -198,18 +200,6 @@ def _parse_record(value: object) -> _ImageRecord:
     return _ImageRecord(path, size_bytes, mtime_ns)
 
 
-def _embedding_sha256(embeddings: _EmbeddingMatrix) -> str:
-    digest = hashlib.sha256()
-    for start in range(0, len(embeddings), _SCORE_BLOCK_SIZE):
-        block = np.asarray(
-            embeddings[start : start + _SCORE_BLOCK_SIZE],
-            dtype="<f4",
-            order="C",
-        )
-        digest.update(block.tobytes())
-    return digest.hexdigest()
-
-
 def _metadata_for_index(index: _ImageIndex, precision: str) -> dict[str, object]:
     return {
         "format_version": _INDEX_FORMAT_VERSION,
@@ -230,7 +220,7 @@ def _metadata_for_index(index: _ImageIndex, precision: str) -> dict[str, object]
             }
             for record in index.records
         ],
-        "embedding_sha256": _embedding_sha256(index.embeddings),
+        "embedding_sha256": _array_sha256(index.embeddings),
     }
 
 
@@ -243,37 +233,14 @@ def _save_index(index_dir: Path, index: _ImageIndex, precision: str) -> Path:
     if not np.isfinite(embeddings).all():
         raise ImageIndexError("Refusing to save non-finite image embeddings.")
 
-    metadata = _metadata_for_index(index, precision)
-    metadata_bytes = json.dumps(
-        metadata,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    temporary_path: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w+b",
-            prefix=".image-index-",
-            suffix=".npz",
-            dir=index_dir,
-            delete=False,
-        ) as temporary_file:
-            temporary_path = Path(temporary_file.name)
-            np.savez(
-                temporary_file,
-                metadata=np.frombuffer(metadata_bytes, dtype=np.uint8),
-                embeddings=embeddings,
-            )
-            temporary_file.flush()
-            os.fsync(temporary_file.fileno())
-        os.replace(temporary_path, index_path)
-    except OSError as error:
-        raise ImageIndexError(f"Could not save image index to {index_path}: {error}") from error
-    finally:
-        if temporary_path is not None and temporary_path.exists():
-            temporary_path.unlink()
-    return index_path
+        return _save_numpy_archive_atomic(
+            index_path,
+            _metadata_for_index(index, precision),
+            {"embeddings": embeddings},
+        )
+    except IndexArchiveError as error:
+        raise ImageIndexError(str(error)) from error
 
 
 def _load_index(
@@ -284,30 +251,22 @@ def _load_index(
 ) -> _ImageIndex:
     index_path = Path(index_dir).expanduser() / _INDEX_FILENAME
     try:
-        with np.load(index_path, allow_pickle=False) as archive:
-            if set(archive.files) != {"metadata", "embeddings"}:
-                raise ImageIndexError("Image index archive has unexpected entries.")
-            metadata_array = archive["metadata"]
-            if metadata_array.dtype != np.uint8 or metadata_array.ndim != 1:
-                raise ImageIndexError("Image index metadata has an invalid representation.")
-            try:
-                metadata = json.loads(metadata_array.tobytes().decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise ImageIndexError("Image index metadata is not valid UTF-8 JSON.") from error
-            if not isinstance(metadata, dict):
-                raise ImageIndexError("Image index metadata must be a JSON object.")
+        with _open_numpy_archive(
+            index_path,
+            expected_arrays=frozenset({"embeddings"}),
+        ) as (metadata, archive):
             records, image_root, recursive = _validate_metadata(
                 metadata,
                 expected_root=expected_root,
                 expected_precision=expected_precision,
             )
             embeddings = archive["embeddings"]
-    except FileNotFoundError as error:
-        raise ImageIndexError(f"Image index not found: {index_path}") from error
+    except IndexArchiveError as error:
+        if not index_path.exists():
+            raise ImageIndexError(f"Image index not found: {index_path}") from error
+        raise ImageIndexError(f"Could not read image index {index_path}: {error}") from error
     except ImageIndexError:
         raise
-    except (OSError, ValueError, EOFError, KeyError, zipfile.BadZipFile) as error:
-        raise ImageIndexError(f"Could not read image index {index_path}: {error}") from error
 
     expected_shape = (len(records), _EMBEDDING_DIMENSION)
     if embeddings.dtype != np.float32 or embeddings.shape != expected_shape:
@@ -319,7 +278,7 @@ def _load_index(
         raise ImageIndexError("Image index entry count does not match its metadata.")
     if not np.isfinite(embeddings).all():
         raise ImageIndexError("Image index contains non-finite embeddings.")
-    if _embedding_sha256(embeddings) != metadata["embedding_sha256"]:
+    if _array_sha256(embeddings) != metadata["embedding_sha256"]:
         raise ImageIndexError("Image index embedding checksum does not match its metadata.")
     return _ImageIndex(image_root, recursive, records, embeddings)
 
