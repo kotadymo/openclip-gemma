@@ -192,7 +192,7 @@ tokenizer = open_clip.get_tokenizer("embeddinggemma-2")
 # print(image_logits.shape, text_logits.shape)  # [1, 2], [2, 1]
 ```
 
-使用例では`logit_scale_mode="cosine"`を必ず明示し、CLIP学習済みlogitsや分類確率と誤解させない。実行用の完全スクリプトと入力画像を`examples/`に別途用意する。
+使用例では`logit_scale_mode="cosine"`を必ず明示し、CLIP学習済みlogitsや分類確率と誤解させない。実行用の完全スクリプトを`examples/openclip_compatibility_v030.py`に用意し、外部画像を必要としない合成画像を既定入力とする。`--image`で利用者の画像も指定できる。
 
 ## 8. テスト設計と合否条件
 

@@ -305,5 +305,61 @@ call to avoid suggesting otherwise.
 - Training, fine-tuning, arbitrary OpenCLIP architectures, OpenCLIP checkpoint
   loading, and FP16 remain outside the supported surface.
 
+## Revalidation of the executable example and CPU BF16 path
+
+The standalone example
+[`examples/openclip_compatibility_v030.py`](../examples/openclip_compatibility_v030.py)
+was run on 2026-10-19 with its generated synthetic image and two search-query
+texts. `--image` can instead be used to provide a local image. The example
+exercises Factory discovery/loading, both `forward()` return formats, and
+`get_logits()`.
+
+| Device and precision | Feature dtype | Image/text feature shapes | Tuple/dict max difference | `get_logits()` vs direct cosine max difference | PyTorch peak allocated / reserved |
+| --- | --- | --- | ---: | ---: | --- |
+| CPU FP32 | `torch.float32` | `[1, 768]` / `[2, 768]` | 0.0 | 0.0 | Not measured |
+| CPU BF16 | `torch.bfloat16` | `[1, 768]` / `[2, 768]` | 0.0 | 0.0 | Not measured |
+| CUDA FP32 | `torch.float32` | `[1, 768]` / `[2, 768]` | 0.0 | 0.0 | 3,137,347,072 / 3,214,934,016 bytes |
+| CUDA BF16 | `torch.bfloat16` | `[1, 768]` / `[2, 768]` | 0.0 | 0.0 | 1,594,758,656 / 1,646,264,320 bytes |
+
+The example's zero differences validate API output consistency for these
+inputs; they are **not** reference-model embedding errors. Its memory figures
+are PyTorch allocator peaks after the model has loaded, for one synthetic
+image, two texts, and the example's forward and logits calls. The measured
+GPU was an NVIDIA GeForce RTX 4070 Ti SUPER with 17,170,956,288 bytes reported
+as total device memory. Host process RSS was not measured.
+
+The complete opt-in integration selection was rerun with
+`OPENCLIP_GEMMA_RUN_INTEGRATION=1` using Python 3.12.10, PyTorch 2.14.1+cu130,
+Transformers 5.20.1, Sentence Transformers 6.1.0, and PyAV 19.0.1. It completed
+with **21 passed, 0 failed, 0 skipped, 164 deselected** in 863.50 seconds.
+The CUDA device was the RTX 4070 Ti SUPER (CUDA runtime 13.0; BF16 supported).
+
+The integration comparisons against the pinned Sentence Transformers
+implementation measured:
+
+| Comparison | Dtype | Device | Maximum absolute error | Notes |
+| --- | --- | --- | ---: | --- |
+| Image embeddings | FP32 | CPU | `3.2223761081695557e-7` | Maximum over RGB, grayscale, wide, tall, batch, and normalized cases |
+| Text embeddings | FP32 | CPU | `3.982335329055786e-6` | Maximum over no prompt, `SearchQuery`, `Classification`, normalized, and EOS cases |
+| Image embeddings | BF16 | CPU | `0.0` | Exact after BF16 quantization for tested fixtures |
+| Text embeddings | BF16 | CPU | `0.0` | Exact after BF16 quantization for tested fixtures |
+| Image embeddings | FP32 | CUDA | `2.682209014892578e-7` | Additional pinned-reference run; two synthetic images |
+| Text embeddings | FP32 | CUDA | `5.345791578292847e-6` | Same run; `Classification` prompt |
+| Cosine score matrix | FP32 | CUDA | `2.1457672119140625e-6` | Compared with the reference image/text matrix |
+
+The CUDA FP32 reference run reported minimum embedding cosine similarity
+`1.0` for both modalities. Separately, the CUDA integration test measured
+cross-device CPU-to-CUDA maximum errors of `9.452924132347107e-8` for images
+and `6.51925802230835e-8` for text in FP32, with a peak allocated value of
+`3,171,772,416` bytes. In BF16 it measured `0.001953125` for both modalities,
+with cosine similarities `0.9999682903289795` (image) and
+`0.9999750852584839` (text), and peak allocated memory of `1,587,407,872`
+bytes. These BF16 CUDA figures are CPU-versus-CUDA comparisons, not a
+CUDA-BF16-versus-Sentence-Transformers comparison.
+
+The full integration run also covered image preprocessing, batch inference,
+search, video frame indexing/search, and the OpenCLIP-style API. The examples
+use synthetic fixtures; they do not establish real-media retrieval quality.
+
 See the [migration guide](migration-v0.3.0.md) for end-to-end examples and
 strict/cosine mode guidance.
