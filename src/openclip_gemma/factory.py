@@ -11,6 +11,8 @@ from openclip_gemma.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
 from openclip_gemma.model import EmbeddingGemmaCLIP
 from openclip_gemma.transforms import EmbeddingGemmaPreprocess
 
+PRETRAINED_OFFICIAL = "official"
+
 
 def _validate_factory_options(
     model_name: str,
@@ -18,8 +20,22 @@ def _validate_factory_options(
     precision: str,
     device: str | torch.device,
     cache_dir: str | None,
+    output_dict: bool,
+    logit_scale_mode: str,
     kwargs: dict[str, Any],
 ) -> tuple[torch.device, torch.dtype]:
+    if not isinstance(output_dict, bool):
+        raise TypeError("output_dict must be a bool.")
+    if not isinstance(logit_scale_mode, str):
+        raise TypeError("logit_scale_mode must be a string.")
+    if logit_scale_mode not in {"strict", "cosine"}:
+        raise ValueError("logit_scale_mode must be 'strict' or 'cosine'.")
+    if cache_dir is not None and not isinstance(cache_dir, str):
+        raise TypeError("cache_dir must be a string or None.")
+    if kwargs:
+        names = ", ".join(sorted(kwargs))
+        raise TypeError(f"Unsupported keyword argument(s): {names}.")
+
     if not isinstance(model_name, str):
         raise TypeError("model_name must be a string.")
     normalized_model_name = model_name.strip().lower().replace("_", "-")
@@ -34,10 +50,10 @@ def _validate_factory_options(
         )
     if not isinstance(pretrained, str):
         raise TypeError("pretrained must be a string.")
-    if pretrained != MODEL_ID:
+    if pretrained not in {PRETRAINED_OFFICIAL, MODEL_ID}:
         raise ValueError(
             f"Unsupported pretrained checkpoint {pretrained!r}; "
-            f"only {MODEL_ID!r} is supported."
+            f"use {PRETRAINED_OFFICIAL!r} or {MODEL_ID!r}."
         )
 
     if not isinstance(precision, str):
@@ -86,12 +102,6 @@ def _validate_factory_options(
                 f"found {device_count} CUDA device(s)."
             )
 
-    if cache_dir is not None and not isinstance(cache_dir, str):
-        raise TypeError("cache_dir must be a string or None.")
-    if kwargs:
-        names = ", ".join(sorted(kwargs))
-        raise TypeError(f"Unsupported keyword argument(s): {names}.")
-
     return resolved_device, dtype
 
 
@@ -100,6 +110,8 @@ def _load_model(
     cache_dir: str | None,
     device: torch.device,
     dtype: torch.dtype,
+    output_dict: bool,
+    logit_scale_mode: str,
 ) -> EmbeddingGemmaCLIP:
     try:
         backend = AutoModel.from_pretrained(
@@ -132,7 +144,12 @@ def _load_model(
         raise RuntimeError("The loaded processor has no image_processor.")
 
     backend = backend.to(device=device, dtype=dtype).eval()
-    return EmbeddingGemmaCLIP(backend=backend, processor=processor).eval()
+    return EmbeddingGemmaCLIP(
+        backend=backend,
+        processor=processor,
+        output_dict=output_dict,
+        logit_scale_mode=logit_scale_mode,
+    ).eval()
 
 
 def create_model(
@@ -141,8 +158,11 @@ def create_model(
     precision: str = "fp32",
     device: str | torch.device = "cpu",
     cache_dir: str | None = None,
+    *,
+    output_dict: bool = False,
+    logit_scale_mode: str = "strict",
     **kwargs: Any,
-) -> torch.nn.Module:
+) -> EmbeddingGemmaCLIP:
     """Load the pinned EmbeddingGemma 2 checkpoint as an OpenCLIP-style module."""
     resolved_device, dtype = _validate_factory_options(
         model_name,
@@ -150,9 +170,17 @@ def create_model(
         precision,
         device,
         cache_dir,
+        output_dict,
+        logit_scale_mode,
         kwargs,
     )
-    return _load_model(cache_dir=cache_dir, device=resolved_device, dtype=dtype)
+    return _load_model(
+        cache_dir=cache_dir,
+        device=resolved_device,
+        dtype=dtype,
+        output_dict=output_dict,
+        logit_scale_mode=logit_scale_mode,
+    )
 
 
 def create_model_and_transforms(
@@ -161,8 +189,11 @@ def create_model_and_transforms(
     precision: str = "fp32",
     device: str | torch.device = "cpu",
     cache_dir: str | None = None,
+    *,
+    output_dict: bool = False,
+    logit_scale_mode: str = "strict",
     **kwargs: Any,
-) -> tuple[torch.nn.Module, EmbeddingGemmaPreprocess, EmbeddingGemmaPreprocess]:
+) -> tuple[EmbeddingGemmaCLIP, EmbeddingGemmaPreprocess, EmbeddingGemmaPreprocess]:
     """Load the model and return deterministic train and validation transforms."""
     model = create_model(
         model_name,
@@ -170,7 +201,59 @@ def create_model_and_transforms(
         precision,
         device,
         cache_dir,
+        output_dict=output_dict,
+        logit_scale_mode=logit_scale_mode,
         **kwargs,
     )
     preprocess = EmbeddingGemmaPreprocess(model.processor.image_processor)
     return model, preprocess, preprocess
+
+
+def create_model_from_pretrained(
+    model_name: str = MODEL_NAME,
+    pretrained: str | None = PRETRAINED_OFFICIAL,
+    precision: str = "fp32",
+    device: str | torch.device = "cpu",
+    *,
+    return_transform: bool = True,
+    cache_dir: str | None = None,
+    output_dict: bool = False,
+    logit_scale_mode: str = "strict",
+    **kwargs: Any,
+) -> (
+    tuple[EmbeddingGemmaCLIP, EmbeddingGemmaPreprocess]
+    | EmbeddingGemmaCLIP
+):
+    """Load the supported checkpoint and optionally return its image transform."""
+    if not isinstance(return_transform, bool):
+        raise TypeError("return_transform must be a bool.")
+    model = create_model(
+        model_name,
+        pretrained,
+        precision,
+        device,
+        cache_dir,
+        output_dict=output_dict,
+        logit_scale_mode=logit_scale_mode,
+        **kwargs,
+    )
+    if not return_transform:
+        return model
+
+    preprocess = EmbeddingGemmaPreprocess(model.processor.image_processor)
+    return model, preprocess
+
+
+def list_models() -> list[str]:
+    """Return the supported model names without loading model resources."""
+    return [MODEL_NAME]
+
+
+def list_pretrained(as_str: bool = False) -> list[tuple[str, str]] | list[str]:
+    """Return supported model/pretrained-tag pairs without loading model resources."""
+    if not isinstance(as_str, bool):
+        raise TypeError("as_str must be a bool.")
+    entries = [(MODEL_NAME, PRETRAINED_OFFICIAL)]
+    if as_str:
+        return [f"{model_name}:{tag}" for model_name, tag in entries]
+    return entries
