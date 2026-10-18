@@ -2,11 +2,11 @@
 
 ## Status
 
-Phase 1 adds an internal streaming implementation for embedding image files. It is not exported by `openclip_gemma`, is not part of the published v0.1.1 package API, and may change before a public API is selected. Image indexing/search and video-frame search are not implemented by this phase.
+The development branch exposes a module-level streaming API for embedding image files. It is not re-exported from the package root and is not part of the published v0.1.1 package. Image indexing/search and video-frame search are documented separately.
 
 ## Internal contract
 
-The source-tree helper is `_iter_image_embeddings(model, preprocess, image_paths, *, batch_size=8)`. It accepts an iterable of string or path-like paths readable by Pillow and lazily yields `(Path, embedding)` pairs in input order. Each embedding is a CPU tensor with shape `[768]` and the model's output dtype. Keeping results on CPU and yielding one at a time avoids retaining all output vectors or GPU tensors for a large collection.
+The module-level API is `openclip_gemma.batching.iter_image_embeddings(model, preprocess, image_paths, *, batch_size=8)`. It accepts an iterable of string or path-like paths readable by Pillow and lazily yields `(Path, embedding)` pairs in input order. Each embedding is a CPU tensor with shape `[768]` and the model's output dtype. Keeping results on CPU and yielding one at a time avoids retaining all output vectors or GPU tensors for a large collection.
 
 Example from a checkout of this development branch:
 
@@ -14,7 +14,7 @@ Example from a checkout of this development branch:
 from pathlib import Path
 
 from openclip_gemma import create_model_and_transforms
-from openclip_gemma.batching import _iter_image_embeddings
+from openclip_gemma.batching import iter_image_embeddings
 
 model, _, preprocess = create_model_and_transforms(
     "embeddinggemma-2",
@@ -22,7 +22,7 @@ model, _, preprocess = create_model_and_transforms(
 )
 image_paths = Path("images").glob("**/*.jpg")
 
-for path, embedding in _iter_image_embeddings(
+for path, embedding in iter_image_embeddings(
     model,
     preprocess,
     image_paths,
@@ -31,7 +31,7 @@ for path, embedding in _iter_image_embeddings(
     print(path, embedding.shape, embedding.device)
 ```
 
-The example is development-only; `batch_size=8` is an example, not a universally safe value. Lower it if the selected device runs out of memory. The helper uses the supplied official preprocessing transform and the model's existing `encode_image()` method. It does not alter the model revision, preprocessing, normalization, or public exports.
+The example is available from a source checkout only; `batch_size=8` is an example, not a universally safe value. Lower it if the selected device runs out of memory. The helper uses the supplied official preprocessing transform and the model's existing `encode_image()` method. It does not alter the model revision, preprocessing, or normalization.
 
 ## Batching and memory behavior
 
@@ -48,6 +48,6 @@ Unit tests cover bounded chunks, ordering across differing preprocessed shapes, 
 
 ## Phase 1 boundary and Phase 2 decisions
 
-The streaming iterator remains an internal source-tree helper; its shape is not a stable public API. Phase 2 uses it to update an on-disk image index without collecting all image embeddings in GPU memory. Index metadata, persistence, update detection, search scoring, and CLI behavior are described in the [image search design notes](image-search-v0.2.0.md).
+The streaming iterator is a module-level development API and is not re-exported from the package root. Phase 2 uses it to update an on-disk image index without collecting all image embeddings in GPU memory. Index metadata, persistence, update detection, search scoring, and CLI behavior are described in the [image search design notes](image-search-v0.2.0.md).
 
-The prototype uses JSON metadata and a NumPy embedding matrix in a pickle-disabled `.npz` archive, with atomic replacement for updates. File-change detection uses path, size, and modification time; its limitations are documented in the Phase 2 notes. These choices do not change `encode_image()` or establish a stable public API.
+The prototype uses JSON metadata and a NumPy embedding matrix in a pickle-disabled `.npz` archive, with atomic replacement for updates. File-change detection uses path, size, and modification time; its limitations are documented in the Phase 2 notes. These choices do not change `encode_image()`. The added API is unreleased and may change before v0.2.0.

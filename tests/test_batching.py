@@ -8,7 +8,7 @@ import torch
 from PIL import Image
 from torch import nn
 
-from openclip_gemma.batching import _iter_image_embeddings
+from openclip_gemma.batching import iter_image_embeddings
 
 
 class FakeEncoder(nn.Module):
@@ -68,7 +68,7 @@ def test_streams_bounded_batches_and_restores_order_for_different_shapes(
     model = FakeEncoder()
 
     results = list(
-        _iter_image_embeddings(
+        iter_image_embeddings(
             model,
             _preprocess,
             iter(paths),
@@ -95,7 +95,7 @@ def test_batch_size_bounds_each_encoded_batch(tmp_path: Path) -> None:
     model = FakeEncoder()
 
     results = list(
-        _iter_image_embeddings(
+        iter_image_embeddings(
             model,
             _preprocess,
             paths,
@@ -111,7 +111,7 @@ def test_batch_size_bounds_each_encoded_batch(tmp_path: Path) -> None:
 def test_reads_common_pillow_image_formats(tmp_path: Path, suffix: str) -> None:
     path = _write_image(tmp_path / f"image{suffix}", red=100)
 
-    results = list(_iter_image_embeddings(FakeEncoder(), _preprocess, [path]))
+    results = list(iter_image_embeddings(FakeEncoder(), _preprocess, [path]))
 
     assert len(results) == 1
     assert results[0][0] == path
@@ -121,20 +121,20 @@ def test_reads_common_pillow_image_formats(tmp_path: Path, suffix: str) -> None:
 def test_empty_input_returns_no_results_without_calling_model() -> None:
     model = FakeEncoder()
 
-    assert list(_iter_image_embeddings(model, _preprocess, [], batch_size=4)) == []
+    assert list(iter_image_embeddings(model, _preprocess, [], batch_size=4)) == []
     assert model.batch_sizes == []
 
 
 @pytest.mark.parametrize("batch_size", [0, -1])
 def test_rejects_non_positive_batch_size(batch_size: int) -> None:
     with pytest.raises(ValueError, match="greater than zero"):
-        _iter_image_embeddings(FakeEncoder(), _preprocess, [], batch_size=batch_size)
+        iter_image_embeddings(FakeEncoder(), _preprocess, [], batch_size=batch_size)
 
 
 @pytest.mark.parametrize("batch_size", [True, 1.5, "2"])
 def test_rejects_non_integer_batch_size(batch_size: object) -> None:
     with pytest.raises(TypeError, match="positive integer"):
-        _iter_image_embeddings(
+        iter_image_embeddings(
             FakeEncoder(),
             _preprocess,
             [],
@@ -144,7 +144,7 @@ def test_rejects_non_integer_batch_size(batch_size: object) -> None:
 
 def test_rejects_single_path_instead_of_path_iterable(tmp_path: Path) -> None:
     with pytest.raises(TypeError, match="iterable of paths"):
-        _iter_image_embeddings(
+        iter_image_embeddings(
             FakeEncoder(),
             _preprocess,
             tmp_path / "image.png",  # type: ignore[arg-type]
@@ -160,7 +160,7 @@ def test_corrupt_image_fails_with_input_index_and_path(tmp_path: Path) -> None:
         match=rf"input index 0.*{re.escape(str(corrupt_path))}",
     ):
         list(
-            _iter_image_embeddings(
+            iter_image_embeddings(
                 FakeEncoder(),
                 _preprocess,
                 [corrupt_path],
@@ -176,7 +176,7 @@ def test_missing_image_fails_with_input_index_and_path(tmp_path: Path) -> None:
         match=rf"input index 0.*{re.escape(str(missing_path))}",
     ):
         list(
-            _iter_image_embeddings(
+            iter_image_embeddings(
                 FakeEncoder(),
                 _preprocess,
                 [missing_path],
@@ -189,7 +189,7 @@ def test_cuda_out_of_memory_error_suggests_lower_batch_size(tmp_path: Path) -> N
 
     with pytest.raises(RuntimeError, match="CUDA ran out of memory.*reduce batch_size"):
         list(
-            _iter_image_embeddings(
+            iter_image_embeddings(
                 OutOfMemoryEncoder(),
                 _preprocess,
                 [path],

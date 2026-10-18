@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import builtins
+import json
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,8 +20,9 @@ from openclip_gemma.video_search import (
     _build_or_update_video_index,
     _iter_sampled_frames,
     _load_video_index,
-    _search_video_index,
     _validate_interval,
+    build_or_update_video_index,
+    search_video,
 )
 
 
@@ -49,6 +52,9 @@ class FakeFrame:
 class FakeStream:
     time_base = Fraction(1, 30)
 
+    def __init__(self, start_time: int | None = None) -> None:
+        self.start_time = start_time
+
 
 class FakeContainer:
     def __init__(
@@ -57,10 +63,15 @@ class FakeContainer:
         *,
         decode_error: bool = False,
         no_video_stream: bool = False,
+        start_time: int | None = None,
+        stream_start_time: int | None = None,
     ) -> None:
         self.frames = frames
         self.decode_error = decode_error
-        self.streams = SimpleNamespace(video=[] if no_video_stream else [FakeStream()])
+        self.start_time = start_time
+        self.streams = SimpleNamespace(
+            video=[] if no_video_stream else [FakeStream(stream_start_time)]
+        )
         self.closed = False
 
     def decode(self, *, video: int):
@@ -75,6 +86,7 @@ class FakeContainer:
 
 class FakeAV:
     error = SimpleNamespace(FFmpegError=FakeFFmpegError)
+    time_base = 1_000_000
 
     def __init__(self, videos: dict[Path, FakeContainer]) -> None:
         self.videos = videos
@@ -176,6 +188,61 @@ def test_sampling_uses_actual_vfr_pts_and_preserves_frame_images(
         frame.image.close()
 
 
+def test_sampling_timestamps_are_relative_to_container_playback_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _write_video(tmp_path / "nonzero-start.mp4")
+    frames = [
+        FakeFrame(300, (255, 0, 0)),
+        FakeFrame(315, (0, 255, 0)),
+        FakeFrame(330, (0, 0, 255)),
+        FakeFrame(345, (255, 255, 0)),
+    ]
+    container = FakeContainer(
+        frames,
+        start_time=10_000_000,
+        stream_start_time=210,
+    )
+    monkeypatch.setattr(video_search, "_load_av", lambda: FakeAV({path: container}))
+
+    sampled = list(_iter_sampled_frames(path, Fraction(1, 2)))
+
+    assert [frame.record.timestamp_seconds for frame in sampled] == pytest.approx(
+        [0.0, 0.5, 1.0, 1.5]
+    )
+    assert {frame.record.timestamp_origin_numerator for frame in sampled} == {10}
+    assert {frame.record.timestamp_origin_denominator for frame in sampled} == {1}
+    assert container.closed
+    for frame in sampled:
+        frame.image.close()
+
+
+def test_sampling_uses_stream_start_when_container_start_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _write_video(tmp_path / "stream-start.mkv")
+    frames = [
+        FakeFrame(100, (255, 0, 0)),
+        FakeFrame(130, (0, 255, 0)),
+        FakeFrame(145, (0, 0, 255)),
+    ]
+    container = FakeContainer(frames, stream_start_time=100)
+    monkeypatch.setattr(video_search, "_load_av", lambda: FakeAV({path: container}))
+
+    sampled = list(_iter_sampled_frames(path, Fraction(1, 2)))
+
+    assert [frame.record.timestamp_seconds for frame in sampled] == pytest.approx(
+        [0.0, 1.0, 1.5]
+    )
+    assert {frame.record.timestamp_origin_numerator for frame in sampled} == {10}
+    assert {frame.record.timestamp_origin_denominator for frame in sampled} == {3}
+    assert container.closed
+    for frame in sampled:
+        frame.image.close()
+
+
 @pytest.mark.parametrize(
     ("interval", "exception"),
     [(0, ValueError), (-1.0, ValueError), (float("inf"), ValueError), (True, TypeError)],
@@ -226,6 +293,22 @@ def test_empty_or_corrupt_video_fails_without_silent_success(
     assert broken.closed
 
 
+def test_missing_pyav_reports_optional_dependency_install_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def import_without_av(name: str, *args: object, **kwargs: object):
+        if name == "av":
+            raise ImportError("simulated missing PyAV")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_av)
+
+    with pytest.raises(VideoSearchError, match=r"pip install openclip-gemma\[video\]"):
+        video_search._load_av()
+
+
 def test_video_index_round_trip_search_and_incremental_file_changes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -243,12 +326,12 @@ def test_video_index_round_trip_search_and_incremental_file_changes(
     monkeypatch.setattr(video_search, "_load_av", lambda: decoder)
     model = FakeVideoModel()
 
-    first = _build_or_update_video_index(
+    first = build_or_update_video_index(
         model,
         _preprocess,
         videos_dir,
         index_dir,
-        interval=1.0,
+        interval_seconds=1.0,
         batch_size=2,
     )
 
@@ -268,12 +351,12 @@ def test_video_index_round_trip_search_and_incremental_file_changes(
     np.testing.assert_allclose(np.linalg.norm(loaded.embeddings, axis=1), 1.0, atol=1e-6)
 
     opened_before_reuse = len(decoder.opened)
-    unchanged = _build_or_update_video_index(
+    unchanged = build_or_update_video_index(
         model,
         _preprocess,
         videos_dir,
         index_dir,
-        interval=1.0,
+        interval_seconds=1.0,
         batch_size=2,
     )
     assert unchanged.unchanged_videos == 2
@@ -286,12 +369,12 @@ def test_video_index_round_trip_search_and_incremental_file_changes(
         [FakeFrame(0, (0, 0, 255)), FakeFrame(30, (255, 0, 0))]
     )
     decoder.videos[third_path] = FakeContainer([FakeFrame(0, (0, 255, 0))])
-    update = _build_or_update_video_index(
+    update = build_or_update_video_index(
         model,
         _preprocess,
         videos_dir,
         index_dir,
-        interval=1.0,
+        interval_seconds=1.0,
         batch_size=2,
         recursive=True,
     )
@@ -311,7 +394,7 @@ def test_video_index_round_trip_search_and_incremental_file_changes(
         return tokenizer
 
     monkeypatch.setattr(video_search, "get_tokenizer", fake_tokenizer)
-    results = _search_video_index(model, index_dir, "赤いドリル", top_k=2)
+    results = search_video(model, index_dir, "赤いドリル", top_k=2)
     assert prompt_names == ["SearchQuery"]
     assert tokenizer.texts == ["赤いドリル"]
     assert [result.rank for result in results] == [1, 2]
@@ -380,3 +463,31 @@ def test_interval_and_index_kind_mismatches_are_rejected(
             index_dir,
             interval=2.0,
         )
+
+
+def test_old_absolute_timestamp_index_version_requires_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    index_dir = tmp_path / "index"
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+    index = build_or_update_video_index(FakeVideoModel(), _preprocess, videos_dir, index_dir)
+
+    with np.load(index.index_path, allow_pickle=False) as archive:
+        metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
+        embeddings = archive["embeddings"].copy()
+    metadata["format_version"] = 1
+    _save_numpy_archive_atomic(
+        index.index_path,
+        metadata,
+        {"embeddings": embeddings},
+    )
+
+    with pytest.raises(VideoIndexCompatibilityError, match="format version: 1"):
+        _load_video_index(index_dir)

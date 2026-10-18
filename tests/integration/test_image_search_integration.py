@@ -11,8 +11,8 @@ from PIL import Image, ImageDraw
 
 from openclip_gemma import create_model_and_transforms
 from openclip_gemma.image_search import (
-    _build_or_update_image_index,
-    _search_index,
+    build_or_update_image_index,
+    search_images,
 )
 
 pytestmark = [
@@ -55,14 +55,14 @@ def test_japanese_text_search_runs_with_real_model(
         device=device,
     )
 
-    update = _build_or_update_image_index(
+    update = build_or_update_image_index(
         model,
         preprocess,
         images_dir,
         index_dir,
         batch_size=2,
     )
-    results = _search_index(
+    results = search_images(
         model,
         index_dir,
         "赤い円",

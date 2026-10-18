@@ -9,8 +9,8 @@ from pathlib import Path
 from openclip_gemma import create_model, create_model_and_transforms
 from openclip_gemma.image_search import (
     ImageIndexError,
-    _build_or_update_image_index,
-    _search_index,
+    build_or_update_image_index,
+    search_images,
 )
 
 
@@ -58,7 +58,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "index":
             model, _, preprocess = create_model_and_transforms(device=args.device)
-            update = _build_or_update_image_index(
+            update = build_or_update_image_index(
                 model,
                 preprocess,
                 args.images,
@@ -75,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         model = create_model(device=args.device)
-        results = _search_index(
+        results = search_images(
             model,
             args.index,
             args.query,

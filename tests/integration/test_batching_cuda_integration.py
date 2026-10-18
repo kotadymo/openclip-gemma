@@ -10,7 +10,7 @@ import torch
 from PIL import Image, ImageDraw
 
 from openclip_gemma import create_model_and_transforms
-from openclip_gemma.batching import _iter_image_embeddings
+from openclip_gemma.batching import iter_image_embeddings
 
 pytestmark = [
     pytest.mark.integration,
@@ -48,7 +48,7 @@ def test_image_file_batches_match_individual_encoding(
     ]
 
     actual = list(
-        _iter_image_embeddings(
+        iter_image_embeddings(
             model,
             preprocess,
             paths,

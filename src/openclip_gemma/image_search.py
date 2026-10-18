@@ -13,7 +13,7 @@ import torch
 from numpy.typing import NDArray
 from PIL import Image
 
-from openclip_gemma.batching import ImagePath, _iter_image_embeddings
+from openclip_gemma.batching import ImagePath, iter_image_embeddings
 from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
 from openclip_gemma.index_storage import (
     IndexArchiveError,
@@ -29,6 +29,15 @@ _EMBEDDING_DIMENSION = 768
 _PREPROCESSING_ID = "embeddinggemma-2-official-image-preprocess-v1"
 _SUPPORTED_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _SCORE_BLOCK_SIZE = 4096
+
+__all__ = [
+    "ImageIndexCompatibilityError",
+    "ImageIndexError",
+    "ImageIndexUpdate",
+    "ImageSearchResult",
+    "build_or_update_image_index",
+    "search_images",
+]
 
 type _EmbeddingMatrix = NDArray[np.float32]
 type _ImagePreprocess = Callable[[Image.Image], torch.Tensor]
@@ -434,7 +443,12 @@ def _build_or_update_image_index(
         changed_records.append(record)
         changed_rows[key] = row
 
-    if previous is not None and not changed_records and removed == 0:
+    if (
+        previous is not None
+        and previous.recursive == recursive
+        and not changed_records
+        and removed == 0
+    ):
         return ImageIndexUpdate(index_path, added, updated, removed, unchanged)
 
     if changed_records:
@@ -442,7 +456,7 @@ def _build_or_update_image_index(
             root / PurePosixPath(record.relative_path) for record in changed_records
         ]
         encoded_count = 0
-        for path, embedding in _iter_image_embeddings(
+        for path, embedding in iter_image_embeddings(
             model,
             preprocess,
             image_paths,
@@ -544,3 +558,42 @@ def _search_index(
         )
         for score, row in best
     ]
+
+
+def build_or_update_image_index(
+    model: torch.nn.Module,
+    preprocess: _ImagePreprocess,
+    images_dir: str | os.PathLike[str],
+    index_dir: str | os.PathLike[str],
+    *,
+    batch_size: int = 8,
+    recursive: bool = False,
+) -> ImageIndexUpdate:
+    """Build or incrementally update a local image embedding index.
+
+    The model's current device and precision are used. A corrupt image or
+    incompatible index raises an error and leaves the previous index intact.
+    """
+    return _build_or_update_image_index(
+        model,
+        preprocess,
+        images_dir,
+        index_dir,
+        batch_size=batch_size,
+        recursive=recursive,
+    )
+
+
+def search_images(
+    model: torch.nn.Module,
+    index_dir: str | os.PathLike[str],
+    query: str,
+    *,
+    top_k: int = 5,
+) -> list[ImageSearchResult]:
+    """Search an image index with a Japanese or English text query.
+
+    Results are ordered by descending cosine similarity. Scores are not
+    probabilities; equal scores are ordered by relative image path.
+    """
+    return _search_index(model, index_dir, query, top_k=top_k)

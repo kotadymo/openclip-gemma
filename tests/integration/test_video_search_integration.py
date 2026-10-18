@@ -16,9 +16,9 @@ from PIL import Image, ImageDraw
 
 from openclip_gemma import create_model_and_transforms
 from openclip_gemma.video_search import (
-    _build_or_update_video_index,
     _load_video_index,
-    _search_video_index,
+    build_or_update_video_index,
+    search_video,
 )
 
 pytestmark = [
@@ -31,7 +31,8 @@ pytestmark = [
 
 
 def _write_synthetic_video(path: Path) -> None:
-    av = pytest.importorskip("av", reason="Install the optional video extra.")
+    import av
+
     path.parent.mkdir(parents=True, exist_ok=True)
     container = av.open(str(path), mode="w")
     try:
@@ -62,16 +63,16 @@ def _run_video_search(video_path: Path, index_path: Path, device: str):
         device=device,
     )
     model.eval()
-    update = _build_or_update_video_index(
+    update = build_or_update_video_index(
         model,
         preprocess,
         video_path.parent,
         index_path,
-        interval=0.5,
+        interval_seconds=0.5,
         batch_size=2,
     )
     index = _load_video_index(index_path)
-    results = _search_video_index(model, index_path, "赤い四角", top_k=3)
+    results = search_video(model, index_path, "赤い四角", top_k=3)
     return update, index, results
 
 

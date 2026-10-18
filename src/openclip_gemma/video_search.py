@@ -34,15 +34,24 @@ from openclip_gemma.tokenizer import get_tokenizer
 
 _VIDEO_INDEX_FILENAME = "video-index.npz"
 _VIDEO_INDEX_KIND = "openclip-gemma.video-index"
-_VIDEO_INDEX_FORMAT_VERSION = 1
+_VIDEO_INDEX_FORMAT_VERSION = 2
 _EMBEDDING_DIMENSION = 768
-_SAMPLING_METHOD = "first-presentation-frame-at-or-after-fixed-target-v1"
+_SAMPLING_METHOD = "first-presentation-frame-at-or-after-playback-origin-target-v2"
 _SUPPORTED_VIDEO_SUFFIXES = frozenset(
     {".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi"}
 )
 
 type _EmbeddingMatrix = NDArray[np.float32]
 type _ImagePreprocess = Callable[[Image.Image], torch.Tensor]
+
+__all__ = [
+    "VideoIndexCompatibilityError",
+    "VideoIndexUpdate",
+    "VideoSearchError",
+    "VideoSearchResult",
+    "build_or_update_video_index",
+    "search_video",
+]
 
 
 class VideoSearchError(RuntimeError):
@@ -67,6 +76,8 @@ class _FrameRecord:
     pts: int
     time_base_numerator: int
     time_base_denominator: int
+    timestamp_origin_numerator: int
+    timestamp_origin_denominator: int
 
 
 @dataclass(frozen=True)
@@ -99,7 +110,7 @@ class VideoIndexUpdate:
 
 @dataclass(frozen=True)
 class VideoSearchResult:
-    """A matching video frame with its path, PTS-derived time, and cosine score."""
+    """A matching frame with its playback-relative time and cosine similarity."""
 
     rank: int
     video_path: Path
@@ -186,6 +197,34 @@ def _fraction_time_base(value: Any, *, video_path: Path, frame_index: int) -> Fr
     return time_base
 
 
+def _playback_time_origin(container: Any, av: Any, video_stream: Any) -> Fraction | None:
+    container_start = getattr(container, "start_time", None)
+    if container_start is not None:
+        av_time_base = getattr(av, "time_base", None)
+        if (
+            isinstance(container_start, bool)
+            or not isinstance(container_start, int)
+            or isinstance(av_time_base, bool)
+            or not isinstance(av_time_base, int)
+            or av_time_base <= 0
+        ):
+            raise VideoSearchError("Video container has an invalid playback start time.")
+        return Fraction(container_start, av_time_base)
+
+    stream_start = getattr(video_stream, "start_time", None)
+    stream_time_base = getattr(video_stream, "time_base", None)
+    if stream_start is None:
+        return None
+    if isinstance(stream_start, bool) or not isinstance(stream_start, int):
+        raise VideoSearchError("Video stream has an invalid start time.")
+    if not stream_time_base:
+        raise VideoSearchError("Video stream start time has no usable time base.")
+    try:
+        return Fraction(stream_start) * Fraction(stream_time_base)
+    except (TypeError, ValueError, ZeroDivisionError) as error:
+        raise VideoSearchError("Video stream start time has an invalid time base.") from error
+
+
 def _iter_sampled_frames(
     video_path: Path,
     interval: Fraction,
@@ -204,7 +243,8 @@ def _iter_sampled_frames(
         if not video_streams:
             raise VideoSearchError(f"Video contains no video stream: {video_path}")
         video_stream = video_streams[0]
-        next_target: Fraction | None = None
+        time_origin = _playback_time_origin(container, av, video_stream)
+        next_target = Fraction(0, 1)
         previous_timestamp: Fraction | None = None
 
         try:
@@ -222,16 +262,22 @@ def _iter_sampled_frames(
                     video_path=video_path,
                     frame_index=frame_index,
                 )
-                timestamp = Fraction(frame.pts) * time_base
-                if previous_timestamp is not None and timestamp < previous_timestamp:
+                presentation_timestamp = Fraction(frame.pts) * time_base
+                if (
+                    previous_timestamp is not None
+                    and presentation_timestamp < previous_timestamp
+                ):
                     raise VideoSearchError(
                         f"Video presentation timestamps are not monotonic in {video_path} "
                         f"at frame {frame_index}."
                     )
-                previous_timestamp = timestamp
+                previous_timestamp = presentation_timestamp
 
-                if next_target is None:
-                    next_target = timestamp
+                if time_origin is None:
+                    time_origin = presentation_timestamp
+                timestamp = presentation_timestamp - time_origin
+                if timestamp < 0:
+                    continue
                 if timestamp < next_target:
                     continue
 
@@ -254,6 +300,8 @@ def _iter_sampled_frames(
                         pts=frame.pts,
                         time_base_numerator=time_base.numerator,
                         time_base_denominator=time_base.denominator,
+                        timestamp_origin_numerator=time_origin.numerator,
+                        timestamp_origin_denominator=time_origin.denominator,
                     ),
                     image,
                 )
@@ -288,6 +336,8 @@ def _iter_frame_tensors(
             pts=sampled_frame.record.pts,
             time_base_numerator=sampled_frame.record.time_base_numerator,
             time_base_denominator=sampled_frame.record.time_base_denominator,
+            timestamp_origin_numerator=sampled_frame.record.timestamp_origin_numerator,
+            timestamp_origin_denominator=sampled_frame.record.timestamp_origin_denominator,
         )
         yield frame_record, tensor
 
@@ -332,6 +382,8 @@ def _metadata_for_index(index: _VideoIndex, precision: str) -> dict[str, object]
                 "pts": frame.pts,
                 "time_base_numerator": frame.time_base_numerator,
                 "time_base_denominator": frame.time_base_denominator,
+                "timestamp_origin_numerator": frame.timestamp_origin_numerator,
+                "timestamp_origin_denominator": frame.timestamp_origin_denominator,
             }
             for frame in index.frames
         ],
@@ -403,10 +455,13 @@ def _parse_frame_record(value: object, video_paths: set[str]) -> _FrameRecord:
     pts = value.get("pts")
     time_base_numerator = value.get("time_base_numerator")
     time_base_denominator = value.get("time_base_denominator")
+    timestamp_origin_numerator = value.get("timestamp_origin_numerator")
+    timestamp_origin_denominator = value.get("timestamp_origin_denominator")
     if (
         isinstance(timestamp, bool)
         or not isinstance(timestamp, (float, int))
         or not math.isfinite(float(timestamp))
+        or float(timestamp) < 0
         or isinstance(pts, bool)
         or not isinstance(pts, int)
         or isinstance(time_base_numerator, bool)
@@ -415,9 +470,17 @@ def _parse_frame_record(value: object, video_paths: set[str]) -> _FrameRecord:
         or isinstance(time_base_denominator, bool)
         or not isinstance(time_base_denominator, int)
         or time_base_denominator <= 0
+        or isinstance(timestamp_origin_numerator, bool)
+        or not isinstance(timestamp_origin_numerator, int)
+        or isinstance(timestamp_origin_denominator, bool)
+        or not isinstance(timestamp_origin_denominator, int)
+        or timestamp_origin_denominator <= 0
     ):
         raise VideoSearchError("Video index metadata contains invalid frame timing.")
-    exact_timestamp = Fraction(pts * time_base_numerator, time_base_denominator)
+    exact_timestamp = Fraction(
+        pts * time_base_numerator,
+        time_base_denominator,
+    ) - Fraction(timestamp_origin_numerator, timestamp_origin_denominator)
     if not math.isclose(float(timestamp), float(exact_timestamp), rel_tol=1e-12, abs_tol=1e-9):
         raise VideoSearchError("Video frame timestamp does not match its PTS and time base.")
     return _FrameRecord(
@@ -426,6 +489,8 @@ def _parse_frame_record(value: object, video_paths: set[str]) -> _FrameRecord:
         pts,
         time_base_numerator,
         time_base_denominator,
+        timestamp_origin_numerator,
+        timestamp_origin_denominator,
     )
 
 
@@ -515,6 +580,15 @@ def _validate_video_metadata(
         raise VideoSearchError("Video index metadata contains duplicate frame timestamps.")
     if frames != tuple(sorted(frames, key=_frame_sort_key)):
         raise VideoSearchError("Video frame records are not in canonical path/time order.")
+    origins_by_video: dict[str, tuple[int, int]] = {}
+    for frame in frames:
+        origin = (
+            frame.timestamp_origin_numerator,
+            frame.timestamp_origin_denominator,
+        )
+        previous_origin = origins_by_video.setdefault(frame.video_path, origin)
+        if previous_origin != origin:
+            raise VideoSearchError("Video frames contain inconsistent playback time origins.")
     frame_video_paths = {frame.video_path for frame in frames}
     if any(video.relative_path not in frame_video_paths for video in videos):
         raise VideoSearchError("Video index contains a video without sampled frames.")
@@ -813,3 +887,44 @@ def _search_video_index(
         )
         for rank, (score, row) in enumerate(best, start=1)
     ]
+
+
+def build_or_update_video_index(
+    model: torch.nn.Module,
+    preprocess: _ImagePreprocess,
+    videos_dir: str | os.PathLike[str],
+    index_dir: str | os.PathLike[str],
+    *,
+    interval_seconds: float = 1.0,
+    batch_size: int = 8,
+    recursive: bool = False,
+) -> VideoIndexUpdate:
+    """Build or incrementally update an index of sampled video frames.
+
+    Requires the optional PyAV dependency. Timestamps in the index are relative
+    to the container playback start, or the video stream start when unavailable.
+    """
+    return _build_or_update_video_index(
+        model,
+        preprocess,
+        videos_dir,
+        index_dir,
+        interval=interval_seconds,
+        batch_size=batch_size,
+        recursive=recursive,
+    )
+
+
+def search_video(
+    model: torch.nn.Module,
+    index_dir: str | os.PathLike[str],
+    query: str,
+    *,
+    top_k: int = 5,
+) -> list[VideoSearchResult]:
+    """Search a video-frame index with a Japanese or English text query.
+
+    Results are ordered by descending cosine similarity and include playback-
+    relative timestamps in seconds. Scores are not probabilities.
+    """
+    return _search_video_index(model, index_dir, query, top_k=top_k)

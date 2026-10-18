@@ -12,9 +12,10 @@ from openclip_gemma import image_search
 from openclip_gemma.image_search import (
     ImageIndexCompatibilityError,
     ImageIndexError,
-    _build_or_update_image_index,
     _load_index,
     _search_index,
+    build_or_update_image_index,
+    search_images,
 )
 
 
@@ -80,7 +81,7 @@ def _build(
     batch_size: int = 4,
     recursive: bool = False,
 ):
-    return _build_or_update_image_index(
+    return build_or_update_image_index(
         model,
         _preprocess,
         images_dir,
@@ -217,7 +218,7 @@ def test_search_uses_search_query_prompt_and_stable_top_k(
         return tokenizer
 
     monkeypatch.setattr(image_search, "get_tokenizer", get_fake_tokenizer)
-    results = _search_index(model, index_dir, "赤い画像", top_k=2)
+    results = search_images(model, index_dir, "赤い画像", top_k=2)
 
     assert prompts == ["SearchQuery"]
     assert tokenizer.received_texts == ["赤い画像"]

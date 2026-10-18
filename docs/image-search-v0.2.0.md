@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This development-branch prototype builds a local image index and searches it with Japanese or English text. It is not exported from `openclip_gemma`, is not part of the released v0.1.1 package API, and may change before a public API is selected. Video and frame search are not implemented here.
+This development-branch API builds a local image index and searches it with Japanese or English text. It is available from `openclip_gemma.image_search`, is not part of the released v0.1.1 package, and may change before v0.2.0. Video and frame search are documented separately.
 
 The prototype supports JPEG, PNG, and WebP files. It uses the pinned EmbeddingGemma 2 model, the supplied official image preprocessing transform, and the existing `encode_image()` and `encode_text()` methods. Image and text embeddings remain 768-dimensional. Model revision, preprocessing, tokenizer behavior, and the existing public API are unchanged.
 
@@ -30,11 +30,13 @@ The output directory contains a single `index.npz` archive with:
 
 Metadata includes the format version, absolute image root, recursion setting, model ID and pinned revision, model precision (`fp32` or `bf16`), embedding dimension, preprocessing identifier, entry count, relative image paths, source file sizes and `mtime_ns` values, storage dtype, and a SHA-256 checksum of the embedding matrix.
 
-The loader uses `numpy.load(..., allow_pickle=False)` and validates archive members, metadata, path safety, matrix dimensions and dtype, finite values, checksum, model revision, precision, and preprocessing identifier. Incompatible or damaged archives fail explicitly; they are not silently discarded or rebuilt.
+The loader checks the ZIP directory and NPY headers before loading arrays, then uses `numpy.load(..., allow_pickle=False)` and validates archive members, metadata, path safety, matrix dimensions and dtype, finite values, checksum, model revision, precision, and preprocessing identifier. It rejects archives larger than 512 MiB or with more than 512 MiB of expanded members, and limits metadata to 64 MiB. These hard limits bound a single archive but mean very large collections must be split across indexes. Incompatible or damaged archives fail explicitly; they are not silently discarded or rebuilt.
 
 Updates are written to a temporary file in the output directory, flushed, and atomically installed with `os.replace`. A process interruption before replacement preserves the previous complete index; an unused temporary file may remain.
 
 The cache is local to its recorded image root and should not be treated as a portable database. The current implementation loads the full embedding matrix into system memory. It bounds image preprocessing and GPU work by `--batch-size` but does not use an approximate-nearest-neighbor library; very large indexes may require substantial RAM and search time.
+
+Changing only the `recursive` setting updates the saved metadata and reuses unchanged vectors where files remain in scope. File updates are detected using path, size, and `mtime_ns`; same-size rewrites that preserve timestamps can be missed.
 
 ## Text search
 
@@ -69,4 +71,4 @@ uv run pytest tests/integration/test_image_search_integration.py -v
 
 Integration results validate embedding and search execution, not semantic retrieval quality. Synthetic test images must not be treated as evidence of recognition accuracy. Brute-force cosine search is appropriate for an initial correct implementation; FAISS or other indexing acceleration is deferred.
 
-The module helpers and CLI implementation are internal development interfaces. No new symbols are added to the package root. A stable public API and video-search design remain future decisions.
+The APIs are `build_or_update_image_index()` and `search_images()` in `openclip_gemma.image_search`; the batch iterator is in `openclip_gemma.batching`. They are not re-exported from the package root. No changes are made to the existing OpenCLIP-style API. These source-tree APIs are unreleased and are not available in the v0.1.1 PyPI distribution.

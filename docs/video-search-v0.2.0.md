@@ -1,8 +1,8 @@
-# Video frame search prototype (v0.3.0 development)
+# Video frame search design (v0.2.0 development)
 
 ## Status and scope
 
-This branch contains an internal prototype for indexing sampled video frames and searching them with Japanese or English text. The implementation is not exported from `openclip_gemma`, is not part of the released `openclip-gemma==0.1.1` package, and does not define a stable public API. It reuses the existing image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers.
+This branch exposes development APIs targeted for v0.2.0 to index sampled video frames and search them with Japanese or English text from `openclip_gemma.video_search`. They are not re-exported from the package root and are not part of the released `openclip-gemma==0.1.1` package. They reuse the existing image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers.
 
 The prototype indexes frames independently. It does not recognize motion, event order, or temporal relationships across frames. Search scores are cosine similarities, not probabilities or calibrated confidence.
 
@@ -31,9 +31,9 @@ The optional dependency keeps video decoding out of base installs. The current p
 
 ## Sampling and timestamp semantics
 
-The decoder processes frames sequentially and does not retain the whole video or every decoded image. For a positive interval `I`, the first decoded frame establishes the first target; each following target advances by `I` seconds. At each target, the first frame at or after that target is selected. If no frame occurs exactly on a target, the actual selected time can be later. Several targets crossed by one frame produce only one sampled frame rather than duplicate embeddings.
+The decoder processes frames sequentially and does not retain the whole video or every decoded image. `timestamp_seconds` is relative to the container start time when available, otherwise the video stream start time, otherwise the first decoded frame. Sampling targets start at relative time zero. Frames preceding a declared playback origin are ignored. For a positive interval `I`, the first frame at or after each target is selected; each following target advances by `I` seconds. If no frame occurs exactly on a target, the actual selected time can be later. Several targets crossed by one frame produce only one sampled frame rather than duplicate embeddings.
 
-Each sample's time in seconds is computed from the decoder's presentation timestamp and its time base (`pts * time_base`). A frame time base is preferred; the video stream time base is used only when the frame time base is unavailable. Times are not estimated from FPS. VFR streams therefore retain the decoder's actual presentation time, and sampling targets can be unevenly spaced in the selected output. A large interval can miss short-lived scenes.
+Each sample retains the original PTS and rational frame time base, along with the exact rational playback origin used to calculate its relative timestamp. A frame time base is preferred; the video stream time base is used only when the frame time base is unavailable. Times are not estimated from FPS. VFR streams therefore retain the decoder's actual presentation time, and sampling targets can be unevenly spaced in the selected output. A large interval can miss short-lived scenes.
 
 Frame images are converted to RGB and passed through the existing official image preprocessing transform. Frames are grouped by processed Tensor shape and encoded in bounded batches. `--batch-size` limits the number of image Tensors sent through the model together; decoded-frame and index memory still depend on video duration and index size.
 
@@ -49,16 +49,16 @@ uv run python examples/video_search.py index \
 
 Omit `--recursive` to scan only the selected directory. `--device` accepts `cpu` or `cuda`; CPU is the default. Model weights are downloaded from Hugging Face on first use unless already cached. Reduce the batch size if CUDA runs out of memory; the reported error identifies the video and batch being encoded.
 
-The output is a `video-index.npz` archive distinct from the image-search `index.npz`. It contains UTF-8 JSON metadata and an `N x 768` float32 embedding matrix. Metadata records:
+The output is a version-2 `video-index.npz` archive distinct from the image-search `index.npz`. Version 2 stores playback-relative timestamps and exact timestamp origins. Version-1 indexes used absolute PTS-derived timestamps and are rejected; rebuild them rather than reusing them. The archive contains UTF-8 JSON metadata and an `N x 768` float32 embedding matrix. Metadata records:
 
 - Index kind and format version.
 - Model ID and pinned model revision, precision, embedding dimension, and preprocessing identifier.
 - Resolved video root, recursion setting, requested interval, and sampling method.
 - Each relative video path, file size, and `mtime_ns`.
-- Each sampled frame's video path, PTS, time base, and derived timestamp in seconds.
+- Each sampled frame's video path, PTS, time base, playback origin, and relative timestamp in seconds.
 - The embedding matrix checksum.
 
-The loader uses `numpy.load(..., allow_pickle=False)` and validates archive members, metadata, paths, counts, dimensions, finite values, checksum, model revision, precision, preprocessing, and requested sampling interval. Image and video archives are not interchangeable. Writes use a temporary file followed by an atomic replacement, so a failed decode or embedding does not replace the previous complete index.
+The loader preflights ZIP member names, NPY array headers, archive size, expanded member size, and metadata size before loading arrays; NumPy loading also has pickle disabled. It then validates metadata, paths, counts, dimensions, finite values, checksum, model revision, precision, preprocessing, and requested sampling interval. The archive and expanded members are each limited to 512 MiB, and metadata is limited to 64 MiB. Image and video archives are not interchangeable. Writes use a temporary file followed by an atomic replacement, so a failed decode or embedding does not replace the previous complete index.
 
 Re-running the index command reconciles additions, modifications, and removals. A file is considered changed when its relative path is new or its size or `mtime_ns` differs. Rewriting a video while preserving both size and modification time can evade detection; touching or rewriting identical content can trigger an unnecessary full re-embedding. The detector does not hash source videos. Use a new output directory or remove `video-index.npz` for a full rebuild. The full embedding matrix and frame metadata are loaded into system memory for search; the implementation is a brute-force baseline, not an approximate-nearest-neighbor index.
 
@@ -78,7 +78,7 @@ Output includes the rank, video path, timestamp (`HH:MM:SS.mmm`), and raw cosine
 
 ## Validation
 
-Model-independent tests mock PyAV and the image encoder to cover PTS/VFR sampling, interval validation, corrupt and empty inputs, archive round trips, incremental changes, compatibility checks, stable ranking, and safe errors.
+The APIs are `build_or_update_video_index()` and `search_video()` in `openclip_gemma.video_search`. Model-independent tests mock PyAV and the image encoder to cover PTS/VFR sampling, zero and nonzero start times, interval validation, corrupt and empty inputs, archive round trips, incremental changes, compatibility checks, stable ranking, and safe errors.
 
 Opt-in integration tests create a small synthetic MP4 and use the pinned real model to exercise CPU indexing and Japanese text search, plus CUDA/CPU FP32 comparison when CUDA is available:
 

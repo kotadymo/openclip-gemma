@@ -1,4 +1,4 @@
-"""Internal streaming helpers for batched image-file inference."""
+"""Streaming image-file embedding API."""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ type _ImageItem = tuple[int, Path, torch.Tensor]
 _DEFAULT_BATCH_SIZE = 8
 _EMBEDDING_DIMENSION = 768
 
+__all__ = ["ImageEmbedding", "ImagePath", "iter_image_embeddings"]
+
 
 class _ImageEncoder(Protocol):
     def parameters(self) -> Iterator[torch.nn.Parameter]: ...
@@ -25,14 +27,18 @@ class _ImageEncoder(Protocol):
     def encode_image(self, image: torch.Tensor) -> torch.Tensor: ...
 
 
-def _iter_image_embeddings(
-    model: _ImageEncoder,
+def iter_image_embeddings(
+    model: torch.nn.Module,
     preprocess: Callable[[Image.Image], torch.Tensor],
     image_paths: Iterable[ImagePath],
     *,
     batch_size: int = _DEFAULT_BATCH_SIZE,
 ) -> Iterator[ImageEmbedding]:
-    """Yield path/embedding pairs in input order, keeping output tensors on CPU."""
+    """Lazily encode image paths and yield ordered paths with CPU embeddings.
+
+    The encoder is taken from the supplied model, whose parameters determine the
+    inference device. Each returned embedding is a 768-dimensional CPU Tensor.
+    """
     if isinstance(batch_size, bool) or not isinstance(batch_size, int):
         raise TypeError("batch_size must be a positive integer.")
     if batch_size <= 0:
@@ -46,6 +52,9 @@ def _iter_image_embeddings(
         raise TypeError("image_paths must be an iterable of paths.") from error
 
     return _stream_image_embeddings(model, preprocess, paths, batch_size)
+
+
+_iter_image_embeddings = iter_image_embeddings
 
 
 def _stream_image_embeddings(

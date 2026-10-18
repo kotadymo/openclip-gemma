@@ -8,8 +8,8 @@ from pathlib import Path
 
 from openclip_gemma import create_model, create_model_and_transforms
 from openclip_gemma.video_search import (
-    _build_or_update_video_index,
-    _search_video_index,
+    build_or_update_video_index,
+    search_video,
 )
 
 
@@ -72,12 +72,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "index":
             model, _, preprocess = create_model_and_transforms(device=args.device)
-            update = _build_or_update_video_index(
+            update = build_or_update_video_index(
                 model,
                 preprocess,
                 args.videos,
                 args.output,
-                interval=args.interval,
+                interval_seconds=args.interval,
                 batch_size=args.batch_size,
                 recursive=args.recursive,
             )
@@ -91,7 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         model = create_model(device=args.device)
-        results = _search_video_index(
+        results = search_video(
             model,
             args.index,
             args.query,
