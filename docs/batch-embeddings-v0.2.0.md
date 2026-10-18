@@ -1,14 +1,14 @@
-# Batch image embedding (v0.2.0rc1 candidate)
+# Batch image embedding (v0.2.0)
 
 ## Status
 
-The v0.2.0rc1 candidate exposes a module-level streaming API for embedding image files. It is not re-exported from the package root, is not part of the published v0.1.1 package, and has not yet been published to TestPyPI. Image indexing/search and video-frame search are documented separately.
+Version 0.2.0 provides a module-level streaming API for embedding image files. The API is available from `openclip_gemma.batching` and is not re-exported from the package root. Image indexing/search and video-frame search are documented separately.
 
 ## Internal contract
 
 The module-level API is `openclip_gemma.batching.iter_image_embeddings(model, preprocess, image_paths, *, batch_size=8)`. It accepts an iterable of string or path-like paths readable by Pillow and lazily yields `(Path, embedding)` pairs in input order. Each embedding is a CPU tensor with shape `[768]` and the model's output dtype. Keeping results on CPU and yielding one at a time avoids retaining all output vectors or GPU tensors for a large collection.
 
-Example from a checkout of the v0.2.0rc1 candidate:
+Example from a v0.2.0 source checkout:
 
 ```python
 from pathlib import Path
@@ -50,4 +50,4 @@ Unit tests cover bounded chunks, ordering across differing preprocessed shapes, 
 
 The streaming iterator is a module-level development API and is not re-exported from the package root. Phase 2 uses it to update an on-disk image index without collecting all image embeddings in GPU memory. Index metadata, persistence, update detection, search scoring, and CLI behavior are described in the [image search design notes](image-search-v0.2.0.md).
 
-The prototype uses JSON metadata and a NumPy embedding matrix in a pickle-disabled `.npz` archive, with atomic replacement for updates. File-change detection uses path, size, and modification time; its limitations are documented in the Phase 2 notes. These choices do not change `encode_image()`. The candidate has not yet been published to TestPyPI and may change before the v0.2.0 final release.
+The image-search index uses JSON metadata and a NumPy embedding matrix in a pickle-disabled `.npz` archive, with atomic replacement for updates. File-change detection uses path, size, and modification time; its limitations are documented in the Phase 2 notes. These choices do not change `encode_image()`.

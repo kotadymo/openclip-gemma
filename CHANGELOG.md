@@ -1,16 +1,40 @@
 # Changelog
 
-## v0.2.0rc1 (TestPyPI publication pending)
+## v0.2.0
 
 ### Added
-- Add the `openclip_gemma.batching.iter_image_embeddings` streaming API.
-- Add incremental image indexing and cosine-similarity search APIs.
-- Add optional PyAV-based video-frame indexing and search APIs with playback-relative timestamps.
-- Preflight `.npz` members and NPY headers, with explicit archive and metadata size limits.
-- Expand CI coverage for the optional video extra on Windows and Ubuntu.
 
-This release candidate has been prepared for TestPyPI validation but has not yet
-been published. The current production PyPI release remains v0.1.1.
+- Add bounded, ordered image-file embedding with
+  `openclip_gemma.batching.iter_image_embeddings`.
+- Add incremental image indexing and Japanese/English cosine-similarity search.
+- Add optional PyAV-based video-frame indexing and text search with
+  playback-relative timestamps.
+- Validate `.npz` members and NPY headers before loading, with explicit
+  per-index archive and metadata size limits.
+- Test the optional video extra on Windows and Ubuntu CI.
+
+### Validation
+
+- The v0.2.0rc1 TestPyPI wheel was installed in clean CPU and CUDA environments.
+- CPU FP32 image/text embedding, batch embedding, image index/search, and
+  synthetic-MP4 frame index/search passed on Windows 11 with Python 3.12.10,
+  PyTorch 2.14.1+cpu, and PyAV 19.0.1.
+- CUDA FP32 operations passed on an NVIDIA GeForce RTX 4070 Ti SUPER (16 GiB)
+  with driver 610.88, Python 3.12.10, PyTorch 2.14.1+cu130,
+  torchvision 0.29.1+cu130, CUDA runtime 13.0, and PyAV 19.0.1.
+- Synthetic media validates the execution path, not real-world retrieval
+  quality. Linux real-model inference and macOS remain unverified.
+
+## v0.2.0rc1 (TestPyPI; 2026-10-18)
+
+- Publish the v0.2.0 release candidate to TestPyPI as a wheel and sdist.
+- Validate clean installs with dependencies from PyPI and the project wheel
+  from TestPyPI, without mixing package indexes during dependency resolution.
+- Pass published-package CPU and CUDA smoke tests for embeddings, batch
+  processing, image search, and sampled video-frame search.
+- Confirm the optional PyAV dependency and playback-relative timestamps using
+  a synthetic MP4.
+- Keep retrieval-quality claims separate from synthetic-media execution tests.
 
 ## v0.1.1
 
