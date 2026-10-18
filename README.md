@@ -29,6 +29,11 @@ pip install openclip-gemma==0.1.1
 - Image and text embedding through the official Sentence Transformers implementation of EmbeddingGemma 2.
 - 768-dimensional embeddings, task-specific text prompts, and CPU or CUDA device selection.
 - A pinned EmbeddingGemma 2 model revision; model weights are downloaded from Hugging Face on first use and are not bundled with this package.
+- Unreleased development APIs for streaming image embeddings, incremental image search, and sampled video-frame search; not included in the published v0.1.1 package.
+
+## Development roadmap
+
+The released v0.1.1 package supports image and text Tensor batches. This development branch adds module-level APIs for streaming image embeddings, incremental image indexing, text-to-image search, and PyAV-based video-frame search. These APIs are unreleased and are not available from the published v0.1.1 package. See the [batch embedding notes](docs/batch-embeddings-v0.2.0.md), [image search design](docs/image-search-v0.2.0.md), and [video search design notes](docs/video-search-v0.2.0.md).
 
 ## Installation
 
@@ -146,6 +151,74 @@ classification_tokenizer = get_tokenizer(
 
 Use the prompt appropriate to the role of the text (for example, a search query or a classification label). Prompt names and behavior are defined by the pinned official model/tokenizer configuration; this is not OpenCLIP's text-prompting behavior.
 
+## Image search development demo
+
+The current development branch includes a CLI prototype for indexing a local image folder and searching it with Japanese or English text. It is not included in the released `openclip-gemma==0.1.1` package. From a checkout of this branch, install the development environment and run:
+
+```bash
+uv sync --locked --group dev
+uv run python examples/image_search.py index \
+  --images ./photos --output ./image-index --batch-size 8 --device cpu --recursive
+uv run python examples/image_search.py search \
+  --index ./image-index --query "富士山と青空" --top-k 5 --device cpu
+```
+
+Indexing again updates added, changed, and deleted files. Change `--device cpu` to `--device cuda` to request CUDA inference. Lower `--batch-size` if GPU memory is limited. Search uses EmbeddingGemma's `SearchQuery` task prompt and reports unscaled cosine similarity scores, not probabilities. Results with equal scores are ordered by relative image path.
+
+The local index is a versioned NumPy `.npz` archive containing JSON metadata and float32 embeddings; it is read with pickle loading disabled and replaced atomically after a successful update. File changes are detected using relative path, size, and modification time in nanoseconds. Touching or rewriting an unchanged image can trigger an unnecessary re-embedding; rewriting a file while preserving both size and timestamp can evade detection. Remove the index and rebuild it if a full refresh is needed. A damaged image or incompatible/corrupt index stops the operation with an error rather than silently skipping data. See the [image search design and storage notes](docs/image-search-v0.2.0.md).
+
+The development API is available from `openclip_gemma.batching` and `openclip_gemma.image_search` when running from this source checkout:
+
+```python
+from openclip_gemma import create_model_and_transforms
+from openclip_gemma.batching import iter_image_embeddings
+from openclip_gemma.image_search import build_or_update_image_index, search_images
+
+model, _, preprocess = create_model_and_transforms(device="cpu")
+for path, embedding in iter_image_embeddings(model, preprocess, ["photos/a.jpg"], batch_size=8):
+    print(path, embedding.shape, embedding.device)
+
+build_or_update_image_index(model, preprocess, "photos", "image-index", batch_size=8)
+for result in search_images(model, "image-index", "青空の山", top_k=5):
+    print(result.path, f"{result.score:.4f}")
+```
+
+The streaming iterator yields CPU tensors in input order. Image-search results contain raw cosine similarity scores, not probabilities. Install the development environment using `uv sync --locked --group dev`; these source-tree APIs are not present in the published v0.1.1 wheel.
+
+## Video frame search development demo
+
+The development branch provides module-level video indexing and search APIs that sample frames and search them with Japanese or English text. They require the optional PyAV dependency and are not available from the released `openclip-gemma==0.1.1` package. Install the development dependencies from a checkout:
+
+```bash
+uv sync --locked --group dev --extra video
+uv run python examples/video_search.py index \
+  --videos ./videos --output ./video-index --interval 1.0 \
+  --batch-size 8 --device cpu --recursive
+uv run python examples/video_search.py search \
+  --index ./video-index --query "人がドリルで穴を開けている" \
+  --top-k 5 --device cpu
+```
+
+MP4 is the primary target; `.mp4`, `.m4v`, `.mov`, `.mkv`, `.webm`, and `.avi` paths are considered. Actual container and codec support depends on the FFmpeg build bundled with PyAV. The decoder samples the first frame whose presentation timestamp reaches each interval target and records its PTS-derived time; the requested interval is a target, not a promise that a frame exists at that exact time. Video is decoded sequentially, while only a bounded frame batch is sent through the image encoder. Reduce `--batch-size` if GPU memory is limited.
+
+Search ranks individual sampled frames by cosine similarity. Timestamps are relative to the container playback start, or the video stream start when the container start is unavailable; if neither is present, the first decoded frame defines zero. It does not understand motion, event order, or temporal relationships, and a scene between sampled timestamps can be missed. The local `video-index.npz` archive stores frame embeddings and timing metadata separately from image indexes, uses pickle-disabled NumPy loading, and is atomically replaced. Video additions, changes, and deletions are reconciled by relative path, file size, and modification time in nanoseconds; preserving both size and timestamp can evade change detection. Archives larger than 512 MiB or expanding beyond 512 MiB are rejected before array loading. See the [video search design notes](docs/video-search-v0.2.0.md) for storage, sampling, validation, and decoder limitations.
+
+The source-checkout API is available in `openclip_gemma.video_search`:
+
+```python
+from openclip_gemma import create_model_and_transforms
+from openclip_gemma.video_search import build_or_update_video_index, search_video
+
+model, _, preprocess = create_model_and_transforms(device="cuda")
+build_or_update_video_index(
+    model, preprocess, "videos", "video-index", interval_seconds=1.0, batch_size=8
+)
+for match in search_video(model, "video-index", "人がドリルで穴を開けている", top_k=5):
+    print(match.video_path, match.timestamp_seconds, match.score)
+```
+
+These module-level APIs are unreleased and require the `video` extra. The 512 MiB archive limit holds about 174,000 float32 768-dimensional vectors before metadata; larger collections need to be split across indexes. The current implementation loads an index into RAM and uses brute-force scoring, so this cap is a deliberate memory-safety bound rather than a claim of unbounded large-scale indexing.
+
 ## OpenCLIP differences and compatibility
 
 `openclip-gemma` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. Only the `embeddinggemma-2` model is supported.
@@ -157,7 +230,7 @@ Use the prompt appropriate to the role of the text (for example, a search query 
 | Text | `get_tokenizer()` returns Gemma token IDs with dynamically right-padded batches. CLIP token IDs and OpenCLIP's tokenizer are not interchangeable. |
 | Similarity | Normalize embeddings and compute cosine similarity. The model does not provide an OpenCLIP-trained `logit_scale`. |
 | Model methods | `encode_image()`, `encode_text()`, `eval()`, and `to()` are supported. `forward()` and `get_logits()` are not implemented. |
-| Scope | Training, fine-tuning, audio, video, and arbitrary OpenCLIP architectures are not supported. |
+| Scope | The core model API does not support training, fine-tuning, audio, or arbitrary architectures. Video-frame search is a separate unreleased development API, not a core OpenCLIP-compatible model feature. |
 
 For migration details and the tested compatibility surface, see the [OpenCLIP compatibility report](docs/openclip-compatibility-report.md).
 
