@@ -20,8 +20,8 @@ An independent Python library that provides an OpenCLIP-inspired inference API f
 
 ## Installation
 
-Install the v0.2.0 package into an active virtual environment. Python 3.12 and
-later are supported, up to but not including Python 3.15, except Python 3.14.1
+Install the package into an active virtual environment. Python 3.12 and later
+are supported, up to but not including Python 3.15, except Python 3.14.1
 (`>=3.12,<3.15,!=3.14.1`).
 
 ```bash
@@ -37,7 +37,7 @@ pip install "openclip-gemma[video]"
 To pin the exact version for reproducible environments:
 
 ```bash
-pip install openclip-gemma==0.2.0
+pip install openclip-gemma==0.3.0
 ```
 
 The first model or tokenizer load downloads the required files from Hugging Face unless they are already cached. The package pins the model revision `914f7f89142e33e77833254d9c9b90c3cef7303b`.
@@ -245,26 +245,43 @@ scoring, so memory and latency grow with collection size.
 | Images | Use the returned official processor transform. `encode_image()` accepts preprocessed float32 `[B, 3, H, W]` tensors; do not feed arbitrary OpenCLIP-normalized tensors or apply preprocessing twice. All images in a dense batch must have the same shape. |
 | Text | `get_tokenizer()` returns Gemma token IDs with dynamically right-padded batches. CLIP token IDs and OpenCLIP's tokenizer are not interchangeable. |
 | Similarity | Normalize embeddings and compute cosine similarity. The model does not provide an OpenCLIP-trained `logit_scale`. |
-| Model methods | `encode_image()`, `encode_text()`, `eval()`, and `to()` are supported. `forward()` and `get_logits()` are not implemented. |
+| Factory discovery | `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()` expose only the supported EmbeddingGemma 2 checkpoint. |
+| Model methods | `encode_image()`, `encode_text()`, `eval()`, and `to()` are supported. `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"`; the default strict mode rejects them. |
 | Scope | The core model API does not support training, fine-tuning, audio, or arbitrary architectures. Video-frame search is a separate v0.2.0 API, not a core OpenCLIP-compatible model feature. |
 
-For migration details and the tested compatibility surface, see the [OpenCLIP compatibility report](docs/openclip-compatibility-report.md).
+`list_pretrained()` reports `("embeddinggemma-2", "official")`; `official` is
+this package's alias for its pinned Google checkpoint, not an OpenCLIP
+pretrained tag. `forward()` in cosine mode returns normalized features and
+scalar `1.0`, not CLIP logits. `get_logits()` returns unscaled cosine
+similarities. Neither API reproduces a trained OpenCLIP `logit_scale`.
+
+For scenario-by-scenario results and migration examples, see the
+[OpenCLIP compatibility report](docs/openclip-compatibility-report-v0.3.0.md)
+and [migration guide](docs/migration-v0.3.0.md).
 
 ### Migration example
 
 The factory and encoder calls are intentionally familiar, but use the EmbeddingGemma-specific model name, preprocessing transform, and tokenizer:
 
 ```python
-# OpenCLIP-style calls
-model, _, preprocess = create_model_and_transforms("embeddinggemma-2", device="cpu")
-tokenizer = get_tokenizer("embeddinggemma-2")
+# EmbeddingGemma-specific model, processor, and retrieval prompt
+model, _, preprocess = create_model_and_transforms(
+    "embeddinggemma-2",
+    pretrained="official",
+    device="cpu",
+    logit_scale_mode="cosine",
+)
+tokenizer = get_tokenizer("embeddinggemma-2", prompt_name="SearchQuery")
 
 image_features = model.encode_image(preprocess(image).unsqueeze(0), normalize=True)
 text_features = model.encode_text(tokenizer(["a description"]), normalize=True)
 similarity = image_features @ text_features.T
 ```
 
-This is not a drop-in replacement: an OpenCLIP tokenizer, checkpoint, or arbitrary OpenCLIP model name cannot be substituted.
+This is not a drop-in replacement: an OpenCLIP tokenizer, checkpoint, or
+arbitrary OpenCLIP model name cannot be substituted. The cosine mode is
+explicit because its output is not numerically equivalent to trained CLIP
+logits.
 
 ## Supported environments and limitations
 

@@ -2,13 +2,13 @@
 
 ## Project Overview
 
-This repository develops the `openclip-gemma` Python package (import name: `openclip_gemma`), an independent library providing an OpenCLIP-compatible inference API for Google's EmbeddingGemma 2.
+This repository develops the `openclip-gemma` Python package (import name: `openclip_gemma`), an independent library providing an OpenCLIP-inspired inference API for Google's EmbeddingGemma 2.
 
 The primary objective is to enable existing OpenCLIP inference code to run with minimal modifications while preserving the correctness of EmbeddingGemma 2 embeddings.
 
 ## Source of Truth
 
-Read `docs/compatibility-spec-v0.1.0.md` before planning or implementing features.
+Read `docs/openclip-compatibility-v0.3.0.md` before changing the Factory or Model compatibility APIs. Read `docs/compatibility-spec-v0.1.0.md` for the historical core inference contract and its confirmed numerical behavior.
 
 The compatibility specification is the project's primary requirements document.
 
@@ -18,25 +18,27 @@ If the specification conflicts with the upstream implementation, report the conf
 
 Do not silently modify the specification.
 
-## Scope of v0.1.0
+## Supported inference API
 
-- Initial Python support target: Python 3.12.
-- FP32 is the numerical baseline. BF16 requires separate validation before it is claimed as supported.
+- Python 3.12-3.14 are supported, excluding Python 3.14.1 as declared in `pyproject.toml`.
+- FP32 is the numerical baseline; BF16 has separate CPU and CUDA validation.
 - `pretrained=None` must raise an explicit error; do not silently load official weights or create random weights.
-- `forward()` and `get_logits()` are not in the current implementation scope.
 
 Implement:
 
 - `create_model()`
 - `create_model_and_transforms()`
+- `create_model_from_pretrained()`
+- `list_models()` and `list_pretrained()`
 - `get_tokenizer()`
 - `model.encode_image()`
 - `model.encode_text()`
+- `model.forward()` and `model.get_logits()` only with explicit `logit_scale_mode="cosine"`; strict mode is the default because the model has no trained OpenCLIP logit scale.
 - `model.eval()` and `model.to()`
 - Image and text batch inference
 - CPU and CUDA inference
 
-Do not implement training, fine-tuning, audio, video, or arbitrary OpenCLIP architectures.
+Do not implement training, fine-tuning, audio, arbitrary OpenCLIP architectures, or numerical emulation of a trained CLIP `logit_scale`.
 
 Optional APIs must not delay the required inference functionality.
 
@@ -71,8 +73,6 @@ Optional APIs must not delay the required inference functionality.
 7. Summarize changes and known limitations.
 
 Do not proceed to unrelated features without an explicit request.
-
-For the M0 validation phase, only create reference experiments under `experiments/m0/` and record observed results in `docs/m0-validation.md`. Do not implement the OpenCLIP-compatible API until M0 is reviewed.
 
 Do not automatically create commits, push changes, publish packages, or modify repository settings.
 

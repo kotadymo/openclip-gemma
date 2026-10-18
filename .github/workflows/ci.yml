@@ -71,7 +71,7 @@ jobs:
           $wheelPython = (Resolve-Path $wheelPython).Path
           uv pip install --python $wheelPython $wheel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $wheelPython -c "import importlib.metadata as m, openclip_gemma; assert m.version('openclip-gemma') == '$expectedVersion'; assert set(openclip_gemma.__all__) == {'EmbeddingGemmaCLIP', 'create_model', 'create_model_and_transforms', 'get_tokenizer'}; assert 'site-packages' in openclip_gemma.__file__; print(openclip_gemma.__file__)"
+          & $wheelPython -c "import importlib.metadata as m, openclip_gemma; assert m.version('openclip-gemma') == '$expectedVersion'; assert set(openclip_gemma.__all__) == {'EmbeddingGemmaCLIP', 'create_model', 'create_model_and_transforms', 'create_model_from_pretrained', 'get_tokenizer', 'list_models', 'list_pretrained'}; assert 'site-packages' in openclip_gemma.__file__; print(openclip_gemma.__file__)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   video-dependencies:
