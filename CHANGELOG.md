@@ -24,6 +24,9 @@
   not pretrained OpenCLIP accuracy.
 - The pinned EmbeddingGemma 2 compatibility integration test passed for CPU
   FP32/BF16 and CUDA FP32/BF16 on an NVIDIA GeForce RTX 4070 Ti SUPER.
+- CPU BF16 `get_logits()` accumulates its matrix product in FP32 and casts the
+  result back to BF16 to support processors without native BF16 matrix
+  instructions; the CUDA computation path is unchanged.
 - CUDA cross-implementation comparisons now explicitly use FP32 for both
   Sentence Transformers and openclip-gemma; earlier comparisons exposed a
   BF16-vs-FP32 test-condition mismatch, not a relaxed tolerance.

@@ -163,7 +163,12 @@ class EmbeddingGemmaCLIP(nn.Module):
         ).all().item():
             raise ValueError("Encoded image and text features must be finite.")
 
-        image_logits = image_features @ text_features.T
+        if image_features.device.type == "cpu" and image_features.dtype == torch.bfloat16:
+            # CPU BF16 matmul is not supported by every processor feature set.
+            image_logits = image_features.float() @ text_features.float().T
+            image_logits = image_logits.to(dtype=image_features.dtype)
+        else:
+            image_logits = image_features @ text_features.T
         if not torch.isfinite(image_logits).all().item():
             raise RuntimeError("Cosine similarity produced non-finite values.")
         return image_logits, image_logits.T

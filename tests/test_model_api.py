@@ -229,7 +229,10 @@ def test_get_logits_returns_cosine_matrix_and_its_transpose(
         torch.empty((3, 5), dtype=torch.long, device=device),
     )
 
-    expected = image_features @ text_features.T
+    if device == "cpu" and dtype == torch.bfloat16:
+        expected = (image_features.float() @ text_features.float().T).to(dtype=dtype)
+    else:
+        expected = image_features @ text_features.T
     assert image_logits.shape == (2, 3)
     assert text_logits.shape == (3, 2)
     torch.testing.assert_close(image_logits, expected)

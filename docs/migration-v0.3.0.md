@@ -152,7 +152,10 @@ different from trained CLIP logits.
 The model and input tensors must use the same device. CPU and CUDA are
 supported when the corresponding PyTorch build and device are available.
 FP32 is the reference precision; BF16 is supported. FP16 is intentionally
-rejected. The verified CUDA hardware and numerical results are listed in the
+rejected. On CPU, BF16 `get_logits()` computes the matrix product in FP32 and
+casts the result back to BF16 so it does not require CPU BF16 matrix
+instructions. CUDA retains the feature dtype for the matrix product. The
+verified CUDA hardware and numerical results are listed in the
 repository README and compatibility report; they do not imply support for
 every GPU or driver combination.
 
