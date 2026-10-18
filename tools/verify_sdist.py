@@ -12,11 +12,15 @@ REQUIRED_PATHS = {
     "README.md",
     "pyproject.toml",
     "src/openclip_gemma/__init__.py",
+    "src/openclip_gemma/batching.py",
     "src/openclip_gemma/constants.py",
     "src/openclip_gemma/factory.py",
+    "src/openclip_gemma/image_search.py",
+    "src/openclip_gemma/index_storage.py",
     "src/openclip_gemma/model.py",
     "src/openclip_gemma/tokenizer.py",
     "src/openclip_gemma/transforms.py",
+    "src/openclip_gemma/video_search.py",
 }
 EXCLUDED_TOP_LEVEL = {
     "benchmarks",
@@ -29,7 +33,7 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_ARCHIVE_FILE_SIZE = 50_000_000
 
 
-def verify_sdist(archive_path: Path, expected_version: str = "0.1.0") -> None:
+def verify_sdist(archive_path: Path, expected_version: str = "0.2.0rc1") -> None:
     if not archive_path.is_file() or not archive_path.name.endswith(".tar.gz"):
         raise ValueError(f"Not a source distribution archive: {archive_path}")
 
@@ -116,7 +120,7 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.1.0") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
-    parser.add_argument("--expected-version", default="0.1.0")
+    parser.add_argument("--expected-version", default="0.2.0rc1")
     args = parser.parse_args()
     try:
         verify_sdist(args.archive, expected_version=args.expected_version)

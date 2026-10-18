@@ -1,14 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.2.0rc1 (TestPyPI publication pending)
 
-### Planned for v0.2.0
-
+### Added
 - Add the `openclip_gemma.batching.iter_image_embeddings` streaming API.
 - Add incremental image indexing and cosine-similarity search APIs.
 - Add optional PyAV-based video-frame indexing and search APIs with playback-relative timestamps.
 - Preflight `.npz` members and NPY headers, with explicit archive and metadata size limits.
 - Expand CI coverage for the optional video extra on Windows and Ubuntu.
+
+This release candidate has been prepared for TestPyPI validation but has not yet
+been published. The current production PyPI release remains v0.1.1.
 
 ## v0.1.1
 

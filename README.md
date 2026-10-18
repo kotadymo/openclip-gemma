@@ -13,6 +13,11 @@ An independent Python library that provides an OpenCLIP-inspired inference API f
 
 Version **0.1.1** is available on [PyPI](https://pypi.org/project/openclip-gemma/0.1.1/) and as a [GitHub release](https://github.com/kotadymo/openclip-gemma/releases/tag/v0.1.1).
 
+The **v0.2.0rc1** release candidate is being prepared for TestPyPI validation.
+It has **not** been published to TestPyPI; v0.1.1 remains the latest production
+release. See the [TestPyPI validation plan](docs/testpypi-v0.2.0rc1-validation.md)
+for the publisher configuration and post-publication checks.
+
 ```bash
 pip install openclip-gemma
 ```
@@ -29,11 +34,11 @@ pip install openclip-gemma==0.1.1
 - Image and text embedding through the official Sentence Transformers implementation of EmbeddingGemma 2.
 - 768-dimensional embeddings, task-specific text prompts, and CPU or CUDA device selection.
 - A pinned EmbeddingGemma 2 model revision; model weights are downloaded from Hugging Face on first use and are not bundled with this package.
-- Unreleased development APIs for streaming image embeddings, incremental image search, and sampled video-frame search; not included in the published v0.1.1 package.
+- v0.2.0rc1 adds streaming image embeddings, incremental image search, and sampled video-frame search. These candidate APIs are not in the published v0.1.1 package and are not yet available from TestPyPI.
 
-## Development roadmap
+## v0.2.0rc1 candidate
 
-The released v0.1.1 package supports image and text Tensor batches. This development branch adds module-level APIs for streaming image embeddings, incremental image indexing, text-to-image search, and PyAV-based video-frame search. These APIs are unreleased and are not available from the published v0.1.1 package. See the [batch embedding notes](docs/batch-embeddings-v0.2.0.md), [image search design](docs/image-search-v0.2.0.md), and [video search design notes](docs/video-search-v0.2.0.md).
+The current release branch prepares the v0.2.0rc1 candidate, adding module-level APIs for streaming image embeddings, incremental image indexing, text-to-image search, and optional PyAV-based video-frame search. TestPyPI publication is pending; these features are not in the current v0.1.1 PyPI package. See the [batch embedding notes](docs/batch-embeddings-v0.2.0.md), [image search design](docs/image-search-v0.2.0.md), and [video search design notes](docs/video-search-v0.2.0.md).
 
 ## Installation
 
@@ -151,9 +156,9 @@ classification_tokenizer = get_tokenizer(
 
 Use the prompt appropriate to the role of the text (for example, a search query or a classification label). Prompt names and behavior are defined by the pinned official model/tokenizer configuration; this is not OpenCLIP's text-prompting behavior.
 
-## Image search development demo
+## Image search (v0.2.0rc1 candidate)
 
-The current development branch includes a CLI prototype for indexing a local image folder and searching it with Japanese or English text. It is not included in the released `openclip-gemma==0.1.1` package. From a checkout of this branch, install the development environment and run:
+The v0.2.0rc1 candidate includes a CLI for indexing a local image folder and searching it with Japanese or English text. It is not included in the released `openclip-gemma==0.1.1` package and has not yet been published to TestPyPI. From a checkout of this release branch, install the development environment and run:
 
 ```bash
 uv sync --locked --group dev
@@ -167,7 +172,7 @@ Indexing again updates added, changed, and deleted files. Change `--device cpu` 
 
 The local index is a versioned NumPy `.npz` archive containing JSON metadata and float32 embeddings; it is read with pickle loading disabled and replaced atomically after a successful update. File changes are detected using relative path, size, and modification time in nanoseconds. Touching or rewriting an unchanged image can trigger an unnecessary re-embedding; rewriting a file while preserving both size and timestamp can evade detection. Remove the index and rebuild it if a full refresh is needed. A damaged image or incompatible/corrupt index stops the operation with an error rather than silently skipping data. See the [image search design and storage notes](docs/image-search-v0.2.0.md).
 
-The development API is available from `openclip_gemma.batching` and `openclip_gemma.image_search` when running from this source checkout:
+The candidate API is available from `openclip_gemma.batching` and `openclip_gemma.image_search` when running from this source checkout:
 
 ```python
 from openclip_gemma import create_model_and_transforms
@@ -183,11 +188,11 @@ for result in search_images(model, "image-index", "青空の山", top_k=5):
     print(result.path, f"{result.score:.4f}")
 ```
 
-The streaming iterator yields CPU tensors in input order. Image-search results contain raw cosine similarity scores, not probabilities. Install the development environment using `uv sync --locked --group dev`; these source-tree APIs are not present in the published v0.1.1 wheel.
+The streaming iterator yields CPU tensors in input order. Image-search results contain raw cosine similarity scores, not probabilities. Install the development environment using `uv sync --locked --group dev`; these APIs are not present in the published v0.1.1 wheel.
 
-## Video frame search development demo
+## Video frame search (v0.2.0rc1 candidate)
 
-The development branch provides module-level video indexing and search APIs that sample frames and search them with Japanese or English text. They require the optional PyAV dependency and are not available from the released `openclip-gemma==0.1.1` package. Install the development dependencies from a checkout:
+The v0.2.0rc1 candidate provides module-level video indexing and search APIs that sample frames and search them with Japanese or English text. They require the optional PyAV dependency and are not available from the released `openclip-gemma==0.1.1` package. TestPyPI publication is pending. Install the development dependencies from a checkout:
 
 ```bash
 uv sync --locked --group dev --extra video
@@ -217,7 +222,7 @@ for match in search_video(model, "video-index", "人がドリルで穴を開け�
     print(match.video_path, match.timestamp_seconds, match.score)
 ```
 
-These module-level APIs are unreleased and require the `video` extra. The 512 MiB archive limit holds about 174,000 float32 768-dimensional vectors before metadata; larger collections need to be split across indexes. The current implementation loads an index into RAM and uses brute-force scoring, so this cap is a deliberate memory-safety bound rather than a claim of unbounded large-scale indexing.
+These candidate module-level APIs require the `video` extra. The 512 MiB archive limit holds about 174,000 float32 768-dimensional vectors before metadata; larger collections need to be split across indexes. The current implementation loads an index into RAM and uses brute-force scoring, so this cap is a deliberate memory-safety bound rather than a claim of unbounded large-scale indexing.
 
 ## OpenCLIP differences and compatibility
 
@@ -230,7 +235,7 @@ These module-level APIs are unreleased and require the `video` extra. The 512 Mi
 | Text | `get_tokenizer()` returns Gemma token IDs with dynamically right-padded batches. CLIP token IDs and OpenCLIP's tokenizer are not interchangeable. |
 | Similarity | Normalize embeddings and compute cosine similarity. The model does not provide an OpenCLIP-trained `logit_scale`. |
 | Model methods | `encode_image()`, `encode_text()`, `eval()`, and `to()` are supported. `forward()` and `get_logits()` are not implemented. |
-| Scope | The core model API does not support training, fine-tuning, audio, or arbitrary architectures. Video-frame search is a separate unreleased development API, not a core OpenCLIP-compatible model feature. |
+| Scope | The core model API does not support training, fine-tuning, audio, or arbitrary architectures. Video-frame search is a separate v0.2.0rc1 candidate API, not a core OpenCLIP-compatible model feature. |
 
 For migration details and the tested compatibility surface, see the [OpenCLIP compatibility report](docs/openclip-compatibility-report.md).
 
