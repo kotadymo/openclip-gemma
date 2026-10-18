@@ -46,10 +46,8 @@ The example is development-only; `batch_size=8` is an example, not a universally
 
 Unit tests cover bounded chunks, ordering across differing preprocessed shapes, JPEG/PNG inputs, empty and invalid inputs, damaged/missing files, inference mode, CPU result tensors, and CUDA out-of-memory messaging. A separate opt-in integration test compares CPU and CUDA batch results with individual image encodings using the pinned real model.
 
-## Decisions deferred to Phase 2
+## Phase 1 boundary and Phase 2 decisions
 
-- Whether the stable API should return a dense tensor, an iterator, or write batches directly to an index.
-- Image index metadata, persistence format, incremental detection of added/changed/deleted files, and cache validation.
-- Search CLI design and top-k score semantics.
+The streaming iterator remains an internal source-tree helper; its shape is not a stable public API. Phase 2 uses it to update an on-disk image index without collecting all image embeddings in GPU memory. Index metadata, persistence, update detection, search scoring, and CLI behavior are described in the [image search design notes](image-search-v0.2.0.md).
 
-The iterator is used for this prototype because a dense result tensor grows with the full image collection. Phase 2 can decide whether to retain this streaming shape or provide a separate convenience API without changing `encode_image()`.
+The prototype uses JSON metadata and a NumPy embedding matrix in a pickle-disabled `.npz` archive, with atomic replacement for updates. File-change detection uses path, size, and modification time; its limitations are documented in the Phase 2 notes. These choices do not change `encode_image()` or establish a stable public API.

@@ -29,10 +29,11 @@ pip install openclip-gemma==0.1.1
 - Image and text embedding through the official Sentence Transformers implementation of EmbeddingGemma 2.
 - 768-dimensional embeddings, task-specific text prompts, and CPU or CUDA device selection.
 - A pinned EmbeddingGemma 2 model revision; model weights are downloaded from Hugging Face on first use and are not bundled with this package.
+- Development-branch prototype for incremental image indexing and Japanese/English text search; not included in the released v0.1.1 package.
 
 ## Development roadmap
 
-The v0.1.1 public API supports image and text Tensor batches, but not file-based batch embedding. A streaming file-batch prototype is implemented and tested internally for the v0.2.0 development cycle; its interface is not part of the released public API. Image search is also planned for v0.2.0, while video-frame search is a later v0.3.0 design/prototype goal. See the [batch embedding development notes](docs/batch-embeddings-v0.2.0.md) for the current internal contract.
+The released v0.1.1 package supports image and text Tensor batches. The v0.2.0 development branch now contains internal streaming image embedding, incremental image indexing, a text-to-image search foundation, and a CLI demo; these features are not part of the released package API. Video-frame search remains a later v0.3.0 design/prototype goal. See the [batch embedding notes](docs/batch-embeddings-v0.2.0.md) and [image search design](docs/image-search-v0.2.0.md).
 
 ## Installation
 
@@ -149,6 +150,22 @@ classification_tokenizer = get_tokenizer(
 ```
 
 Use the prompt appropriate to the role of the text (for example, a search query or a classification label). Prompt names and behavior are defined by the pinned official model/tokenizer configuration; this is not OpenCLIP's text-prompting behavior.
+
+## Image search development demo
+
+The current development branch includes a CLI prototype for indexing a local image folder and searching it with Japanese or English text. It is not included in the released `openclip-gemma==0.1.1` package. From a checkout of this branch, install the development environment and run:
+
+```bash
+uv sync --locked --group dev
+uv run python examples/image_search.py index \
+  --images ./photos --output ./image-index --batch-size 8 --device cpu --recursive
+uv run python examples/image_search.py search \
+  --index ./image-index --query "富士山と青空" --top-k 5 --device cpu
+```
+
+Indexing again updates added, changed, and deleted files. Change `--device cpu` to `--device cuda` to request CUDA inference. Lower `--batch-size` if GPU memory is limited. Search uses EmbeddingGemma's `SearchQuery` task prompt and reports unscaled cosine similarity scores, not probabilities. Results with equal scores are ordered by relative image path.
+
+The local index is a versioned NumPy `.npz` archive containing JSON metadata and float32 embeddings; it is read with pickle loading disabled and replaced atomically after a successful update. File changes are detected using relative path, size, and modification time in nanoseconds. Touching or rewriting an unchanged image can trigger an unnecessary re-embedding; rewriting a file while preserving both size and timestamp can evade detection. Remove the index and rebuild it if a full refresh is needed. A damaged image or incompatible/corrupt index stops the operation with an error rather than silently skipping data. See the [image search design and storage notes](docs/image-search-v0.2.0.md).
 
 ## OpenCLIP differences and compatibility
 

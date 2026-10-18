@@ -28,6 +28,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
+    "numpy>=1.26,<3",
     "pillow>=13.0.0,<14",
     "torch>=2.14.1,<3",
     "transformers>=5.20.1,<6",
