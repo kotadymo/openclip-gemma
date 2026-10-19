@@ -53,14 +53,29 @@ def _pool_and_normalize(
 
 
 class EmbeddingGemmaCLIP(nn.Module):
-    """Wrap the Transformers backend with the planned OpenCLIP-style API."""
+    """Wrap the Transformers backend with an OpenCLIP-inspired inference API."""
 
-    def __init__(self, backend: nn.Module, processor: Any) -> None:
+    def __init__(
+        self,
+        backend: nn.Module,
+        processor: Any,
+        *,
+        output_dict: bool = False,
+        logit_scale_mode: str = "strict",
+    ) -> None:
         super().__init__()
         if not isinstance(backend, nn.Module):
             raise TypeError("backend must be a torch.nn.Module.")
+        if not isinstance(output_dict, bool):
+            raise TypeError("output_dict must be a bool.")
+        if not isinstance(logit_scale_mode, str):
+            raise TypeError("logit_scale_mode must be a string.")
+        if logit_scale_mode not in {"strict", "cosine"}:
+            raise ValueError("logit_scale_mode must be 'strict' or 'cosine'.")
         self.backend = backend
         object.__setattr__(self, "_processor", processor)
+        self.output_dict = output_dict
+        self.logit_scale_mode = logit_scale_mode
 
     @property
     def processor(self) -> Any:
@@ -82,6 +97,81 @@ class EmbeddingGemmaCLIP(nn.Module):
     def half(self) -> EmbeddingGemmaCLIP:
         """Reject the PyTorch convenience conversion to unsupported FP16."""
         raise ValueError("FP16 is not supported; use FP32 or BF16.")
+
+    def forward(
+        self,
+        image: torch.Tensor | None = None,
+        text: torch.Tensor | None = None,
+    ) -> (
+        tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor]
+        | dict[str, object]
+    ):
+        """Return normalized features and an explicit, untrained cosine scale."""
+        if image is None and text is None:
+            raise ValueError("At least one of image or text must be provided.")
+        if self.logit_scale_mode != "cosine":
+            raise NotImplementedError(
+                "forward() requires logit_scale_mode='cosine'; EmbeddingGemma 2 "
+                "has no trained OpenCLIP logit_scale."
+            )
+
+        image_features = (
+            self.encode_image(image, normalize=True) if image is not None else None
+        )
+        text_features = (
+            self.encode_text(text, normalize=True) if text is not None else None
+        )
+        if image_features is not None:
+            feature_device = image_features.device
+        elif text_features is not None:
+            feature_device = text_features.device
+        else:
+            raise RuntimeError("At least one encoded feature tensor is required.")
+        logit_scale = torch.ones((), dtype=torch.float32, device=feature_device)
+        if self.output_dict:
+            return {
+                "image_features": image_features,
+                "text_features": text_features,
+                "logit_scale": logit_scale,
+            }
+        return image_features, text_features, logit_scale
+
+    def get_logits(
+        self,
+        image: torch.Tensor,
+        text: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return image/text cosine similarity matrices in both orientations."""
+        if self.logit_scale_mode != "cosine":
+            raise NotImplementedError(
+                "get_logits() requires logit_scale_mode='cosine'; EmbeddingGemma 2 "
+                "has no trained OpenCLIP logit_scale."
+            )
+
+        image_features = self.encode_image(image, normalize=True)
+        text_features = self.encode_text(text, normalize=True)
+        if image_features.ndim != 2 or text_features.ndim != 2:
+            raise RuntimeError("Encoded image and text features must be rank-2 tensors.")
+        if image_features.shape[1] != 768 or text_features.shape[1] != 768:
+            raise RuntimeError("Encoded image and text features must have 768 dimensions.")
+        if image_features.device != text_features.device:
+            raise ValueError("Encoded image and text features must be on the same device.")
+        if image_features.dtype != text_features.dtype:
+            raise TypeError("Encoded image and text features must have the same dtype.")
+        if not torch.isfinite(image_features).all().item() or not torch.isfinite(
+            text_features
+        ).all().item():
+            raise ValueError("Encoded image and text features must be finite.")
+
+        if image_features.device.type == "cpu" and image_features.dtype == torch.bfloat16:
+            # CPU BF16 matmul is not supported by every processor feature set.
+            image_logits = image_features.float() @ text_features.float().T
+            image_logits = image_logits.to(dtype=image_features.dtype)
+        else:
+            image_logits = image_features @ text_features.T
+        if not torch.isfinite(image_logits).all().item():
+            raise RuntimeError("Cosine similarity produced non-finite values.")
+        return image_logits, image_logits.T
 
     def encode_image(
         self,

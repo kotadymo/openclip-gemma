@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.3.0
+
+### Added
+
+- Add OpenCLIP-style model discovery with `list_models()` and
+  `list_pretrained()`.
+- Add `create_model_from_pretrained()` with optional transform return.
+- Add `output_dict` and explicit strict/cosine modes to the model factories.
+- Add opt-in `forward()` and `get_logits()` cosine-similarity APIs while
+  rejecting unsupported trained-CLIP logit semantics by default.
+- Add a ten-scenario OpenCLIP compatibility report and a migration guide.
+
+### Validation
+
+- Default pytest suite: 160 passed, 25 skipped; the skips are expected when
+  model integration is not enabled or CUDA-only contract tests run on CPU.
+- Full pinned-model integration suite on the CUDA development PC:
+  21 passed, 0 failed, with 164 non-integration tests deselected.
+- The pinned OpenCLIP source was exercised on CPU with randomly initialized
+  `ViT-B-32` weights for factory discovery, preprocessing, tokenization,
+  encoding, `forward()`, and `get_logits()`. This validates API behavior only,
+  not pretrained OpenCLIP accuracy.
+- The pinned EmbeddingGemma 2 compatibility integration test passed for CPU
+  FP32/BF16 and CUDA FP32/BF16 on an NVIDIA GeForce RTX 4070 Ti SUPER.
+- CPU BF16 `get_logits()` accumulates its matrix product in FP32 and casts the
+  result back to BF16 to support processors without native BF16 matrix
+  instructions; the CUDA computation path is unchanged.
+- CUDA cross-implementation comparisons now explicitly use FP32 for both
+  Sentence Transformers and openclip-gemma; earlier comparisons exposed a
+  BF16-vs-FP32 test-condition mismatch, not a relaxed tolerance.
+
 ## v0.2.0
 
 ### Added

@@ -12,6 +12,9 @@ from openclip_gemma import (
     EmbeddingGemmaCLIP,
     create_model,
     create_model_and_transforms,
+    create_model_from_pretrained,
+    list_models,
+    list_pretrained,
 )
 from openclip_gemma.factory import MODEL_ID, MODEL_REVISION
 from openclip_gemma.transforms import EmbeddingGemmaPreprocess
@@ -296,3 +299,110 @@ def test_encode_text_requires_processor_tokenizer_and_generic_encode_is_unimplem
         model.encode_text(torch.zeros((1, 4), dtype=torch.long))
     with pytest.raises(NotImplementedError, match="encode"):
         model.encode("sample")
+
+
+def test_factory_defaults_preserve_v02_and_use_strict_scale_mode(
+    loaded_model: torch.nn.Module,
+) -> None:
+    model = create_model()
+
+    assert model.backend is loaded_model
+    assert model.output_dict is False
+    assert model.logit_scale_mode == "strict"
+
+
+def test_list_apis_do_not_load_model_or_processor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_loader = Mock(side_effect=AssertionError("model weights must not load"))
+    processor_loader = Mock(side_effect=AssertionError("processor must not load"))
+    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", model_loader)
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        processor_loader,
+    )
+
+    assert list_models() == ["embeddinggemma-2"]
+    assert list_pretrained() == [("embeddinggemma-2", "official")]
+    assert list_pretrained(as_str=True) == ["embeddinggemma-2:official"]
+    model_loader.assert_not_called()
+    processor_loader.assert_not_called()
+
+
+def test_list_pretrained_requires_bool_as_str() -> None:
+    with pytest.raises(TypeError, match="as_str must be a bool"):
+        list_pretrained(as_str=1)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("pretrained", ["official", MODEL_ID])
+def test_create_model_accepts_official_alias_and_existing_model_id(
+    loaded_model: torch.nn.Module,
+    monkeypatch: pytest.MonkeyPatch,
+    pretrained: str,
+) -> None:
+    loader = Mock(return_value=loaded_model)
+    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
+
+    model = create_model(pretrained=pretrained, output_dict=True, logit_scale_mode="cosine")
+
+    assert model.output_dict is True
+    assert model.logit_scale_mode == "cosine"
+    assert loader.call_args.args == (MODEL_ID,)
+    assert loader.call_args.kwargs["revision"] == MODEL_REVISION
+
+
+def test_create_model_from_pretrained_returns_model_and_one_transform(
+    loaded_model: torch.nn.Module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_loader = Mock(return_value=loaded_model)
+    processor = SimpleNamespace(image_processor=FakeImageProcessor())
+    processor_loader = Mock(return_value=processor)
+    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", model_loader)
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        processor_loader,
+    )
+
+    result = create_model_from_pretrained(pretrained="official")
+
+    assert isinstance(result, tuple)
+    model, preprocess = result
+    assert isinstance(model, EmbeddingGemmaCLIP)
+    assert model.backend is loaded_model
+    assert isinstance(preprocess, EmbeddingGemmaPreprocess)
+    model_loader.assert_called_once()
+    processor_loader.assert_called_once()
+
+
+def test_create_model_from_pretrained_can_return_model_only(
+    loaded_model: torch.nn.Module,
+) -> None:
+    model = create_model_from_pretrained(return_transform=False)
+
+    assert isinstance(model, EmbeddingGemmaCLIP)
+    assert model.backend is loaded_model
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "exception", "message"),
+    [
+        ({"return_transform": 1}, TypeError, "return_transform must be a bool"),
+        ({"output_dict": 1}, TypeError, "output_dict must be a bool"),
+        ({"logit_scale_mode": "unknown"}, ValueError, "logit_scale_mode"),
+        ({"weights_only": False}, TypeError, "Unsupported keyword"),
+    ],
+)
+def test_factory_rejects_unsupported_or_invalid_options_before_loading(
+    monkeypatch: pytest.MonkeyPatch,
+    kwargs: dict[str, object],
+    exception: type[Exception],
+    message: str,
+) -> None:
+    model_loader = Mock()
+    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", model_loader)
+
+    with pytest.raises(exception, match=message):
+        create_model_from_pretrained(**kwargs)  # type: ignore[arg-type]
+
+    model_loader.assert_not_called()

@@ -196,6 +196,8 @@ def test_text_embeddings_match_sentence_transformers_on_cuda() -> None:
         revision=MODEL_REVISION,
         device="cuda",
     )
+    reference_model.to(device="cuda", dtype=torch.float32)
+    reference_model.eval()
     tokenizer = get_tokenizer(prompt_name="SearchQuery")
     tokens = tokenizer(TEXTS).to("cuda")
 

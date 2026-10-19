@@ -239,6 +239,8 @@ def test_zero_shot_scores_match_reference_on_cuda() -> None:
         revision=MODEL_REVISION,
         device="cuda",
     )
+    reference_model.to(device="cuda", dtype=torch.float32)
+    reference_model.eval()
     model, _, preprocess = create_model_and_transforms(device="cuda")
     tokenizer = get_tokenizer(prompt_name="Classification")
     images = _images()
