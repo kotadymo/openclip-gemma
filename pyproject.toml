@@ -1,6 +1,6 @@
 [project]
 name = "openclip-gemma"
-version = "0.3.0rc1"
+version = "0.3.0"
 description = "OpenCLIP-style image and text inference with EmbeddingGemma 2"
 readme = "README.md"
 license = "Apache-2.0"
