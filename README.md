@@ -12,7 +12,12 @@ An independent Python library that provides an OpenCLIP-inspired inference API f
 ## Features
 
 - OpenCLIP-style `create_model`, `create_model_and_transforms`, and `get_tokenizer` entry points.
-- Image and text embedding through the official Sentence Transformers implementation of EmbeddingGemma 2.
+- Factory discovery with `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()`.
+- Only EmbeddingGemma 2 is supported; this is not a complete drop-in replacement for OpenCLIP.
+- Image and text inference use the official Transformers model and processor; Sentence Transformers is the pinned numerical reference.
+- Model API includes `forward()`, `get_logits()`, and factory option `output_dict=True`.
+- `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"` (default: `"strict"`).
+- `forward()` returns normalized features and scale `1.0`; `get_logits()` returns unscaled cosine similarities, not trained CLIP logits or probabilities.
 - 768-dimensional embeddings, task-specific text prompts, and CPU or CUDA device selection.
 - A pinned EmbeddingGemma 2 model revision; model weights are downloaded from Hugging Face on first use and are not bundled with this package.
 - Bounded-batch image embedding and incremental Japanese/English text-to-image search.

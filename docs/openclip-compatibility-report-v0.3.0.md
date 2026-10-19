@@ -266,7 +266,7 @@ non-trained scalar `1.0`; exponentiating it or treating it as a learned CLIP
 scale is incorrect. Use the feature keys and calculate cosine similarity
 explicitly.
 
-### 10. Call `get_logits()` — C for trained-logit semantics, 1 setup line
+### 10. Call `get_logits()` — C for trained-logit semantics, 2 setup lines
 
 OpenCLIP:
 
@@ -274,11 +274,16 @@ OpenCLIP:
 image_logits, text_logits = model.get_logits(images, text_tokens)
 ```
 
-Migration:
+Assuming `device`, `images`, and `text_tokens` are defined by the surrounding
+code, migration:
 
 ```python
-model = create_model(
-    "embeddinggemma-2", pretrained="official", device=device,
+import openclip_gemma as open_clip
+
+model = open_clip.create_model(
+    "embeddinggemma-2",
+    pretrained="official",
+    device=device,
     logit_scale_mode="cosine",
 )
 image_scores, text_scores = model.get_logits(images, text_tokens)
