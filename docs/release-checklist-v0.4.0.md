@@ -17,8 +17,9 @@ authorize a package publication.
   selective-loading integration tests, benchmark smoke coverage, and rebuilt
   wheel/sdist artifacts.
 - [x] Run available CPU pinned-model MRL comparisons and record exact results.
-  CUDA and other platform checks remain unverified locally because the required
-  hardware is unavailable.
+  CUDA MRL and selective-loading integration checks also passed for FP32 and
+  BF16 on an NVIDIA RTX 4070 Ti SUPER using `.venv-cuda`; broader platform and
+  application-data retrieval-quality checks remain separate.
 - [x] Create the implementation PR from the v0.4.0 feature branch.
 - [ ] Obtain normal review and successful CI for the latest PR commit before
   merging to `main`.

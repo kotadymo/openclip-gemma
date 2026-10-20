@@ -7,6 +7,7 @@ import os
 import pytest
 import torch
 from PIL import Image
+from torch.nn import functional as F
 
 from openclip_gemma import create_model, create_model_and_transforms, get_tokenizer
 
@@ -20,29 +21,50 @@ pytestmark = [
 
 
 @pytest.mark.parametrize(
-    ("precision", "dtype", "tolerance"),
+    ("device_name", "precision", "dtype", "tolerance"),
     [
-        ("fp32", torch.float32, 1e-4),
-        ("bf16", torch.bfloat16, 2e-3),
+        ("cpu", "fp32", torch.float32, 1e-4),
+        ("cpu", "bf16", torch.bfloat16, 2e-3),
+        pytest.param(
+            "cuda",
+            "fp32",
+            torch.float32,
+            1e-4,
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(),
+                reason="CUDA is unavailable.",
+            ),
+        ),
+        pytest.param(
+            "cuda",
+            "bf16",
+            torch.bfloat16,
+            2e-3,
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available() or not torch.cuda.is_bf16_supported(),
+                reason="CUDA BF16 is unavailable.",
+            ),
+        ),
     ],
 )
 def test_selective_loading_preserves_retained_embeddings(
+    device_name: str,
     precision: str,
     dtype: torch.dtype,
     tolerance: float,
 ) -> None:
     reference, _, preprocess = create_model_and_transforms(
         precision=precision,
-        device="cpu",
+        device=device_name,
     )
     text_only = create_model(
         precision=precision,
-        device="cpu",
+        device=device_name,
         modalities=("text",),
     )
     image_text = create_model(
         precision=precision,
-        device="cpu",
+        device=device_name,
         modalities=("text", "image"),
     )
 
@@ -58,8 +80,8 @@ def test_selective_loading_preserves_retained_embeddings(
 
     tokens = get_tokenizer(prompt_name="SearchQuery")(
         "A red circle on a blue background."
-    )
-    image = preprocess(Image.new("RGB", (256, 192), "red")).unsqueeze(0)
+    ).to(device_name)
+    image = preprocess(Image.new("RGB", (256, 192), "red")).unsqueeze(0).to(device_name)
 
     with torch.inference_mode():
         reference_text = reference.encode_text(tokens)
@@ -76,7 +98,7 @@ def test_selective_loading_preserves_retained_embeddings(
         image_text_image,
     ):
         assert features.dtype == dtype
-        assert features.device.type == "cpu"
+        assert features.device.type == device_name
         assert torch.isfinite(features).all()
     torch.testing.assert_close(
         text_only_features,
@@ -96,6 +118,67 @@ def test_selective_loading_preserves_retained_embeddings(
         atol=tolerance,
         rtol=tolerance,
     )
+
+    for embedding_dim in (512, 256, 128):
+        with torch.inference_mode():
+            reference_text_mrl = reference.encode_text(
+                tokens,
+                truncate_dim=embedding_dim,
+            )
+            text_only_mrl = text_only.encode_text(
+                tokens,
+                truncate_dim=embedding_dim,
+            )
+            image_text_mrl = image_text.encode_text(
+                tokens,
+                truncate_dim=embedding_dim,
+            )
+            reference_image_mrl = reference.encode_image(
+                image,
+                truncate_dim=embedding_dim,
+            )
+            image_text_image_mrl = image_text.encode_image(
+                image,
+                truncate_dim=embedding_dim,
+            )
+
+        expected_text_mrl = F.normalize(
+            reference_text[:, :embedding_dim],
+            p=2,
+            dim=-1,
+        )
+        expected_image_mrl = F.normalize(
+            reference_image[:, :embedding_dim],
+            p=2,
+            dim=-1,
+        )
+        text_outputs = (reference_text_mrl, text_only_mrl, image_text_mrl)
+        image_outputs = (reference_image_mrl, image_text_image_mrl)
+        for features in (*text_outputs, *image_outputs):
+            assert features.shape == (1, embedding_dim)
+            assert features.dtype == dtype
+            assert features.device.type == device_name
+            assert torch.isfinite(features).all()
+            torch.testing.assert_close(
+                features.float().norm(dim=-1),
+                torch.ones(1, device=features.device),
+                atol=tolerance,
+                rtol=tolerance,
+            )
+        for features in text_outputs:
+            torch.testing.assert_close(
+                features,
+                expected_text_mrl,
+                atol=tolerance,
+                rtol=tolerance,
+            )
+        for features in image_outputs:
+            torch.testing.assert_close(
+                features,
+                expected_image_mrl,
+                atol=tolerance,
+                rtol=tolerance,
+            )
 
     with pytest.raises(RuntimeError, match="without the image modality"):
         text_only.encode_image(image)
