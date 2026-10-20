@@ -17,6 +17,7 @@ from PIL import Image
 
 from openclip_gemma._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
+    EMBEDDING_STRATEGY,
     validate_embedding_dimension,
 )
 from openclip_gemma.batching import _iter_preprocessed_embeddings
@@ -378,6 +379,7 @@ def _metadata_for_index(index: _VideoIndex, precision: str) -> dict[str, object]
         "model_revision": MODEL_REVISION,
         "model_precision": precision,
         "embedding_dimension": int(index.embeddings.shape[1]),
+        "embedding_strategy": EMBEDDING_STRATEGY,
         "preprocessing_id": _PREPROCESSING_ID,
         "storage_dtype": "float32",
         "video_root": str(index.video_root),
@@ -559,6 +561,13 @@ def _validate_video_metadata(
     }:
         raise VideoIndexCompatibilityError(
             f"Unsupported video index format version: {version!r}."
+        )
+    if (
+        version == _VIDEO_INDEX_FORMAT_VERSION
+        and metadata.get("embedding_strategy") != EMBEDDING_STRATEGY
+    ):
+        raise VideoIndexCompatibilityError(
+            "Video index embedding_strategy is missing or unsupported."
         )
     for name, expected in (
         ("model_id", MODEL_ID),

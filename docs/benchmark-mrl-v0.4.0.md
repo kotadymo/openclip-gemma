@@ -1,16 +1,17 @@
 # MRL Benchmark Guide
 
-`benchmarks/benchmark_mrl.py` measures encoder latency and float32 index
-storage at 768, 512, 256, and 128 dimensions using the pinned EmbeddingGemma 2
-model. It can also report paired image-to-text and text-to-image recall when
-the user supplies one line-aligned caption per supported image.
+`benchmarks/benchmark_mrl.py` compares 128, 256, 512, and 768-dimensional
+image embeddings and indexes using the pinned EmbeddingGemma 2 model. It
+measures encoder time, builds real indexes, runs optional text queries, and
+records measured storage and memory values.
 
-## Run the benchmark
+## Install and run
 
-Install the development environment, then provide an image directory:
+Install the development dependencies and the optional RSS-measurement
+dependency:
 
 ```powershell
-uv sync --locked --group dev
+uv sync --locked --group dev --extra benchmark
 uv run python benchmarks/benchmark_mrl.py `
   --images .\photos `
   --device cpu `
@@ -20,45 +21,74 @@ uv run python benchmarks/benchmark_mrl.py `
   --output .\mrl-benchmark.json
 ```
 
-For paired retrieval metrics, prepare a UTF-8 text file with exactly one
-non-empty caption per supported image. Captions must follow the image indexer's
-relative-path ordering (platform-normalized path, then exact path):
+`--recursive` includes images in subdirectories. `--limit` selects the first
+sorted images for the encoder-latency sample; all supported images are used
+when building indexes and measuring query rankings.
+
+For query search latency and ranking agreement, provide a UTF-8 JSON array.
+Each entry requires `query` text and may include labeled image paths in
+`relevant_images`. Paths are relative to the image root and use `/` separators:
+
+```json
+[
+  {
+    "query": "a red bird",
+    "relevant_images": ["birds/red-bird.jpg", "birds/another-red-bird.png"]
+  },
+  {
+    "query": "a mountain landscape"
+  }
+]
+```
+
+Queries without `relevant_images` still contribute search latency and ranking
+agreement, but not Recall@K. Run with the manifest as follows:
 
 ```powershell
 uv run python benchmarks/benchmark_mrl.py `
   --images .\photos `
-  --captions-file .\captions.txt `
+  --recursive `
+  --query-manifest .\queries.json `
   --limit 100 `
   --batch-size 8 `
   --device cpu `
-  --precision fp32
+  --precision fp32 `
+  --output .\mrl-benchmark.json
 ```
 
-The optional `--recursive` flag includes subdirectories. `--limit` selects
-the first sorted images for timing; the captions file still describes the
-complete supported image set. `--device cuda` and `--precision bf16` are
-available where the installed PyTorch build and hardware support them.
+Use `--format csv` for a one-row-per-dimension summary:
+
+```powershell
+uv run python benchmarks/benchmark_mrl.py `
+  --images .\photos `
+  --query-manifest .\queries.json `
+  --format csv `
+  --output .\mrl-benchmark.csv
+```
+
+`--device cuda` and `--precision bf16` can be selected where the installed
+PyTorch build and hardware support them. CUDA allocator peak is reported as
+`unmeasured` for CPU runs.
 
 ## Report interpretation
 
-The JSON report records the pinned model revision, environment, latency
-statistics, output dimensions, estimated float32 bytes per stored vector,
-and storage reduction relative to 768 dimensions. Preprocessing and
-tokenization are excluded from latency. The image measurement includes model
-encoding and restoring input order; the text measurement includes model
-encoding and output concatenation. The backbone still computes its native
-representation, so truncation reduces embedding and index storage but does
-not reduce transformer FLOPs.
+- Image embedding latency sums model encoder-call time. Image preprocessing,
+  host-to-device transfer, and CPU output assembly are excluded.
+- Index size and vector bytes are read from each serialized index archive;
+  they are measured values, not estimates.
+- Query search latency measures the public search operation, including
+  tokenization, query encoding, index loading, and ranking.
+- Ranking agreement compares each dimension with the 768-dimensional
+  reference, reporting positionwise agreement and top-10 set overlap.
+- Recall@1, Recall@5, and Recall@10 are calculated only for labeled queries
+  and macro-averaged over those queries.
+- Process RSS fields are point-in-time measurements after named phases.
+  CUDA allocator peak includes the model baseline and reports its increment.
+- Metrics that cannot be measured, such as retrieval without a query manifest
+  or CUDA allocator use on CPU, are explicitly reported as `unmeasured`.
 
-Paired recall uses row-aligned image/caption pairs as ground truth and is
-reported only when a captions file is supplied. It is a dataset-specific
-measurement, not a universal quality guarantee. Choose representative data,
-preserve the caption-to-image alignment, and compare each reduced dimension
-with the 768-dimensional baseline before selecting a production index size.
-
-No real-world retrieval-quality measurement is included in this repository's
-v0.4.0 implementation results because no application dataset or labeled
-caption set was supplied. Unit tests validate supported shapes, finite values,
-normalization, safe index conversion, and dimension-matched search; they do
-not establish semantic retrieval quality. Benchmark output should not be
-presented as a package-wide accuracy claim.
+The backbone still computes its native 768-dimensional representation, so
+lower dimensions reduce stored vector size but do not reduce transformer
+FLOPs. Use representative, labeled application data before drawing retrieval
+quality conclusions. Synthetic images and unlabelled queries exercise the
+benchmark but are not evidence of real-world retrieval quality.

@@ -15,6 +15,7 @@ from PIL import Image
 
 from openclip_gemma._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
+    EMBEDDING_STRATEGY,
     validate_embedding_dimension,
 )
 from openclip_gemma.batching import ImagePath, iter_image_embeddings
@@ -232,6 +233,7 @@ def _metadata_for_index(index: _ImageIndex, precision: str) -> dict[str, object]
         "model_revision": MODEL_REVISION,
         "model_precision": precision,
         "embedding_dimension": int(index.embeddings.shape[1]),
+        "embedding_strategy": EMBEDDING_STRATEGY,
         "preprocessing_id": _PREPROCESSING_ID,
         "storage_dtype": "float32",
         "image_root": str(index.image_root),
@@ -349,6 +351,13 @@ def _validate_metadata(
     }:
         raise ImageIndexCompatibilityError(
             f"Unsupported image index format version: {version!r}."
+        )
+    if (
+        version == _INDEX_FORMAT_VERSION
+        and metadata.get("embedding_strategy") != EMBEDDING_STRATEGY
+    ):
+        raise ImageIndexCompatibilityError(
+            "Image index embedding_strategy is missing or unsupported."
         )
     compatibility_fields = {
         "model_id": MODEL_ID,

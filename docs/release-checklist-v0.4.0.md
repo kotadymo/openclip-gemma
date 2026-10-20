@@ -8,8 +8,14 @@ authorize a package publication.
 
 - [x] Complete model MRL, selective loading, index migration/conversion, CLI,
   benchmark, and documentation changes.
+- [x] Address the four PR review findings: CPU-staged image batches,
+  specification-compliant benchmark metrics and formats, selective-loading
+  integration coverage, and embedding-strategy metadata validation.
 - [x] Pass the complete non-integration pytest suite, Ruff, locked dependency
   check, wheel/sdist build, artifact verification, and clean wheel import.
+- [x] Validate the four follow-up review fixes with focused/full tests,
+  selective-loading integration tests, benchmark smoke coverage, and rebuilt
+  wheel/sdist artifacts.
 - [x] Run available CPU pinned-model MRL comparisons and record exact results.
   CUDA and other platform checks remain unverified locally because the required
   hardware is unavailable.

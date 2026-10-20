@@ -177,15 +177,30 @@ def _write_video(path: Path, data: bytes = b"fake video") -> Path:
     return path
 
 
-def _rewrite_video_index_version(index_path: Path, version: int) -> None:
+def _rewrite_video_index_metadata(
+    index_path: Path,
+    updates: dict[str, object],
+    *,
+    remove: tuple[str, ...] = (),
+) -> None:
     with np.load(index_path, allow_pickle=False) as archive:
         metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
         embeddings = archive["embeddings"].copy()
-    metadata["format_version"] = version
+    metadata.update(updates)
+    for name in remove:
+        metadata.pop(name, None)
     _save_numpy_archive_atomic(
         index_path,
         metadata,
         {"embeddings": embeddings},
+    )
+
+
+def _rewrite_video_index_version(index_path: Path, version: int) -> None:
+    _rewrite_video_index_metadata(
+        index_path,
+        {"format_version": version},
+        remove=("embedding_strategy",) if version == 2 else (),
     )
 
 
@@ -479,6 +494,46 @@ def test_video_index_builds_and_searches_at_requested_dimension(
         metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
     assert metadata["format_version"] == 3
     assert metadata["embedding_dimension"] == embedding_dim
+    assert metadata["embedding_strategy"] == "leading-dimensions-l2-v1"
+
+
+@pytest.mark.parametrize("strategy", [None, "unsupported-strategy"])
+def test_current_video_index_requires_supported_embedding_strategy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    strategy: str | None,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    index_dir = tmp_path / "index"
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+    update = build_or_update_video_index(
+        FakeVideoModel(),
+        _preprocess,
+        videos_dir,
+        index_dir,
+    )
+    if strategy is None:
+        _rewrite_video_index_metadata(
+            update.index_path,
+            {},
+            remove=("embedding_strategy",),
+        )
+    else:
+        _rewrite_video_index_metadata(
+            update.index_path,
+            {"embedding_strategy": strategy},
+        )
+
+    with pytest.raises(
+        VideoIndexCompatibilityError,
+        match="embedding_strategy",
+    ):
+        _load_video_index(index_dir)
 
 
 def test_legacy_video_index_remains_readable_and_can_be_converted(
@@ -508,6 +563,9 @@ def test_legacy_video_index_remains_readable_and_can_be_converted(
 
     assert converted_path.exists()
     assert converted.embeddings.shape == (1, 128)
+    with np.load(converted_path, allow_pickle=False) as archive:
+        converted_metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
+    assert converted_metadata["embedding_strategy"] == "leading-dimensions-l2-v1"
     np.testing.assert_allclose(np.linalg.norm(converted.embeddings, axis=1), 1.0)
     assert sum(model.batch_sizes) == inference_count
     assert _load_video_index(index_dir).embeddings.shape == (1, 768)
