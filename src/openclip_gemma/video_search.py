@@ -1129,6 +1129,12 @@ def convert_video_index(
         truncated,
         index.precision,
     )
+    try:
+        destination.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as error:
+        raise ValueError(
+            f"Video index conversion output already exists: {destination}"
+        ) from error
     return _save_video_index(destination, converted, index.precision)
 
 

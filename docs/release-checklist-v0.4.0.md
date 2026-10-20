@@ -11,6 +11,10 @@ authorize a package publication.
 - [x] Address the four PR review findings: CPU-staged image batches,
   specification-compliant benchmark metrics and formats, selective-loading
   integration coverage, and embedding-strategy metadata validation.
+- [x] Address five findings from the follow-up Copilot review: measure RSS
+  directly after model loading, include run and environment metadata in CSV,
+  align migration/specification text with current APIs, and reserve conversion
+  destinations atomically.
 - [x] Pass the complete non-integration pytest suite, Ruff, locked dependency
   check, wheel/sdist build, artifact verification, and clean wheel import.
 - [x] Validate the four follow-up review fixes with focused/full tests,

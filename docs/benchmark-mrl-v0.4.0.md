@@ -66,6 +66,10 @@ uv run python benchmarks/benchmark_mrl.py `
   --output .\mrl-benchmark.csv
 ```
 
+Each CSV row includes the model and revision, device and precision, image root,
+query manifest, limit/recursion/batch/warmup/iteration settings, and Python,
+OS, CPU, PyTorch, CUDA runtime, and device-name metadata.
+
 `--device cuda` and `--precision bf16` can be selected where the installed
 PyTorch build and hardware support them. CUDA allocator peak is reported as
 `unmeasured` for CPU runs.

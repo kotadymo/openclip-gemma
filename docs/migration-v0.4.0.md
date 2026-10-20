@@ -72,7 +72,8 @@ The MRL dimensions follow the official model's truncation-and-renormalization
 contract. Reduced dimensions lower stored float32 vector size but do not
 reduce the transformer's internal computation. Run the
 [MRL benchmark guide](benchmark-mrl-v0.4.0.md) with an application-relevant
-image set and, for retrieval metrics, an aligned captions file. No
+image set and, for retrieval metrics, a JSON query manifest with `query` text
+and optional `relevant_images` paths relative to the image root. No
 application-specific retrieval-quality conclusion follows from shape or
 normalization tests alone.
 

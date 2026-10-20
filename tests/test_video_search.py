@@ -657,6 +657,49 @@ def test_video_index_conversion_rejects_expansion_and_existing_output(
         convert_video_index(index_dir, existing_output, embedding_dim=128)
 
 
+def test_video_index_conversion_rejects_output_created_after_precheck(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    index_dir = tmp_path / "index"
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+    build_or_update_video_index(
+        FakeVideoModel(),
+        _preprocess,
+        videos_dir,
+        index_dir,
+        embedding_dim=128,
+    )
+    destination = tmp_path / "raced-output"
+    original_mkdir = Path.mkdir
+    competing_output_created = False
+
+    def create_competing_output(
+        path: Path,
+        *,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> None:
+        nonlocal competing_output_created
+        if path == destination and not competing_output_created:
+            competing_output_created = True
+            original_mkdir(path, parents=parents, exist_ok=True)
+        original_mkdir(path, parents=parents, exist_ok=exist_ok)
+
+    monkeypatch.setattr(Path, "mkdir", create_competing_output)
+    with pytest.raises(ValueError, match="already exists"):
+        convert_video_index(index_dir, destination, embedding_dim=128)
+
+    assert competing_output_created
+    assert not (destination / "video-index.npz").exists()
+
+
 def test_changed_video_failure_preserves_existing_index(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

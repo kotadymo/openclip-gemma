@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import runpy
 from pathlib import Path
@@ -204,10 +206,31 @@ def test_run_benchmark_measures_real_index_and_labeled_queries(
         "create_model_and_transforms",
         create_fake_model_and_transforms,
     )
+    rss_call_count = 0
+
+    def record_rss() -> int:
+        nonlocal rss_call_count
+        rss_call_count += 1
+        return 12344 + rss_call_count
+
+    original_load_images = benchmark_globals["_load_images"]
+
+    def load_images_after_model_rss(
+        paths: list[Path],
+        preprocess: Any,
+    ) -> list[torch.Tensor]:
+        assert rss_call_count == 2
+        return original_load_images(paths, preprocess)
+
     monkeypatch.setitem(
         benchmark_globals,
         "_process_rss_bytes",
-        lambda: 12345,
+        record_rss,
+    )
+    monkeypatch.setitem(
+        benchmark_globals,
+        "_load_images",
+        load_images_after_model_rss,
     )
     monkeypatch.setattr(image_search, "get_tokenizer", create_fake_tokenizer)
 
@@ -224,17 +247,22 @@ def test_run_benchmark_measures_real_index_and_labeled_queries(
     )
 
     assert report["schema_version"] == 2
+    assert report["environment"]["process_rss_before_model_load_bytes"] == 12345
+    assert report["environment"]["process_rss_after_model_load_bytes"] == 12346
     assert report["inputs"]["image_count"] == 3
     assert report["inputs"]["image_embedding_sample_count"] == 1
     assert report["inputs"]["labeled_query_count"] == 1
-    for dimension in (128, 256, 512, 768):
+    for dimension_index, dimension in enumerate((128, 256, 512, 768)):
         metrics = report["dimensions"][str(dimension)]
         assert metrics["index"]["image_count"] == 3
         assert metrics["index"]["vector_bytes"] == 3 * dimension * 4
         assert metrics["index"]["serialized_index_bytes"] > metrics["index"][
             "vector_bytes"
         ]
-        assert metrics["process_rss_bytes"]["after_query_search"] == 12345
+        assert (
+            metrics["process_rss_bytes"]["after_query_search"]
+            == 12350 + dimension_index * 4
+        )
         assert metrics["cuda_allocator"] == "unmeasured"
         assert metrics["query_search"]["recall_at_k"]["1"] == 1.0
     assert report["dimensions"]["128"]["query_search"][
@@ -244,6 +272,41 @@ def test_run_benchmark_measures_real_index_and_labeled_queries(
     csv_report = _serialize_report(report, "csv")  # type: ignore[operator]
     assert "serialized_index_bytes" in csv_report
     assert csv_report.count("\n") == 5
+    csv_rows = list(csv.DictReader(io.StringIO(csv_report)))
+    assert len(csv_rows) == 4
+    metadata_columns = {
+        "model_revision",
+        "device",
+        "precision",
+        "image_root",
+        "image_limit",
+        "recursive",
+        "query_manifest",
+        "image_batch_size",
+        "warmup_runs_per_operation",
+        "measurement_runs_per_operation",
+        "python",
+        "os",
+        "cpu",
+        "torch",
+        "cuda_runtime",
+        "device_name",
+    }
+    assert metadata_columns <= set(csv_rows[0])
+    for row in csv_rows:
+        assert row["model_revision"] == report["model_revision"]
+        assert row["device"] == report["device"]
+        assert row["precision"] == report["precision"]
+        assert row["image_root"] == str(image_root.resolve())
+        assert row["image_limit"] == "1"
+        assert row["recursive"] == "False"
+        assert row["query_manifest"] == str(manifest_path)
+        assert row["image_batch_size"] == "2"
+        assert row["warmup_runs_per_operation"] == "0"
+        assert row["measurement_runs_per_operation"] == "1"
+        assert row["python"] == report["environment"]["python"]
+        assert row["torch"] == report["environment"]["torch"]
+        assert row["process_rss_after_model_load_bytes"] == "12346"
     json_report = _serialize_report(report, "json")  # type: ignore[operator]
     assert json.loads(json_report)["dimensions"]["768"]["index"]["vector_bytes"] == (
         3 * 768 * 4

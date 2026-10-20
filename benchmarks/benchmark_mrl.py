@@ -517,12 +517,12 @@ def run_benchmark(
         device=device_name,
     )
     device = next(model.parameters()).device
+    rss_after_model_load = _process_rss_bytes()
     image_tensors = _load_images(sample_paths, preprocess)
     batches = _image_batches(
         image_tensors,
         batch_size=batch_size,
     )
-    rss_after_model_load = _process_rss_bytes()
 
     dimensions: dict[str, Any] = {}
     query_measurements: dict[
@@ -653,11 +653,15 @@ def run_benchmark(
             "os": f"{system()} {release()}",
             "cpu": processor(),
             "torch": torch.__version__,
+            "cuda_runtime": torch.version.cuda or "unavailable",
+            "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU",
             "process_rss_before_model_load_bytes": rss_before_model_load,
             "process_rss_after_model_load_bytes": rss_after_model_load,
         },
         "inputs": {
             "image_root": str(image_root),
+            "image_limit": limit,
+            "recursive": recursive,
             "image_count": len(all_paths),
             "image_embedding_sample_count": len(sample_paths),
             "query_manifest": (
@@ -698,6 +702,46 @@ def _csv_rows(report: dict[str, Any]) -> list[dict[str, object]]:
     if not isinstance(dimensions, dict):
         raise TypeError("Benchmark report does not contain dimension results.")
     inputs = report["inputs"]
+    environment = report["environment"]
+    run_metadata: dict[str, object] = {
+        "schema_version": report["schema_version"],
+        "measured_at": report["measured_at"],
+        "model_id": report["model_id"],
+        "model_revision": report["model_revision"],
+        "device": report["device"],
+        "device_name": environment["device_name"],
+        "precision": report["precision"],
+        "image_root": inputs["image_root"],
+        "image_limit": inputs["image_limit"],
+        "recursive": inputs["recursive"],
+        "query_manifest": inputs["query_manifest"],
+        "image_batch_size": inputs["image_batch_size"],
+        "warmup_runs_per_operation": report["warmup_runs_per_operation"],
+        "measurement_runs_per_operation": report["measurement_runs_per_operation"],
+        "ranking_top_k": report["ranking_top_k"],
+        "recall_k_values": ",".join(str(value) for value in report["recall_k_values"]),
+        "labeled_query_count": inputs["labeled_query_count"],
+        "image_preprocessing_included_in_embedding_latency": inputs[
+            "image_preprocessing_included_in_embedding_latency"
+        ],
+        "host_to_device_transfer_in_embedding_latency": inputs[
+            "host_to_device_transfer_in_embedding_latency"
+        ],
+        "query_search_includes_tokenization_and_index_loading": inputs[
+            "query_search_includes_tokenization_and_index_loading"
+        ],
+        "python": environment["python"],
+        "os": environment["os"],
+        "cpu": environment["cpu"],
+        "torch": environment["torch"],
+        "cuda_runtime": environment["cuda_runtime"],
+        "process_rss_before_model_load_bytes": environment[
+            "process_rss_before_model_load_bytes"
+        ],
+        "process_rss_after_model_load_bytes": environment[
+            "process_rss_after_model_load_bytes"
+        ],
+    }
     rows: list[dict[str, object]] = []
     for embedding_dim, metrics in dimensions.items():
         image = metrics["image_embedding"]
@@ -710,6 +754,7 @@ def _csv_rows(report: dict[str, Any]) -> list[dict[str, object]]:
         recall = search["recall_at_k"]
         rows.append(
             {
+                **run_metadata,
                 "dimension": embedding_dim,
                 "image_count": inputs["image_count"],
                 "image_embedding_sample_count": image["sample_count"],

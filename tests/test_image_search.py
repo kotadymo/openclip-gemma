@@ -339,6 +339,38 @@ def test_image_index_conversion_rejects_expansion_and_existing_output(
         convert_image_index(index_dir, existing_output, embedding_dim=128)
 
 
+def test_image_index_conversion_rejects_output_created_after_precheck(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    _build(FakeImageSearchModel(), images_dir, index_dir, embedding_dim=128)
+    destination = tmp_path / "raced-output"
+    original_mkdir = Path.mkdir
+    competing_output_created = False
+
+    def create_competing_output(
+        path: Path,
+        *,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> None:
+        nonlocal competing_output_created
+        if path == destination and not competing_output_created:
+            competing_output_created = True
+            original_mkdir(path, parents=parents, exist_ok=True)
+        original_mkdir(path, parents=parents, exist_ok=exist_ok)
+
+    monkeypatch.setattr(Path, "mkdir", create_competing_output)
+    with pytest.raises(ValueError, match="already exists"):
+        convert_image_index(index_dir, destination, embedding_dim=128)
+
+    assert competing_output_created
+    assert not (destination / "index.npz").exists()
+
+
 def test_non_recursive_index_excludes_nested_images(tmp_path: Path) -> None:
     images_dir = tmp_path / "photos"
     _write_image(images_dir / "top.png", (255, 0, 0))

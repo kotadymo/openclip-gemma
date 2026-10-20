@@ -742,6 +742,12 @@ def convert_image_index(
         truncated,
         index.precision,
     )
+    try:
+        destination.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as error:
+        raise ValueError(
+            f"Image index conversion output already exists: {destination}"
+        ) from error
     return _save_index(destination, converted, index.precision)
 
 
