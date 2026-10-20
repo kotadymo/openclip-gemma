@@ -15,6 +15,10 @@ import torch
 from numpy.typing import NDArray
 from PIL import Image
 
+from openclip_gemma._dimensions import (
+    DEFAULT_EMBEDDING_DIMENSION,
+    validate_embedding_dimension,
+)
 from openclip_gemma.batching import _iter_preprocessed_embeddings
 from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
 from openclip_gemma.image_search import (
@@ -34,12 +38,10 @@ from openclip_gemma.tokenizer import get_tokenizer
 
 _VIDEO_INDEX_FILENAME = "video-index.npz"
 _VIDEO_INDEX_KIND = "openclip-gemma.video-index"
-_VIDEO_INDEX_FORMAT_VERSION = 2
-_EMBEDDING_DIMENSION = 768
+_VIDEO_INDEX_FORMAT_VERSION = 3
+_LEGACY_VIDEO_INDEX_FORMAT_VERSION = 2
 _SAMPLING_METHOD = "first-presentation-frame-at-or-after-playback-origin-target-v2"
-_SUPPORTED_VIDEO_SUFFIXES = frozenset(
-    {".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi"}
-)
+_SUPPORTED_VIDEO_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi"})
 
 type _EmbeddingMatrix = NDArray[np.float32]
 type _ImagePreprocess = Callable[[Image.Image], torch.Tensor]
@@ -50,6 +52,7 @@ __all__ = [
     "VideoSearchError",
     "VideoSearchResult",
     "build_or_update_video_index",
+    "convert_video_index",
     "search_video",
 ]
 
@@ -94,6 +97,7 @@ class _VideoIndex:
     videos: tuple[_VideoRecord, ...]
     frames: tuple[_FrameRecord, ...]
     embeddings: _EmbeddingMatrix
+    precision: str
 
 
 @dataclass(frozen=True)
@@ -156,7 +160,10 @@ def _scan_video_files(
     records_by_key: dict[str, _VideoRecord] = {}
     try:
         for path in candidates:
-            if path.is_symlink() or path.suffix.lower() not in _SUPPORTED_VIDEO_SUFFIXES:
+            if (
+                path.is_symlink()
+                or path.suffix.lower() not in _SUPPORTED_VIDEO_SUFFIXES
+            ):
                 continue
             if not path.is_file():
                 continue
@@ -168,7 +175,9 @@ def _scan_video_files(
                 _VideoRecord(relative_path, file_stat.st_size, file_stat.st_mtime_ns),
             )
     except OSError as error:
-        raise VideoSearchError(f"Could not scan video directory {root}: {error}") from error
+        raise VideoSearchError(
+            f"Could not scan video directory {root}: {error}"
+        ) from error
 
     records = tuple(
         sorted(
@@ -197,7 +206,9 @@ def _fraction_time_base(value: Any, *, video_path: Path, frame_index: int) -> Fr
     return time_base
 
 
-def _playback_time_origin(container: Any, av: Any, video_stream: Any) -> Fraction | None:
+def _playback_time_origin(
+    container: Any, av: Any, video_stream: Any
+) -> Fraction | None:
     container_start = getattr(container, "start_time", None)
     if container_start is not None:
         av_time_base = getattr(av, "time_base", None)
@@ -208,7 +219,9 @@ def _playback_time_origin(container: Any, av: Any, video_stream: Any) -> Fractio
             or not isinstance(av_time_base, int)
             or av_time_base <= 0
         ):
-            raise VideoSearchError("Video container has an invalid playback start time.")
+            raise VideoSearchError(
+                "Video container has an invalid playback start time."
+            )
         return Fraction(container_start, av_time_base)
 
     stream_start = getattr(video_stream, "start_time", None)
@@ -222,7 +235,9 @@ def _playback_time_origin(container: Any, av: Any, video_stream: Any) -> Fractio
     try:
         return Fraction(stream_start) * Fraction(stream_time_base)
     except (TypeError, ValueError, ZeroDivisionError) as error:
-        raise VideoSearchError("Video stream start time has an invalid time base.") from error
+        raise VideoSearchError(
+            "Video stream start time has an invalid time base."
+        ) from error
 
 
 def _iter_sampled_frames(
@@ -311,10 +326,14 @@ def _iter_sampled_frames(
         except VideoSearchError:
             raise
         except (OSError, ValueError, av.error.FFmpegError) as error:
-            raise VideoSearchError(f"Could not decode video {video_path}: {error}") from error
+            raise VideoSearchError(
+                f"Could not decode video {video_path}: {error}"
+            ) from error
 
         if decoded_count == 0 or sampled_count == 0:
-            raise VideoSearchError(f"No video frames could be sampled from {video_path}.")
+            raise VideoSearchError(
+                f"No video frames could be sampled from {video_path}."
+            )
     finally:
         container.close()
 
@@ -358,7 +377,7 @@ def _metadata_for_index(index: _VideoIndex, precision: str) -> dict[str, object]
         "model_id": MODEL_ID,
         "model_revision": MODEL_REVISION,
         "model_precision": precision,
-        "embedding_dimension": _EMBEDDING_DIMENSION,
+        "embedding_dimension": int(index.embeddings.shape[1]),
         "preprocessing_id": _PREPROCESSING_ID,
         "storage_dtype": "float32",
         "video_root": str(index.video_root),
@@ -397,8 +416,19 @@ def _save_video_index(
     precision: str,
 ) -> Path:
     index_path = index_dir / _VIDEO_INDEX_FILENAME
-    if index.embeddings.shape != (len(index.frames), _EMBEDDING_DIMENSION):
-        raise VideoSearchError("Refusing to save a video index with inconsistent dimensions.")
+    if index.embeddings.ndim != 2 or index.embeddings.shape[0] != len(index.frames):
+        raise VideoSearchError(
+            "Refusing to save a video index with inconsistent dimensions."
+        )
+    try:
+        validate_embedding_dimension(
+            index.embeddings.shape[1],
+            name="embedding_dimension",
+        )
+    except (TypeError, ValueError) as error:
+        raise VideoSearchError(
+            "Refusing to save a video index with an unsupported embedding dimension."
+        ) from error
     if index.embeddings.dtype != np.float32 or not np.isfinite(index.embeddings).all():
         raise VideoSearchError("Refusing to save invalid video frame embeddings.")
     try:
@@ -424,9 +454,13 @@ def _parse_video_record(value: object) -> _VideoRecord:
         or isinstance(mtime_ns, bool)
         or not isinstance(mtime_ns, int)
     ):
-        raise VideoSearchError("Video index metadata contains invalid video file information.")
+        raise VideoSearchError(
+            "Video index metadata contains invalid video file information."
+        )
     if PurePosixPath(relative_path).suffix.lower() not in _SUPPORTED_VIDEO_SUFFIXES:
-        raise VideoSearchError("Video index metadata contains an unsupported video extension.")
+        raise VideoSearchError(
+            "Video index metadata contains an unsupported video extension."
+        )
     return _VideoRecord(relative_path, size_bytes, mtime_ns)
 
 
@@ -441,7 +475,9 @@ def _validate_video_relative_path(value: object) -> str:
         or (len(path.parts[0]) == 2 and path.parts[0][1] == ":")
         or path.as_posix() != value
     ):
-        raise VideoSearchError("Video index metadata contains a non-relative video path.")
+        raise VideoSearchError(
+            "Video index metadata contains a non-relative video path."
+        )
     return value
 
 
@@ -481,8 +517,12 @@ def _parse_frame_record(value: object, video_paths: set[str]) -> _FrameRecord:
         pts * time_base_numerator,
         time_base_denominator,
     ) - Fraction(timestamp_origin_numerator, timestamp_origin_denominator)
-    if not math.isclose(float(timestamp), float(exact_timestamp), rel_tol=1e-12, abs_tol=1e-9):
-        raise VideoSearchError("Video frame timestamp does not match its PTS and time base.")
+    if not math.isclose(
+        float(timestamp), float(exact_timestamp), rel_tol=1e-12, abs_tol=1e-9
+    ):
+        raise VideoSearchError(
+            "Video frame timestamp does not match its PTS and time base."
+        )
     return _FrameRecord(
         video_path,
         float(timestamp),
@@ -500,18 +540,29 @@ def _validate_video_metadata(
     expected_root: Path | None,
     expected_precision: str | None,
     expected_interval: float | None,
-) -> tuple[Path, bool, float, tuple[_VideoRecord, ...], tuple[_FrameRecord, ...]]:
+) -> tuple[
+    Path,
+    bool,
+    float,
+    tuple[_VideoRecord, ...],
+    tuple[_FrameRecord, ...],
+    int,
+]:
     if metadata.get("kind") != _VIDEO_INDEX_KIND:
-        raise VideoIndexCompatibilityError("The archive is not an openclip-gemma video index.")
+        raise VideoIndexCompatibilityError(
+            "The archive is not an openclip-gemma video index."
+        )
     version = metadata.get("format_version")
-    if type(version) is not int or version != _VIDEO_INDEX_FORMAT_VERSION:
+    if type(version) is not int or version not in {
+        _LEGACY_VIDEO_INDEX_FORMAT_VERSION,
+        _VIDEO_INDEX_FORMAT_VERSION,
+    }:
         raise VideoIndexCompatibilityError(
             f"Unsupported video index format version: {version!r}."
         )
     for name, expected in (
         ("model_id", MODEL_ID),
         ("model_revision", MODEL_REVISION),
-        ("embedding_dimension", _EMBEDDING_DIMENSION),
         ("preprocessing_id", _PREPROCESSING_ID),
         ("storage_dtype", "float32"),
         ("sampling_method", _SAMPLING_METHOD),
@@ -521,9 +572,28 @@ def _validate_video_metadata(
                 f"Video index {name} does not match the current configuration."
             )
 
+    try:
+        embedding_dimension = validate_embedding_dimension(
+            metadata.get("embedding_dimension"),
+            name="embedding_dimension",
+        )
+    except (TypeError, ValueError) as error:
+        raise VideoIndexCompatibilityError(
+            "Video index contains an unsupported embedding dimension."
+        ) from error
+    if (
+        version == _LEGACY_VIDEO_INDEX_FORMAT_VERSION
+        and embedding_dimension != DEFAULT_EMBEDDING_DIMENSION
+    ):
+        raise VideoIndexCompatibilityError(
+            "Legacy video indexes must use the native 768-dimensional embeddings."
+        )
+
     precision = metadata.get("model_precision")
     if not isinstance(precision, str) or precision not in {"fp32", "bf16"}:
-        raise VideoSearchError("Video index metadata contains an invalid model precision.")
+        raise VideoSearchError(
+            "Video index metadata contains an invalid model precision."
+        )
     if expected_precision is not None and precision != expected_precision:
         raise VideoIndexCompatibilityError(
             "Video index model precision does not match the loaded model."
@@ -536,7 +606,9 @@ def _validate_video_metadata(
         or not math.isfinite(float(interval))
         or float(interval) <= 0
     ):
-        raise VideoSearchError("Video index metadata contains an invalid sampling interval.")
+        raise VideoSearchError(
+            "Video index metadata contains an invalid sampling interval."
+        )
     interval_seconds = float(interval)
     if expected_interval is not None and interval_seconds != expected_interval:
         raise VideoIndexCompatibilityError(
@@ -548,38 +620,54 @@ def _validate_video_metadata(
     if not isinstance(root_value, str) or not root_value:
         raise VideoSearchError("Video index metadata contains an invalid video root.")
     video_root = Path(root_value)
-    if expected_root is not None and os.path.normcase(str(video_root)) != os.path.normcase(
-        str(expected_root)
-    ):
+    if expected_root is not None and os.path.normcase(
+        str(video_root)
+    ) != os.path.normcase(str(expected_root)):
         raise VideoIndexCompatibilityError(
             "Video index was created for a different video directory."
         )
 
     recursive = metadata.get("recursive")
     if not isinstance(recursive, bool):
-        raise VideoSearchError("Video index metadata contains an invalid recursion setting.")
+        raise VideoSearchError(
+            "Video index metadata contains an invalid recursion setting."
+        )
     videos_value = metadata.get("videos")
     frames_value = metadata.get("frames")
     if not isinstance(videos_value, list) or not isinstance(frames_value, list):
-        raise VideoSearchError("Video index metadata contains invalid video or frame lists.")
+        raise VideoSearchError(
+            "Video index metadata contains invalid video or frame lists."
+        )
     videos = tuple(_parse_video_record(record) for record in videos_value)
     video_keys = [_path_key(video.relative_path) for video in videos]
     if len(set(video_keys)) != len(video_keys):
         raise VideoSearchError("Video index metadata contains duplicate video paths.")
     if videos != tuple(
-        sorted(videos, key=lambda video: (_path_key(video.relative_path), video.relative_path))
+        sorted(
+            videos,
+            key=lambda video: (_path_key(video.relative_path), video.relative_path),
+        )
     ):
         raise VideoSearchError("Video index records are not in canonical path order.")
     video_paths = {video.relative_path for video in videos}
     frames = tuple(_parse_frame_record(record, video_paths) for record in frames_value)
     frame_keys = [
-        (frame.video_path, frame.pts, frame.time_base_numerator, frame.time_base_denominator)
+        (
+            frame.video_path,
+            frame.pts,
+            frame.time_base_numerator,
+            frame.time_base_denominator,
+        )
         for frame in frames
     ]
     if len(set(frame_keys)) != len(frame_keys):
-        raise VideoSearchError("Video index metadata contains duplicate frame timestamps.")
+        raise VideoSearchError(
+            "Video index metadata contains duplicate frame timestamps."
+        )
     if frames != tuple(sorted(frames, key=_frame_sort_key)):
-        raise VideoSearchError("Video frame records are not in canonical path/time order.")
+        raise VideoSearchError(
+            "Video frame records are not in canonical path/time order."
+        )
     origins_by_video: dict[str, tuple[int, int]] = {}
     for frame in frames:
         origin = (
@@ -588,7 +676,9 @@ def _validate_video_metadata(
         )
         previous_origin = origins_by_video.setdefault(frame.video_path, origin)
         if previous_origin != origin:
-            raise VideoSearchError("Video frames contain inconsistent playback time origins.")
+            raise VideoSearchError(
+                "Video frames contain inconsistent playback time origins."
+            )
     frame_video_paths = {frame.video_path for frame in frames}
     if any(video.relative_path not in frame_video_paths for video in videos):
         raise VideoSearchError("Video index contains a video without sampled frames.")
@@ -610,8 +700,10 @@ def _validate_video_metadata(
         or len(checksum) != 64
         or any(character not in "0123456789abcdef" for character in checksum)
     ):
-        raise VideoSearchError("Video index metadata contains an invalid embedding checksum.")
-    return video_root, recursive, interval_seconds, videos, frames
+        raise VideoSearchError(
+            "Video index metadata contains an invalid embedding checksum."
+        )
+    return video_root, recursive, interval_seconds, videos, frames, embedding_dimension
 
 
 def _load_video_index(
@@ -620,6 +712,7 @@ def _load_video_index(
     expected_root: Path | None = None,
     expected_precision: str | None = None,
     expected_interval: float | None = None,
+    expected_embedding_dimension: int | None = None,
 ) -> _VideoIndex:
     index_path = Path(index_dir).expanduser() / _VIDEO_INDEX_FILENAME
     try:
@@ -627,7 +720,14 @@ def _load_video_index(
             index_path,
             expected_arrays=frozenset({"embeddings"}),
         ) as (metadata, archive):
-            video_root, recursive, interval, videos, frames = _validate_video_metadata(
+            (
+                video_root,
+                recursive,
+                interval,
+                videos,
+                frames,
+                embedding_dimension,
+            ) = _validate_video_metadata(
                 metadata,
                 expected_root=expected_root,
                 expected_precision=expected_precision,
@@ -637,8 +737,21 @@ def _load_video_index(
     except IndexArchiveError as error:
         if not index_path.exists():
             raise VideoSearchError(f"Video index not found: {index_path}") from error
-        raise VideoSearchError(f"Could not read video index {index_path}: {error}") from error
-    expected_shape = (len(frames), _EMBEDDING_DIMENSION)
+        raise VideoSearchError(
+            f"Could not read video index {index_path}: {error}"
+        ) from error
+    if expected_embedding_dimension is not None:
+        expected_embedding_dimension = validate_embedding_dimension(
+            expected_embedding_dimension,
+            name="embedding_dim",
+        )
+        if embedding_dimension != expected_embedding_dimension:
+            raise VideoIndexCompatibilityError(
+                "Video index embedding dimension does not match the requested "
+                f"dimension {expected_embedding_dimension}; convert it or use a new "
+                "index directory."
+            )
+    expected_shape = (len(frames), embedding_dimension)
     if embeddings.dtype != np.float32 or embeddings.shape != expected_shape:
         raise VideoSearchError(
             "Video index embeddings have an invalid dtype or shape: "
@@ -647,15 +760,27 @@ def _load_video_index(
     if not np.isfinite(embeddings).all():
         raise VideoSearchError("Video index contains non-finite embeddings.")
     if _array_sha256(embeddings) != metadata["embedding_sha256"]:
-        raise VideoSearchError("Video index embedding checksum does not match its metadata.")
-    return _VideoIndex(video_root, recursive, interval, videos, frames, embeddings)
+        raise VideoSearchError(
+            "Video index embedding checksum does not match its metadata."
+        )
+    return _VideoIndex(
+        video_root,
+        recursive,
+        interval,
+        videos,
+        frames,
+        embeddings,
+        str(metadata["model_precision"]),
+    )
 
 
 def _file_signature(path: Path) -> tuple[int, int]:
     try:
         file_stat = path.stat()
     except OSError as error:
-        raise VideoSearchError(f"Could not inspect video file {path}: {error}") from error
+        raise VideoSearchError(
+            f"Could not inspect video file {path}: {error}"
+        ) from error
     return file_stat.st_size, file_stat.st_mtime_ns
 
 
@@ -663,7 +788,9 @@ def _embedding_vector(embedding: torch.Tensor, video_path: Path) -> np.ndarray:
     vector = embedding.detach().to(device="cpu", dtype=torch.float32).numpy()
     norm = float(np.linalg.norm(vector))
     if not np.isfinite(vector).all() or not np.isfinite(norm) or norm <= 0:
-        raise VideoSearchError(f"Image encoder returned an invalid frame embedding for {video_path}.")
+        raise VideoSearchError(
+            f"Image encoder returned an invalid frame embedding for {video_path}."
+        )
     return vector / norm
 
 
@@ -674,6 +801,7 @@ def _embed_video(
     relative_path: str,
     interval: Fraction,
     batch_size: int,
+    embedding_dim: int,
 ) -> Iterator[tuple[_FrameRecord, np.ndarray]]:
     frame_tensors = _iter_frame_tensors(
         video_path,
@@ -686,6 +814,7 @@ def _embed_video(
         frame_tensors,
         batch_size=batch_size,
         item_kind="video frames",
+        embedding_dim=embedding_dim,
     )
     for frame_record, embedding in embeddings:
         yield frame_record, _embedding_vector(embedding, video_path)
@@ -700,10 +829,15 @@ def _build_or_update_video_index(
     interval: float = 1.0,
     batch_size: int = 8,
     recursive: bool = False,
+    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
 ) -> VideoIndexUpdate:
     """Create or incrementally update a versioned index of sampled video frames."""
     interval_seconds, interval_fraction = _validate_interval(interval)
     _validate_batch_size(batch_size)
+    embedding_dim = validate_embedding_dimension(
+        embedding_dim,
+        name="embedding_dim",
+    )
     root, videos = _scan_video_files(videos_dir, recursive=recursive)
     output_dir = Path(index_dir).expanduser()
     if output_dir.exists() and not output_dir.is_dir():
@@ -720,6 +854,7 @@ def _build_or_update_video_index(
             expected_root=root,
             expected_precision=precision,
             expected_interval=interval_seconds,
+            expected_embedding_dimension=embedding_dim,
         )
     elif not videos:
         raise ValueError(f"No supported video files were found in {root}.")
@@ -735,7 +870,10 @@ def _build_or_update_video_index(
             previous_frames.setdefault(frame.video_path, []).append((row, frame))
     current_paths = {_path_key(video.relative_path) for video in videos}
     removed = (
-        sum(_path_key(video.relative_path) not in current_paths for video in previous.videos)
+        sum(
+            _path_key(video.relative_path) not in current_paths
+            for video in previous.videos
+        )
         if previous is not None
         else 0
     )
@@ -772,6 +910,7 @@ def _build_or_update_video_index(
             video.relative_path,
             interval_fraction,
             batch_size,
+            embedding_dim,
         ):
             frame_records.append(frame_record)
             embedding_rows.append(embedding)
@@ -793,12 +932,14 @@ def _build_or_update_video_index(
         and updated == 0
         and removed == 0
     ):
-        return VideoIndexUpdate(index_path, added, updated, removed, unchanged, len(frame_records))
+        return VideoIndexUpdate(
+            index_path, added, updated, removed, unchanged, len(frame_records)
+        )
 
     embeddings = (
         np.stack(embedding_rows).astype(np.float32, copy=False)
         if embedding_rows
-        else np.empty((0, _EMBEDDING_DIMENSION), dtype=np.float32)
+        else np.empty((0, embedding_dim), dtype=np.float32)
     )
     index = _VideoIndex(
         root,
@@ -807,9 +948,12 @@ def _build_or_update_video_index(
         videos,
         tuple(frame_records),
         embeddings,
+        precision,
     )
     saved_path = _save_video_index(output_dir, index, precision)
-    return VideoIndexUpdate(saved_path, added, updated, removed, unchanged, len(frame_records))
+    return VideoIndexUpdate(
+        saved_path, added, updated, removed, unchanged, len(frame_records)
+    )
 
 
 def _search_video_index(
@@ -837,8 +981,16 @@ def _search_video_index(
     tokenizer = get_tokenizer(prompt_name="SearchQuery")
     tokens = tokenizer(query).to(device)
     with torch.inference_mode():
-        query_features = model.encode_text(tokens, normalize=True)
-    expected_shape = (1, _EMBEDDING_DIMENSION)
+        embedding_dimension = index.embeddings.shape[1]
+        if embedding_dimension == DEFAULT_EMBEDDING_DIMENSION:
+            query_features = model.encode_text(tokens, normalize=True)
+        else:
+            query_features = model.encode_text(
+                tokens,
+                normalize=True,
+                truncate_dim=embedding_dimension,
+            )
+    expected_shape = (1, embedding_dimension)
     if (
         not isinstance(query_features, torch.Tensor)
         or tuple(query_features.shape) != expected_shape
@@ -852,9 +1004,15 @@ def _search_video_index(
             f"Text encoder returned an invalid query embedding: expected "
             f"{expected_shape}, received {actual_shape}."
         )
-    query_vector = query_features.detach().to(device="cpu", dtype=torch.float32).numpy()[0]
+    query_vector = (
+        query_features.detach().to(device="cpu", dtype=torch.float32).numpy()[0]
+    )
     query_norm = float(np.linalg.norm(query_vector))
-    if not np.isfinite(query_vector).all() or not np.isfinite(query_norm) or query_norm <= 0:
+    if (
+        not np.isfinite(query_vector).all()
+        or not np.isfinite(query_norm)
+        or query_norm <= 0
+    ):
         raise VideoSearchError("Text encoder returned an invalid query embedding.")
     query_vector = query_vector / query_norm
 
@@ -898,6 +1056,7 @@ def build_or_update_video_index(
     interval_seconds: float = 1.0,
     batch_size: int = 8,
     recursive: bool = False,
+    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
 ) -> VideoIndexUpdate:
     """Build or incrementally update an index of sampled video frames.
 
@@ -912,7 +1071,56 @@ def build_or_update_video_index(
         interval=interval_seconds,
         batch_size=batch_size,
         recursive=recursive,
+        embedding_dim=embedding_dim,
     )
+
+
+def convert_video_index(
+    index_dir: str | os.PathLike[str],
+    output_dir: str | os.PathLike[str],
+    *,
+    embedding_dim: int,
+) -> Path:
+    """Convert a video index to a supported dimension without model inference."""
+    embedding_dim = validate_embedding_dimension(
+        embedding_dim,
+        name="embedding_dim",
+    )
+    index = _load_video_index(index_dir)
+    source_dir = Path(index_dir).expanduser().resolve()
+    destination = Path(output_dir).expanduser()
+    if destination.exists():
+        raise ValueError(f"Video index conversion output already exists: {destination}")
+    if destination.resolve() == source_dir:
+        raise ValueError("Video index conversion output must differ from its source.")
+
+    source_dimension = index.embeddings.shape[1]
+    if embedding_dim > source_dimension:
+        raise ValueError(
+            f"Cannot expand a video index from {source_dimension} to "
+            f"{embedding_dim} dimensions."
+        )
+    truncated = np.ascontiguousarray(
+        index.embeddings[:, :embedding_dim], dtype=np.float32
+    )
+    if len(index.frames):
+        norms = np.linalg.norm(truncated, axis=1, keepdims=True)
+        if not np.isfinite(norms).all() or (norms <= 0).any():
+            raise VideoSearchError(
+                "Video index contains an embedding with zero or non-finite norm "
+                "after truncation."
+            )
+        truncated = np.ascontiguousarray(truncated / norms, dtype=np.float32)
+    converted = _VideoIndex(
+        index.video_root,
+        index.recursive,
+        index.interval_seconds,
+        index.videos,
+        index.frames,
+        truncated,
+        index.precision,
+    )
+    return _save_video_index(destination, converted, index.precision)
 
 
 def search_video(

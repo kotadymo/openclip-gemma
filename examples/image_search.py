@@ -18,14 +18,27 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    index_parser = commands.add_parser("index", help="Create or incrementally update an index.")
-    index_parser.add_argument("--images", type=Path, required=True, help="Image directory.")
-    index_parser.add_argument("--output", type=Path, required=True, help="Index directory.")
+    index_parser = commands.add_parser(
+        "index", help="Create or incrementally update an index."
+    )
+    index_parser.add_argument(
+        "--images", type=Path, required=True, help="Image directory."
+    )
+    index_parser.add_argument(
+        "--output", type=Path, required=True, help="Index directory."
+    )
     index_parser.add_argument(
         "--batch-size",
         type=int,
         default=8,
         help="Maximum number of images encoded together (default: 8).",
+    )
+    index_parser.add_argument(
+        "--embedding-dim",
+        type=int,
+        choices=(128, 256, 512, 768),
+        default=768,
+        help="Embedding dimension to store (default: 768).",
     )
     index_parser.add_argument(
         "--device",
@@ -40,9 +53,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     search_parser = commands.add_parser("search", help="Search a saved image index.")
-    search_parser.add_argument("--index", type=Path, required=True, help="Index directory.")
-    search_parser.add_argument("--query", required=True, help="Japanese or English search text.")
-    search_parser.add_argument("--top-k", type=int, default=5, help="Number of results.")
+    search_parser.add_argument(
+        "--index", type=Path, required=True, help="Index directory."
+    )
+    search_parser.add_argument(
+        "--query", required=True, help="Japanese or English search text."
+    )
+    search_parser.add_argument(
+        "--top-k", type=int, default=5, help="Number of results."
+    )
     search_parser.add_argument(
         "--device",
         choices=("cpu", "cuda"),
@@ -65,6 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.output,
                 batch_size=args.batch_size,
                 recursive=args.recursive,
+                embedding_dim=args.embedding_dim,
             )
             print(
                 "Image index updated: "

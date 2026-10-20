@@ -95,6 +95,25 @@ def test_image_embeddings_match_sentence_transformers(
             assert torch.isfinite(actual).all()
             comparisons[name] = _comparison(reference, actual)
 
+            for truncate_dim in (512, 256, 128):
+                truncated = model.encode_image(
+                    image_tensor,
+                    truncate_dim=truncate_dim,
+                )
+                expected = F.normalize(
+                    reference[:, :truncate_dim],
+                    p=2,
+                    dim=-1,
+                )
+                assert truncated.shape == (1, truncate_dim)
+                assert torch.isfinite(truncated).all()
+                torch.testing.assert_close(
+                    truncated,
+                    expected,
+                    atol=2e-3 if dtype == torch.bfloat16 else MAX_ABS_ERROR,
+                    rtol=2e-3 if dtype == torch.bfloat16 else MAX_ABS_ERROR,
+                )
+
             if dtype == torch.float32:
                 assert comparisons[name]["max_abs_error"] <= MAX_ABS_ERROR
                 assert all(

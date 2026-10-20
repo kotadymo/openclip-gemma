@@ -1,10 +1,10 @@
-# Image indexing and text search (v0.2.0)
+# Image indexing and text search
 
 ## Status and scope
 
-Version 0.2.0 builds a local image index and searches it with Japanese or English text. The APIs are available from `openclip_gemma.image_search`. Video and frame search are documented separately.
+The image-index API builds a local index and searches it with Japanese or English text. The APIs are available from `openclip_gemma.image_search`. Video and frame search are documented separately.
 
-The prototype supports JPEG, PNG, and WebP files. It uses the pinned EmbeddingGemma 2 model, the supplied official image preprocessing transform, and the existing `encode_image()` and `encode_text()` methods. Image and text embeddings remain 768-dimensional. Model revision, preprocessing, tokenizer behavior, and the existing public API are unchanged.
+The indexer supports JPEG, PNG, and WebP files. It uses the pinned EmbeddingGemma 2 model, the supplied official image preprocessing transform, and the `encode_image()` and `encode_text()` methods. The default remains 768 dimensions; v0.4.0 also supports 512, 256, and 128 dimensions through MRL truncation and re-normalization.
 
 ## Indexing and updates
 
@@ -26,9 +26,9 @@ The index operation fails on unreadable or corrupt images. It does not silently 
 The output directory contains a single `index.npz` archive with:
 
 - A one-dimensional `uint8` array containing UTF-8 JSON metadata.
-- An `N x 768` `float32` embedding matrix in the same record order.
+- An `N x D` `float32` embedding matrix in the same record order, where `D` is 128, 256, 512, or 768.
 
-Metadata includes the format version, absolute image root, recursion setting, model ID and pinned revision, model precision (`fp32` or `bf16`), embedding dimension, preprocessing identifier, entry count, relative image paths, source file sizes and `mtime_ns` values, storage dtype, and a SHA-256 checksum of the embedding matrix.
+Format version 2 stores the selected embedding dimension. Existing version-1 indexes remain readable only at 768 dimensions. Metadata includes the format version, absolute image root, recursion setting, model ID and pinned revision, model precision (`fp32` or `bf16`), embedding dimension, preprocessing identifier, entry count, relative image paths, source file sizes and `mtime_ns` values, storage dtype, and a SHA-256 checksum of the embedding matrix.
 
 The loader checks the ZIP directory and NPY headers before loading arrays, then uses `numpy.load(..., allow_pickle=False)` and validates archive members, metadata, path safety, matrix dimensions and dtype, finite values, checksum, model revision, precision, and preprocessing identifier. It rejects archives larger than 512 MiB or with more than 512 MiB of expanded members, and limits metadata to 64 MiB. These hard limits bound a single archive but mean very large collections must be split across indexes. Incompatible or damaged archives fail explicitly; they are not silently discarded or rebuilt.
 
@@ -40,7 +40,7 @@ Changing only the `recursive` setting updates the saved metadata and reuses unch
 
 ## Text search
 
-Search applies `get_tokenizer(prompt_name="SearchQuery")` and passes the resulting tokens to the existing `encode_text()` with normalization enabled. Image vectors are stored as normalized float32 vectors and compared with the normalized query by dot product, i.e. cosine similarity.
+Search reads the index's stored dimension, applies `get_tokenizer(prompt_name="SearchQuery")`, and asks `encode_text()` for a query vector of that dimension. Image vectors and query vectors are stored or compared as normalized float32 vectors by dot product, i.e. cosine similarity.
 
 Results are ordered by descending score. Equal scores are resolved by relative image path (case-insensitive first, then exact path) for deterministic output. `top_k` must be positive; values larger than the index return all entries. Empty indexes and blank queries are errors. Scores are raw cosine similarities, not classification probabilities or calibrated confidence.
 
@@ -53,12 +53,29 @@ From the repository root in a v0.2.0 source checkout:
 ```bash
 uv sync --locked --group dev
 uv run python examples/image_search.py index \
-  --images ./photos --output ./image-index --batch-size 16 --device cuda --recursive
+  --images ./photos --output ./image-index-256 --batch-size 16 \
+  --embedding-dim 256 --device cuda --recursive
 uv run python examples/image_search.py search \
-  --index ./image-index --query "富士山と青空" --top-k 5 --device cuda
+  --index ./image-index-256 --query "富士山と青空" --top-k 5 --device cuda
 ```
 
 Omit `--recursive` to index only files directly inside the directory. `--device` accepts `cpu` or `cuda`; CPU is the default. Reduce `--batch-size` if GPU memory is insufficient. Re-running the index command reconciles additions, changes, and deletions.
+
+## Embedding dimensions and migration
+
+Pass `embedding_dim=128`, `256`, `512`, or `768` to
+`build_or_update_image_index()` or `--embedding-dim` to the CLI. The default is
+768. One index must use a single dimension: an update that requests a different
+dimension raises `ImageIndexCompatibilityError` instead of mixing vectors.
+Build the alternate dimension in a separate index directory.
+
+`convert_image_index(source, destination, embedding_dim=...)` creates a new
+index without loading the model or rerunning inference. The destination must
+not exist, and the target dimension cannot exceed the source dimension. The
+conversion truncates each stored vector to its leading dimensions, re-normalizes
+it, updates the checksum and metadata, and leaves the source archive unchanged.
+This supports conversion from legacy version-1 768-dimensional indexes as
+well as version-2 indexes.
 
 ## Validation and limitations
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -15,8 +16,10 @@ from openclip_gemma.image_search import (
     _load_index,
     _search_index,
     build_or_update_image_index,
+    convert_image_index,
     search_images,
 )
+from openclip_gemma.index_storage import _save_numpy_archive_atomic
 
 
 class FakeImageSearchModel(nn.Module):
@@ -26,26 +29,41 @@ class FakeImageSearchModel(nn.Module):
         self.encoded_image_count = 0
         self.received_tokens: list[torch.Tensor] = []
 
-    def encode_image(self, images: torch.Tensor) -> torch.Tensor:
+    def encode_image(
+        self,
+        images: torch.Tensor,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
         self.encoded_image_count += images.shape[0]
         features = images.mean(dim=(2, 3))
         features = torch.nn.functional.normalize(features, dim=-1)
-        return torch.nn.functional.pad(features, (0, 765))
+        features = torch.nn.functional.pad(features, (0, 765))
+        if truncate_dim is not None:
+            features = torch.nn.functional.normalize(
+                features[:, :truncate_dim],
+                dim=-1,
+            )
+        return features
 
     def encode_text(
         self,
         tokens: torch.Tensor,
         *,
         normalize: bool = False,
+        truncate_dim: int | None = None,
     ) -> torch.Tensor:
         self.received_tokens.append(tokens.detach().cpu())
+        embedding_dim = 768 if truncate_dim is None else truncate_dim
         features = torch.zeros(
-            (tokens.shape[0], 768),
+            (tokens.shape[0], embedding_dim),
             device=tokens.device,
             dtype=self.anchor.dtype,
         )
         features[:, 0] = 1
-        return torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        return (
+            torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        )
 
 
 class FakeTokenizer:
@@ -59,7 +77,10 @@ class FakeTokenizer:
 
 def _preprocess(image: Image.Image) -> torch.Tensor:
     rgb = image.convert("RGB")
-    return torch.from_numpy(np.asarray(rgb, dtype=np.float32).copy()).permute(2, 0, 1) / 255
+    return (
+        torch.from_numpy(np.asarray(rgb, dtype=np.float32).copy()).permute(2, 0, 1)
+        / 255
+    )
 
 
 def _write_image(
@@ -80,6 +101,7 @@ def _build(
     *,
     batch_size: int = 4,
     recursive: bool = False,
+    embedding_dim: int = 768,
 ):
     return build_or_update_image_index(
         model,
@@ -88,6 +110,19 @@ def _build(
         index_dir,
         batch_size=batch_size,
         recursive=recursive,
+        embedding_dim=embedding_dim,
+    )
+
+
+def _rewrite_index_version(index_path: Path, version: int) -> None:
+    with np.load(index_path, allow_pickle=False) as archive:
+        metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
+        embeddings = archive["embeddings"].copy()
+    metadata["format_version"] = version
+    _save_numpy_archive_atomic(
+        index_path,
+        metadata,
+        {"embeddings": embeddings},
     )
 
 
@@ -105,7 +140,9 @@ def test_index_build_round_trip_and_incremental_changes(tmp_path: Path) -> None:
     assert (first.added, first.updated, first.removed, first.unchanged) == (3, 0, 0, 0)
     assert model.encoded_image_count == 3
     original_archive = first.index_path.read_bytes()
-    loaded = _load_index(index_dir, expected_root=images_dir.resolve(), expected_precision="fp32")
+    loaded = _load_index(
+        index_dir, expected_root=images_dir.resolve(), expected_precision="fp32"
+    )
     assert [record.relative_path for record in loaded.records] == [
         "a.png",
         "b.jpg",
@@ -113,10 +150,17 @@ def test_index_build_round_trip_and_incremental_changes(tmp_path: Path) -> None:
     ]
     assert loaded.embeddings.shape == (3, 768)
     assert loaded.embeddings.dtype == np.float32
-    np.testing.assert_allclose(np.linalg.norm(loaded.embeddings, axis=1), 1.0, atol=1e-6)
+    np.testing.assert_allclose(
+        np.linalg.norm(loaded.embeddings, axis=1), 1.0, atol=1e-6
+    )
 
     unchanged = _build(model, images_dir, index_dir, recursive=True)
-    assert (unchanged.added, unchanged.updated, unchanged.removed, unchanged.unchanged) == (
+    assert (
+        unchanged.added,
+        unchanged.updated,
+        unchanged.removed,
+        unchanged.unchanged,
+    ) == (
         0,
         0,
         0,
@@ -137,12 +181,118 @@ def test_index_build_round_trip_and_incremental_changes(tmp_path: Path) -> None:
         1,
     )
     assert model.encoded_image_count == 5
-    reloaded = _load_index(index_dir, expected_root=images_dir.resolve(), expected_precision="fp32")
+    reloaded = _load_index(
+        index_dir, expected_root=images_dir.resolve(), expected_precision="fp32"
+    )
     assert [record.relative_path for record in reloaded.records] == [
         "a.png",
         "nested/c.webp",
         "nested/d.png",
     ]
+
+
+@pytest.mark.parametrize("embedding_dim", [128, 256, 512, 768])
+def test_index_builds_and_searches_at_requested_dimension(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    embedding_dim: int,
+) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    model = FakeImageSearchModel()
+
+    _build(model, images_dir, index_dir, embedding_dim=embedding_dim)
+    loaded = _load_index(index_dir)
+    monkeypatch.setattr(
+        image_search,
+        "get_tokenizer",
+        lambda *, prompt_name: FakeTokenizer(),
+    )
+    results = search_images(model, index_dir, "red")
+
+    assert loaded.embeddings.shape == (1, embedding_dim)
+    assert results[0].path.name == "red.png"
+    assert results[0].score == pytest.approx(1.0)
+    with np.load(index_dir / "index.npz", allow_pickle=False) as archive:
+        metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
+    assert metadata["format_version"] == 2
+    assert metadata["embedding_dimension"] == embedding_dim
+
+
+def test_legacy_768_index_remains_readable_and_can_be_converted(
+    tmp_path: Path,
+) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    source_dir = tmp_path / "legacy-index"
+    model = FakeImageSearchModel()
+    _build(model, images_dir, source_dir)
+    _rewrite_index_version(source_dir / "index.npz", 1)
+    encoded_count = model.encoded_image_count
+
+    assert _load_index(source_dir).embeddings.shape == (1, 768)
+    converted_path = convert_image_index(
+        source_dir,
+        tmp_path / "converted-index",
+        embedding_dim=128,
+    )
+    converted = _load_index(converted_path.parent)
+
+    assert converted_path.exists()
+    assert converted.embeddings.shape == (1, 128)
+    np.testing.assert_allclose(np.linalg.norm(converted.embeddings, axis=1), 1.0)
+    assert model.encoded_image_count == encoded_count
+    assert _load_index(source_dir).embeddings.shape == (1, 768)
+
+
+def test_legacy_image_index_requires_native_dimension(
+    tmp_path: Path,
+) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    _build(
+        FakeImageSearchModel(),
+        images_dir,
+        index_dir,
+        embedding_dim=128,
+    )
+    _rewrite_index_version(index_dir / "index.npz", 1)
+
+    with pytest.raises(ImageIndexCompatibilityError, match="Legacy image indexes"):
+        _load_index(index_dir)
+
+
+def test_image_update_rejects_mixed_embedding_dimensions(
+    tmp_path: Path,
+) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    model = FakeImageSearchModel()
+    _build(model, images_dir, index_dir, embedding_dim=256)
+
+    with pytest.raises(
+        ImageIndexCompatibilityError, match="does not match the requested"
+    ):
+        _build(model, images_dir, index_dir, embedding_dim=128)
+
+
+def test_image_index_conversion_rejects_expansion_and_existing_output(
+    tmp_path: Path,
+) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    _build(FakeImageSearchModel(), images_dir, index_dir, embedding_dim=128)
+
+    with pytest.raises(ValueError, match="Cannot expand"):
+        convert_image_index(index_dir, tmp_path / "larger", embedding_dim=256)
+    existing_output = tmp_path / "existing"
+    existing_output.mkdir()
+    with pytest.raises(ValueError, match="already exists"):
+        convert_image_index(index_dir, existing_output, embedding_dim=128)
 
 
 def test_non_recursive_index_excludes_nested_images(tmp_path: Path) -> None:
@@ -153,9 +303,9 @@ def test_non_recursive_index_excludes_nested_images(tmp_path: Path) -> None:
     update = _build(FakeImageSearchModel(), images_dir, tmp_path / "index")
 
     assert update.added == 1
-    assert [record.relative_path for record in _load_index(tmp_path / "index").records] == [
-        "top.png"
-    ]
+    assert [
+        record.relative_path for record in _load_index(tmp_path / "index").records
+    ] == ["top.png"]
 
 
 def test_empty_directory_is_rejected_for_new_index(tmp_path: Path) -> None:
@@ -249,7 +399,9 @@ def test_search_returns_all_results_when_top_k_exceeds_index_size(
 @pytest.mark.parametrize("top_k", [0, -1])
 def test_search_rejects_non_positive_top_k(top_k: int, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="greater than zero"):
-        _search_index(FakeImageSearchModel(), tmp_path / "missing", "query", top_k=top_k)
+        _search_index(
+            FakeImageSearchModel(), tmp_path / "missing", "query", top_k=top_k
+        )
 
 
 def test_search_rejects_empty_query(tmp_path: Path) -> None:

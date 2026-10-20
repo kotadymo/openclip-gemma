@@ -13,6 +13,10 @@ import torch
 from numpy.typing import NDArray
 from PIL import Image
 
+from openclip_gemma._dimensions import (
+    DEFAULT_EMBEDDING_DIMENSION,
+    validate_embedding_dimension,
+)
 from openclip_gemma.batching import ImagePath, iter_image_embeddings
 from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
 from openclip_gemma.index_storage import (
@@ -24,8 +28,8 @@ from openclip_gemma.index_storage import (
 from openclip_gemma.tokenizer import get_tokenizer
 
 _INDEX_FILENAME = "index.npz"
-_INDEX_FORMAT_VERSION = 1
-_EMBEDDING_DIMENSION = 768
+_INDEX_FORMAT_VERSION = 2
+_LEGACY_INDEX_FORMAT_VERSION = 1
 _PREPROCESSING_ID = "embeddinggemma-2-official-image-preprocess-v1"
 _SUPPORTED_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _SCORE_BLOCK_SIZE = 4096
@@ -36,6 +40,7 @@ __all__ = [
     "ImageIndexUpdate",
     "ImageSearchResult",
     "build_or_update_image_index",
+    "convert_image_index",
     "search_images",
 ]
 
@@ -54,13 +59,19 @@ class ImageIndexCompatibilityError(ImageIndexError):
 class _ImageSearchModel(Protocol):
     def parameters(self) -> Iterator[torch.nn.Parameter]: ...
 
-    def encode_image(self, images: torch.Tensor) -> torch.Tensor: ...
+    def encode_image(
+        self,
+        images: torch.Tensor,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor: ...
 
     def encode_text(
         self,
         tokens: torch.Tensor,
         *,
         normalize: bool = False,
+        truncate_dim: int | None = None,
     ) -> torch.Tensor: ...
 
 
@@ -77,6 +88,7 @@ class _ImageIndex:
     recursive: bool
     records: tuple[_ImageRecord, ...]
     embeddings: _EmbeddingMatrix
+    precision: str
 
 
 @dataclass(frozen=True)
@@ -143,7 +155,9 @@ def _scan_image_files(
                 ),
             )
     except OSError as error:
-        raise ImageIndexError(f"Could not scan image directory {root}: {error}") from error
+        raise ImageIndexError(
+            f"Could not scan image directory {root}: {error}"
+        ) from error
 
     records = tuple(
         sorted(
@@ -158,7 +172,9 @@ def _model_settings(model: _ImageSearchModel) -> tuple[torch.device, str]:
     try:
         parameter = next(model.parameters())
     except StopIteration as error:
-        raise ImageIndexError("The model has no parameters to determine its settings.") from error
+        raise ImageIndexError(
+            "The model has no parameters to determine its settings."
+        ) from error
 
     precision_by_dtype = {
         torch.float32: "fp32",
@@ -215,7 +231,7 @@ def _metadata_for_index(index: _ImageIndex, precision: str) -> dict[str, object]
         "model_id": MODEL_ID,
         "model_revision": MODEL_REVISION,
         "model_precision": precision,
-        "embedding_dimension": _EMBEDDING_DIMENSION,
+        "embedding_dimension": int(index.embeddings.shape[1]),
         "preprocessing_id": _PREPROCESSING_ID,
         "storage_dtype": "float32",
         "image_root": str(index.image_root),
@@ -237,8 +253,14 @@ def _save_index(index_dir: Path, index: _ImageIndex, precision: str) -> Path:
     index_dir.mkdir(parents=True, exist_ok=True)
     index_path = index_dir / _INDEX_FILENAME
     embeddings = np.ascontiguousarray(index.embeddings, dtype=np.float32)
-    if embeddings.shape != (len(index.records), _EMBEDDING_DIMENSION):
+    if embeddings.ndim != 2 or embeddings.shape[0] != len(index.records):
         raise ImageIndexError("Refusing to save an index with inconsistent dimensions.")
+    try:
+        validate_embedding_dimension(embeddings.shape[1], name="embedding_dimension")
+    except (TypeError, ValueError) as error:
+        raise ImageIndexError(
+            "Refusing to save an index with an unsupported embedding dimension."
+        ) from error
     if not np.isfinite(embeddings).all():
         raise ImageIndexError("Refusing to save non-finite image embeddings.")
 
@@ -257,6 +279,7 @@ def _load_index(
     *,
     expected_root: Path | None = None,
     expected_precision: str | None = None,
+    expected_embedding_dimension: int | None = None,
 ) -> _ImageIndex:
     index_path = Path(index_dir).expanduser() / _INDEX_FILENAME
     try:
@@ -264,7 +287,7 @@ def _load_index(
             index_path,
             expected_arrays=frozenset({"embeddings"}),
         ) as (metadata, archive):
-            records, image_root, recursive = _validate_metadata(
+            records, image_root, recursive, embedding_dimension = _validate_metadata(
                 metadata,
                 expected_root=expected_root,
                 expected_precision=expected_precision,
@@ -273,11 +296,24 @@ def _load_index(
     except IndexArchiveError as error:
         if not index_path.exists():
             raise ImageIndexError(f"Image index not found: {index_path}") from error
-        raise ImageIndexError(f"Could not read image index {index_path}: {error}") from error
+        raise ImageIndexError(
+            f"Could not read image index {index_path}: {error}"
+        ) from error
     except ImageIndexError:
         raise
 
-    expected_shape = (len(records), _EMBEDDING_DIMENSION)
+    if expected_embedding_dimension is not None:
+        expected_embedding_dimension = validate_embedding_dimension(
+            expected_embedding_dimension,
+            name="embedding_dim",
+        )
+        if embedding_dimension != expected_embedding_dimension:
+            raise ImageIndexCompatibilityError(
+                "Image index embedding dimension does not match the requested "
+                f"dimension {expected_embedding_dimension}; convert it or use a new "
+                "index directory."
+            )
+    expected_shape = (len(records), embedding_dimension)
     if embeddings.dtype != np.float32 or embeddings.shape != expected_shape:
         raise ImageIndexError(
             "Image index embeddings have an invalid dtype or shape: "
@@ -288,8 +324,16 @@ def _load_index(
     if not np.isfinite(embeddings).all():
         raise ImageIndexError("Image index contains non-finite embeddings.")
     if _array_sha256(embeddings) != metadata["embedding_sha256"]:
-        raise ImageIndexError("Image index embedding checksum does not match its metadata.")
-    return _ImageIndex(image_root, recursive, records, embeddings)
+        raise ImageIndexError(
+            "Image index embedding checksum does not match its metadata."
+        )
+    return _ImageIndex(
+        image_root,
+        recursive,
+        records,
+        embeddings,
+        str(metadata["model_precision"]),
+    )
 
 
 def _validate_metadata(
@@ -297,16 +341,18 @@ def _validate_metadata(
     *,
     expected_root: Path | None,
     expected_precision: str | None,
-) -> tuple[tuple[_ImageRecord, ...], Path, bool]:
+) -> tuple[tuple[_ImageRecord, ...], Path, bool, int]:
     version = metadata.get("format_version")
-    if type(version) is not int or version != _INDEX_FORMAT_VERSION:
+    if type(version) is not int or version not in {
+        _LEGACY_INDEX_FORMAT_VERSION,
+        _INDEX_FORMAT_VERSION,
+    }:
         raise ImageIndexCompatibilityError(
             f"Unsupported image index format version: {version!r}."
         )
     compatibility_fields = {
         "model_id": MODEL_ID,
         "model_revision": MODEL_REVISION,
-        "embedding_dimension": _EMBEDDING_DIMENSION,
         "preprocessing_id": _PREPROCESSING_ID,
         "storage_dtype": "float32",
     }
@@ -316,9 +362,28 @@ def _validate_metadata(
                 f"Image index {name} does not match the current model configuration."
             )
 
+    try:
+        embedding_dimension = validate_embedding_dimension(
+            metadata.get("embedding_dimension"),
+            name="embedding_dimension",
+        )
+    except (TypeError, ValueError) as error:
+        raise ImageIndexCompatibilityError(
+            "Image index contains an unsupported embedding dimension."
+        ) from error
+    if (
+        version == _LEGACY_INDEX_FORMAT_VERSION
+        and embedding_dimension != DEFAULT_EMBEDDING_DIMENSION
+    ):
+        raise ImageIndexCompatibilityError(
+            "Legacy image indexes must use the native 768-dimensional embeddings."
+        )
+
     precision = metadata.get("model_precision")
     if not isinstance(precision, str) or precision not in {"fp32", "bf16"}:
-        raise ImageIndexError("Image index metadata contains an invalid model precision.")
+        raise ImageIndexError(
+            "Image index metadata contains an invalid model precision."
+        )
     if expected_precision is not None and precision != expected_precision:
         raise ImageIndexCompatibilityError(
             "Image index model precision does not match the loaded model; "
@@ -329,16 +394,18 @@ def _validate_metadata(
     if not isinstance(root_value, str) or not root_value:
         raise ImageIndexError("Image index metadata contains an invalid image root.")
     image_root = Path(root_value)
-    if expected_root is not None and os.path.normcase(str(image_root)) != os.path.normcase(
-        str(expected_root)
-    ):
+    if expected_root is not None and os.path.normcase(
+        str(image_root)
+    ) != os.path.normcase(str(expected_root)):
         raise ImageIndexCompatibilityError(
             "Image index was created for a different image directory."
         )
 
     recursive = metadata.get("recursive")
     if not isinstance(recursive, bool):
-        raise ImageIndexError("Image index metadata contains an invalid recursion setting.")
+        raise ImageIndexError(
+            "Image index metadata contains an invalid recursion setting."
+        )
     records_value = metadata.get("records")
     if not isinstance(records_value, list):
         raise ImageIndexError("Image index metadata contains an invalid record list.")
@@ -347,7 +414,10 @@ def _validate_metadata(
     if len(set(keys)) != len(keys):
         raise ImageIndexError("Image index metadata contains duplicate image paths.")
     if records != tuple(
-        sorted(records, key=lambda record: (_path_key(record.relative_path), record.relative_path))
+        sorted(
+            records,
+            key=lambda record: (_path_key(record.relative_path), record.relative_path),
+        )
     ):
         raise ImageIndexError("Image index records are not in canonical path order.")
 
@@ -365,15 +435,19 @@ def _validate_metadata(
         or len(checksum) != 64
         or any(character not in "0123456789abcdef" for character in checksum)
     ):
-        raise ImageIndexError("Image index metadata contains an invalid embedding checksum.")
-    return records, image_root, recursive
+        raise ImageIndexError(
+            "Image index metadata contains an invalid embedding checksum."
+        )
+    return records, image_root, recursive, embedding_dimension
 
 
 def _file_signature(path: Path) -> tuple[int, int]:
     try:
         file_stat = path.stat()
     except OSError as error:
-        raise ImageIndexError(f"Could not inspect image file {path}: {error}") from error
+        raise ImageIndexError(
+            f"Could not inspect image file {path}: {error}"
+        ) from error
     return file_stat.st_size, file_stat.st_mtime_ns
 
 
@@ -385,9 +459,14 @@ def _build_or_update_image_index(
     *,
     batch_size: int = 8,
     recursive: bool = False,
+    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
 ) -> ImageIndexUpdate:
     """Create or incrementally update a safe, local image index."""
     _validate_batch_size(batch_size)
+    embedding_dim = validate_embedding_dimension(
+        embedding_dim,
+        name="embedding_dim",
+    )
     root, records = _scan_image_files(images_dir, recursive=recursive)
     output_dir = Path(index_dir).expanduser()
     if output_dir.exists() and not output_dir.is_dir():
@@ -404,6 +483,7 @@ def _build_or_update_image_index(
             output_dir,
             expected_root=root,
             expected_precision=precision,
+            expected_embedding_dimension=embedding_dim,
         )
     elif not records:
         raise ValueError(f"No supported images were found in {root}.")
@@ -418,12 +498,15 @@ def _build_or_update_image_index(
     )
     current_keys = {_path_key(record.relative_path) for record in records}
     removed = (
-        sum(_path_key(record.relative_path) not in current_keys for record in previous.records)
+        sum(
+            _path_key(record.relative_path) not in current_keys
+            for record in previous.records
+        )
         if previous is not None
         else 0
     )
 
-    embeddings = np.empty((len(records), _EMBEDDING_DIMENSION), dtype=np.float32)
+    embeddings = np.empty((len(records), embedding_dim), dtype=np.float32)
     changed_records: list[_ImageRecord] = []
     changed_rows: dict[str, int] = {}
     added = 0
@@ -434,7 +517,9 @@ def _build_or_update_image_index(
         previous_row = previous_rows.get(key)
         if previous_row is None:
             added += 1
-        elif _record_signature(previous.records[previous_row]) == _record_signature(record):
+        elif _record_signature(previous.records[previous_row]) == _record_signature(
+            record
+        ):
             embeddings[row] = previous.embeddings[previous_row]
             unchanged += 1
             continue
@@ -461,15 +546,20 @@ def _build_or_update_image_index(
             preprocess,
             image_paths,
             batch_size=batch_size,
+            embedding_dim=embedding_dim,
         ):
             key = _path_key(path.relative_to(root).as_posix())
             row = changed_rows.get(key)
             if row is None:
-                raise ImageIndexError(f"Image encoder returned an unexpected path: {path}")
+                raise ImageIndexError(
+                    f"Image encoder returned an unexpected path: {path}"
+                )
             vector = embedding.detach().to(device="cpu", dtype=torch.float32).numpy()
             norm = float(np.linalg.norm(vector))
             if not np.isfinite(norm) or norm <= 0:
-                raise ImageIndexError(f"Image encoder returned an invalid embedding for {path}.")
+                raise ImageIndexError(
+                    f"Image encoder returned an invalid embedding for {path}."
+                )
             embeddings[row] = vector / norm
             encoded_count += 1
         if encoded_count != len(changed_records):
@@ -485,7 +575,7 @@ def _build_or_update_image_index(
                 f"Image changed during indexing: {path}. Run the index command again."
             )
 
-    index = _ImageIndex(root, recursive, records, embeddings)
+    index = _ImageIndex(root, recursive, records, embeddings, precision)
     saved_path = _save_index(output_dir, index, precision)
     return ImageIndexUpdate(saved_path, added, updated, removed, unchanged)
 
@@ -515,9 +605,20 @@ def _search_index(
     tokenizer = get_tokenizer(prompt_name="SearchQuery")
     tokens = tokenizer(query).to(device)
     with torch.inference_mode():
-        query_features = model.encode_text(tokens, normalize=True)
-    expected_shape = (1, _EMBEDDING_DIMENSION)
-    if not isinstance(query_features, torch.Tensor) or tuple(query_features.shape) != expected_shape:
+        embedding_dimension = index.embeddings.shape[1]
+        if embedding_dimension == DEFAULT_EMBEDDING_DIMENSION:
+            query_features = model.encode_text(tokens, normalize=True)
+        else:
+            query_features = model.encode_text(
+                tokens,
+                normalize=True,
+                truncate_dim=embedding_dimension,
+            )
+    expected_shape = (1, embedding_dimension)
+    if (
+        not isinstance(query_features, torch.Tensor)
+        or tuple(query_features.shape) != expected_shape
+    ):
         actual_shape = (
             tuple(query_features.shape)
             if isinstance(query_features, torch.Tensor)
@@ -527,9 +628,15 @@ def _search_index(
             f"Text encoder returned an invalid query embedding: expected "
             f"{expected_shape}, received {actual_shape}."
         )
-    query_vector = query_features.detach().to(device="cpu", dtype=torch.float32).numpy()[0]
+    query_vector = (
+        query_features.detach().to(device="cpu", dtype=torch.float32).numpy()[0]
+    )
     query_norm = float(np.linalg.norm(query_vector))
-    if not np.isfinite(query_vector).all() or not np.isfinite(query_norm) or query_norm <= 0:
+    if (
+        not np.isfinite(query_vector).all()
+        or not np.isfinite(query_norm)
+        or query_norm <= 0
+    ):
         raise ImageIndexError("Text encoder returned an invalid query embedding.")
     query_vector = query_vector / query_norm
 
@@ -545,10 +652,7 @@ def _search_index(
         scores = index.embeddings[start:stop] @ query_vector
         if not np.isfinite(scores).all():
             raise ImageIndexError("Image index produced non-finite similarity scores.")
-        candidates = [
-            (float(score), row + start)
-            for row, score in enumerate(scores)
-        ]
+        candidates = [(float(score), row + start) for row, score in enumerate(scores)]
         best = sorted((*best, *candidates), key=sort_key)[:limit]
 
     return [
@@ -568,6 +672,7 @@ def build_or_update_image_index(
     *,
     batch_size: int = 8,
     recursive: bool = False,
+    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
 ) -> ImageIndexUpdate:
     """Build or incrementally update a local image embedding index.
 
@@ -581,7 +686,54 @@ def build_or_update_image_index(
         index_dir,
         batch_size=batch_size,
         recursive=recursive,
+        embedding_dim=embedding_dim,
     )
+
+
+def convert_image_index(
+    index_dir: str | os.PathLike[str],
+    output_dir: str | os.PathLike[str],
+    *,
+    embedding_dim: int,
+) -> Path:
+    """Convert an image index to a supported dimension without model inference."""
+    embedding_dim = validate_embedding_dimension(
+        embedding_dim,
+        name="embedding_dim",
+    )
+    index = _load_index(index_dir)
+    source_dir = Path(index_dir).expanduser().resolve()
+    destination = Path(output_dir).expanduser()
+    if destination.exists():
+        raise ValueError(f"Image index conversion output already exists: {destination}")
+    if destination.resolve() == source_dir:
+        raise ValueError("Image index conversion output must differ from its source.")
+
+    source_dimension = index.embeddings.shape[1]
+    if embedding_dim > source_dimension:
+        raise ValueError(
+            f"Cannot expand an image index from {source_dimension} to "
+            f"{embedding_dim} dimensions."
+        )
+    truncated = np.ascontiguousarray(
+        index.embeddings[:, :embedding_dim], dtype=np.float32
+    )
+    if len(index.records):
+        norms = np.linalg.norm(truncated, axis=1, keepdims=True)
+        if not np.isfinite(norms).all() or (norms <= 0).any():
+            raise ImageIndexError(
+                "Image index contains an embedding with zero or non-finite norm "
+                "after truncation."
+            )
+        truncated = np.ascontiguousarray(truncated / norms, dtype=np.float32)
+    converted = _ImageIndex(
+        index.image_root,
+        index.recursive,
+        index.records,
+        truncated,
+        index.precision,
+    )
+    return _save_index(destination, converted, index.precision)
 
 
 def search_images(

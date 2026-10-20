@@ -18,11 +18,17 @@ class FakeEncoder(nn.Module):
         self.batch_sizes: list[int] = []
         self.inference_mode_states: list[bool] = []
 
-    def encode_image(self, images: torch.Tensor) -> torch.Tensor:
+    def encode_image(
+        self,
+        images: torch.Tensor,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
         self.batch_sizes.append(images.shape[0])
         self.inference_mode_states.append(torch.is_inference_mode_enabled())
+        embedding_dim = 768 if truncate_dim is None else truncate_dim
         embeddings = torch.zeros(
-            (images.shape[0], 768),
+            (images.shape[0], embedding_dim),
             dtype=torch.float32,
             device=images.device,
         )
@@ -89,8 +95,7 @@ def test_streams_bounded_batches_and_restores_order_for_different_shapes(
 
 def test_batch_size_bounds_each_encoded_batch(tmp_path: Path) -> None:
     paths = [
-        _write_image(tmp_path / f"{index}.png", red=index * 30)
-        for index in range(1, 6)
+        _write_image(tmp_path / f"{index}.png", red=index * 30) for index in range(1, 6)
     ]
     model = FakeEncoder()
 
@@ -105,6 +110,42 @@ def test_batch_size_bounds_each_encoded_batch(tmp_path: Path) -> None:
 
     assert len(results) == len(paths)
     assert model.batch_sizes == [2, 2, 1]
+
+
+@pytest.mark.parametrize("embedding_dim", [128, 256, 512, 768])
+def test_streams_requested_embedding_dimension(
+    tmp_path: Path,
+    embedding_dim: int,
+) -> None:
+    path = _write_image(tmp_path / "image.png", red=100)
+
+    results = list(
+        iter_image_embeddings(
+            FakeEncoder(),
+            _preprocess,
+            [path],
+            embedding_dim=embedding_dim,
+        )
+    )
+
+    assert results[0][1].shape == (embedding_dim,)
+
+
+@pytest.mark.parametrize(
+    ("embedding_dim", "exception"),
+    [(127, ValueError), (1024, ValueError), (True, TypeError)],
+)
+def test_rejects_unsupported_embedding_dimensions(
+    embedding_dim: object,
+    exception: type[Exception],
+) -> None:
+    with pytest.raises(exception, match="embedding_dim"):
+        iter_image_embeddings(
+            FakeEncoder(),
+            _preprocess,
+            [],
+            embedding_dim=embedding_dim,  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.parametrize("suffix", [".jpg", ".png"])

@@ -91,6 +91,52 @@ def test_encode_text_preserves_native_normalization_and_normalize_argument(
     torch.testing.assert_close(native.norm(dim=-1), torch.ones(1))
 
 
+@pytest.mark.parametrize("truncate_dim", [128, 256, 512, 768])
+def test_encode_text_truncates_and_renormalizes(
+    model: tuple[EmbeddingGemmaCLIP, FakeBackend],
+    truncate_dim: int,
+) -> None:
+    wrapper, _ = model
+    tokens = torch.tensor([[2, 3, 4, 1]], dtype=torch.long)
+    native = wrapper.encode_text(tokens)
+
+    result = wrapper.encode_text(tokens, truncate_dim=truncate_dim)
+
+    assert result.shape == (1, truncate_dim)
+    torch.testing.assert_close(
+        result,
+        F.normalize(native[:, :truncate_dim], p=2, dim=-1),
+    )
+    torch.testing.assert_close(result.norm(dim=-1), torch.ones(1))
+    if truncate_dim == 768:
+        assert torch.equal(result, native)
+
+
+@pytest.mark.parametrize(
+    ("truncate_dim", "exception", "message"),
+    [
+        (127, ValueError, "one of"),
+        (1024, ValueError, "one of"),
+        (True, TypeError, "integer"),
+        (128.0, TypeError, "integer"),
+        ("128", TypeError, "integer"),
+    ],
+)
+def test_encode_text_rejects_invalid_truncate_dimensions(
+    model: tuple[EmbeddingGemmaCLIP, FakeBackend],
+    truncate_dim: object,
+    exception: type[Exception],
+    message: str,
+) -> None:
+    wrapper, _ = model
+
+    with pytest.raises(exception, match=message):
+        wrapper.encode_text(
+            torch.tensor([[2, 3, 4, 1]], dtype=torch.long),
+            truncate_dim=truncate_dim,  # type: ignore[arg-type]
+        )
+
+
 def test_encode_text_accepts_single_and_batched_tokens(
     model: tuple[EmbeddingGemmaCLIP, FakeBackend],
 ) -> None:

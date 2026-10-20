@@ -22,6 +22,7 @@ from openclip_gemma.video_search import (
     _load_video_index,
     _validate_interval,
     build_or_update_video_index,
+    convert_video_index,
     search_video,
 )
 
@@ -109,27 +110,42 @@ class FakeVideoModel(nn.Module):
         self.inference_modes: list[bool] = []
         self.received_tokens: list[torch.Tensor] = []
 
-    def encode_image(self, images: torch.Tensor) -> torch.Tensor:
+    def encode_image(
+        self,
+        images: torch.Tensor,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
         self.batch_sizes.append(images.shape[0])
         self.inference_modes.append(torch.is_inference_mode_enabled())
         features = images.mean(dim=(2, 3))
         features = torch.nn.functional.normalize(features, dim=-1)
-        return torch.nn.functional.pad(features, (0, 765))
+        features = torch.nn.functional.pad(features, (0, 765))
+        if truncate_dim is not None:
+            features = torch.nn.functional.normalize(
+                features[:, :truncate_dim],
+                dim=-1,
+            )
+        return features
 
     def encode_text(
         self,
         tokens: torch.Tensor,
         *,
         normalize: bool = False,
+        truncate_dim: int | None = None,
     ) -> torch.Tensor:
         self.received_tokens.append(tokens.detach().cpu())
+        embedding_dim = 768 if truncate_dim is None else truncate_dim
         features = torch.zeros(
-            (tokens.shape[0], 768),
+            (tokens.shape[0], embedding_dim),
             device=tokens.device,
             dtype=self.anchor.dtype,
         )
         features[:, 0] = 1
-        return torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        return (
+            torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        )
 
 
 class FakeTokenizer:
@@ -159,6 +175,18 @@ def _write_video(path: Path, data: bytes = b"fake video") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return path
+
+
+def _rewrite_video_index_version(index_path: Path, version: int) -> None:
+    with np.load(index_path, allow_pickle=False) as archive:
+        metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
+        embeddings = archive["embeddings"].copy()
+    metadata["format_version"] = version
+    _save_numpy_archive_atomic(
+        index_path,
+        metadata,
+        {"embeddings": embeddings},
+    )
 
 
 def test_sampling_uses_actual_vfr_pts_and_preserves_frame_images(
@@ -245,7 +273,12 @@ def test_sampling_uses_stream_start_when_container_start_is_unavailable(
 
 @pytest.mark.parametrize(
     ("interval", "exception"),
-    [(0, ValueError), (-1.0, ValueError), (float("inf"), ValueError), (True, TypeError)],
+    [
+        (0, ValueError),
+        (-1.0, ValueError),
+        (float("inf"), ValueError),
+        (True, TypeError),
+    ],
 )
 def test_rejects_invalid_sampling_interval(
     interval: object,
@@ -339,7 +372,9 @@ def test_video_index_round_trip_search_and_incremental_file_changes(
     assert first.frame_count == 4
     assert model.batch_sizes
     assert all(model.inference_modes)
-    loaded = _load_video_index(index_dir, expected_root=videos_dir.resolve(), expected_interval=1.0)
+    loaded = _load_video_index(
+        index_dir, expected_root=videos_dir.resolve(), expected_interval=1.0
+    )
     assert loaded.embeddings.shape == (4, 768)
     assert [frame.pts for frame in loaded.frames] == [0, 0, 31, 61]
     assert [frame.video_path for frame in loaded.frames] == [
@@ -348,7 +383,9 @@ def test_video_index_round_trip_search_and_incremental_file_changes(
         "workshop.mp4",
         "workshop.mp4",
     ]
-    np.testing.assert_allclose(np.linalg.norm(loaded.embeddings, axis=1), 1.0, atol=1e-6)
+    np.testing.assert_allclose(
+        np.linalg.norm(loaded.embeddings, axis=1), 1.0, atol=1e-6
+    )
 
     opened_before_reuse = len(decoder.opened)
     unchanged = build_or_update_video_index(
@@ -403,6 +440,165 @@ def test_video_index_round_trip_search_and_incremental_file_changes(
     assert all(-1.0 <= result.score <= 1.0 for result in results)
 
 
+@pytest.mark.parametrize("embedding_dim", [128, 256, 512, 768])
+def test_video_index_builds_and_searches_at_requested_dimension(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    embedding_dim: int,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    index_dir = tmp_path / "index"
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+    model = FakeVideoModel()
+
+    update = build_or_update_video_index(
+        model,
+        _preprocess,
+        videos_dir,
+        index_dir,
+        embedding_dim=embedding_dim,
+    )
+    loaded = _load_video_index(index_dir)
+    monkeypatch.setattr(
+        video_search,
+        "get_tokenizer",
+        lambda *, prompt_name: FakeTokenizer(),
+    )
+    results = search_video(model, index_dir, "red")
+
+    assert update.frame_count == 1
+    assert loaded.embeddings.shape == (1, embedding_dim)
+    assert results[0].video_path == video_path
+    assert results[0].score == pytest.approx(1.0)
+    with np.load(index_dir / "video-index.npz", allow_pickle=False) as archive:
+        metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
+    assert metadata["format_version"] == 3
+    assert metadata["embedding_dimension"] == embedding_dim
+
+
+def test_legacy_video_index_remains_readable_and_can_be_converted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    index_dir = tmp_path / "legacy-index"
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+    model = FakeVideoModel()
+    update = build_or_update_video_index(model, _preprocess, videos_dir, index_dir)
+    _rewrite_video_index_version(update.index_path, 2)
+    inference_count = sum(model.batch_sizes)
+
+    assert _load_video_index(index_dir).embeddings.shape == (1, 768)
+    converted_path = convert_video_index(
+        index_dir,
+        tmp_path / "converted-index",
+        embedding_dim=128,
+    )
+    converted = _load_video_index(converted_path.parent)
+
+    assert converted_path.exists()
+    assert converted.embeddings.shape == (1, 128)
+    np.testing.assert_allclose(np.linalg.norm(converted.embeddings, axis=1), 1.0)
+    assert sum(model.batch_sizes) == inference_count
+    assert _load_video_index(index_dir).embeddings.shape == (1, 768)
+
+
+def test_legacy_video_index_requires_native_dimension(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    index_dir = tmp_path / "index"
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+    update = build_or_update_video_index(
+        FakeVideoModel(),
+        _preprocess,
+        videos_dir,
+        index_dir,
+        embedding_dim=128,
+    )
+    _rewrite_video_index_version(update.index_path, 2)
+
+    with pytest.raises(VideoIndexCompatibilityError, match="Legacy video indexes"):
+        _load_video_index(index_dir)
+
+
+def test_video_update_rejects_mixed_embedding_dimensions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    index_dir = tmp_path / "index"
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+    model = FakeVideoModel()
+    build_or_update_video_index(
+        model,
+        _preprocess,
+        videos_dir,
+        index_dir,
+        embedding_dim=256,
+    )
+
+    with pytest.raises(
+        VideoIndexCompatibilityError, match="does not match the requested"
+    ):
+        build_or_update_video_index(
+            model,
+            _preprocess,
+            videos_dir,
+            index_dir,
+            embedding_dim=128,
+        )
+
+
+def test_video_index_conversion_rejects_expansion_and_existing_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    index_dir = tmp_path / "index"
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+    build_or_update_video_index(
+        FakeVideoModel(),
+        _preprocess,
+        videos_dir,
+        index_dir,
+        embedding_dim=128,
+    )
+
+    with pytest.raises(ValueError, match="Cannot expand"):
+        convert_video_index(index_dir, tmp_path / "larger", embedding_dim=256)
+    existing_output = tmp_path / "existing"
+    existing_output.mkdir()
+    with pytest.raises(ValueError, match="already exists"):
+        convert_video_index(index_dir, existing_output, embedding_dim=128)
+
+
 def test_changed_video_failure_preserves_existing_index(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -438,7 +634,9 @@ def test_interval_and_index_kind_mismatches_are_rejected(
         {"kind": "openclip-gemma.image-index"},
         {"embeddings": np.empty((0, 768), dtype=np.float32)},
     )
-    with pytest.raises(VideoIndexCompatibilityError, match="not an openclip-gemma video index"):
+    with pytest.raises(
+        VideoIndexCompatibilityError, match="not an openclip-gemma video index"
+    ):
         _load_video_index(index_dir)
 
     videos_dir = tmp_path / "videos"
@@ -477,7 +675,9 @@ def test_old_absolute_timestamp_index_version_requires_rebuild(
         "_load_av",
         lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
     )
-    index = build_or_update_video_index(FakeVideoModel(), _preprocess, videos_dir, index_dir)
+    index = build_or_update_video_index(
+        FakeVideoModel(), _preprocess, videos_dir, index_dir
+    )
 
     with np.load(index.index_path, allow_pickle=False) as archive:
         metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))

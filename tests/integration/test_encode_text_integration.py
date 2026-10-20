@@ -84,11 +84,7 @@ def test_text_embeddings_match_sentence_transformers(
         assert tokenizer.model_max_position_embeddings == max_context_length
         assert tokenizer.prompts == reference_model.prompts
         tokens = tokenizer(TEXTS)
-        prefix = (
-            ""
-            if prompt_name is None
-            else reference_model.prompts[prompt_name]
-        )
+        prefix = "" if prompt_name is None else reference_model.prompts[prompt_name]
         official_features = official_tokenizer(
             [f"{prefix}{text}" for text in TEXTS],
             add_special_tokens=True,
@@ -103,9 +99,7 @@ def test_text_embeddings_match_sentence_transformers(
         with torch.inference_mode():
             actual = model.encode_text(tokens)
             prompt_args = (
-                {"prompt": ""}
-                if prompt_name is None
-                else {"prompt_name": prompt_name}
+                {"prompt": ""} if prompt_name is None else {"prompt_name": prompt_name}
             )
             reference = reference_model.encode(
                 TEXTS,
@@ -128,6 +122,25 @@ def test_text_embeddings_match_sentence_transformers(
             normalized_reference,
             normalized,
         )
+        for truncate_dim in (512, 256, 128):
+            with torch.inference_mode():
+                truncated = model.encode_text(
+                    tokens,
+                    truncate_dim=truncate_dim,
+                )
+            expected = F.normalize(
+                reference[:, :truncate_dim],
+                p=2,
+                dim=-1,
+            )
+            assert truncated.shape == (len(TEXTS), truncate_dim)
+            assert torch.isfinite(truncated).all()
+            torch.testing.assert_close(
+                truncated,
+                expected,
+                atol=2e-3 if dtype == torch.bfloat16 else MAX_ABS_ERROR,
+                rtol=2e-3 if dtype == torch.bfloat16 else MAX_ABS_ERROR,
+            )
         for output in (actual, normalized):
             assert output.shape == (len(TEXTS), 768)
             assert output.dtype == dtype
@@ -215,7 +228,4 @@ def test_text_embeddings_match_sentence_transformers_on_cuda() -> None:
     assert actual.shape == (len(TEXTS), 768)
     assert torch.isfinite(actual).all()
     assert result["max_abs_error"] <= MAX_ABS_ERROR
-    assert all(
-        value >= MIN_COSINE_SIMILARITY
-        for value in result["cosine_similarity"]
-    )
+    assert all(value >= MIN_COSINE_SIMILARITY for value in result["cosine_similarity"])
