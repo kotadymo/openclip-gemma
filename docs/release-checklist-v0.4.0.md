@@ -80,25 +80,29 @@ authorize a package publication.
 - [x] No release-blocking issue was found in the candidate. Any future
   candidate fix must use a new RC version rather than replace an uploaded
   artifact.
-- [ ] Prepare the formal `0.4.0` version change through normal review and
-  successful CI on the exact main commit.
-- [x] The user confirmed registration of the PyPI Trusted Publisher for
-  project `openclip-gemma`, owner `kotadymo`, repository `openclip-gemma`,
-  workflow `.github/workflows/publish-pypi-v0.4.0.yml`, and environment
-  `pypi`; the production workflow must still verify the registration.
+- [x] Prepare the formal `0.4.0` version change through PR #23; main commit
+  `2dea1f1ba4572e5ae9e469d8f4bd071246565dd4` passed exact-commit CI run
+  `39435015861`.
+- [x] Verify the PyPI Trusted Publisher for project `openclip-gemma`, owner
+  `kotadymo`, repository `openclip-gemma`, workflow
+  `.github/workflows/publish-pypi-v0.4.0.yml`, and environment `pypi` through
+  successful Trusted Publishing in workflow run `39435386569`.
 - [x] Confirm the configured `pypi` Environment reviewer is `kotadymo`.
-  Deployment approval is still required before publication; do not bypass or
-  weaken protections.
+  The deployment was approved through the configured Environment gate; no
+  protections were bypassed or weakened.
 - [x] Verify the production workflow accepts only `v0.4.0`, checks package
   version `0.4.0`, and requires successful CI for the exact main commit.
-- [ ] Tag and push only after authorization and all release gates pass.
-- [ ] Verify the PyPI publish job completed, both artifacts are available,
-  clean installation reports version `0.4.0`, and the GitHub Release points
-  to the verified tag and commit.
+- [x] Create and push `v0.4.0` only after authorization and all release gates
+  passed; the tag resolves to `2dea1f1ba4572e5ae9e469d8f4bd071246565dd4`.
+- [x] Verify PyPI workflow run `39435386569` completed, both artifacts are
+  available as version `0.4.0`, the clean PyPI installation reports version
+  `0.4.0` and passes MRL checks, and the
+  [GitHub Release](https://github.com/kotadymo/openclip-gemma/releases/tag/v0.4.0)
+  points to the verified tag and commit.
 
 ## Workflow references
 
 - TestPyPI: `.github/workflows/publish-testpypi-v0.4.0rc1.yml`
 - PyPI: `.github/workflows/publish-pypi-v0.4.0.yml`
-- Existing workflow protections and Trusted Publisher registrations must be
-  confirmed for the new versioned workflow names before tagging.
+- The versioned TestPyPI and PyPI workflows completed with their configured
+  Trusted Publisher and GitHub Environment protections intact.
