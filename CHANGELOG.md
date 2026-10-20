@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.4.0
+
+### Added
+
+- Add official Matryoshka embedding dimensions of 768, 512, 256, and 128 to
+  image/text encoding, cosine APIs, image/video indexing, and search.
+- Add safe, no-inference image/video index conversion to lower dimensions while
+  preserving legacy 768-dimensional index reads.
+- Add opt-in text-only and text-plus-image factory loading by omitting
+  unrequested Transformers vision/audio configs.
+- Add an MRL benchmark harness for encoder/search latency, measured index and
+  vector storage, memory, ranking agreement, and optional Recall@K from labeled
+  JSON query manifests.
+
+### Compatibility
+
+- Preserve the default 768-dimensional outputs, default full model loading,
+  strict `forward()`/`get_logits()` behavior, preprocessing, and tokenizer.
+- Introduce image index format v2 and video index format v3. Legacy image v1
+  and video v2 archives remain readable only at 768 dimensions; video v1
+  remains unsupported.
+
+### Validation
+
+- See `docs/v0.4.0-development-progress.md` for executed test, build, model,
+  and release-validation results. Shape and normalization tests do not
+  establish application-specific retrieval quality.
+
 ## v0.3.0
 
 ### Added

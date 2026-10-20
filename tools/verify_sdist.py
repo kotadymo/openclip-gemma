@@ -18,6 +18,7 @@ REQUIRED_PATHS = {
     "README.md",
     "pyproject.toml",
     "src/openclip_gemma/__init__.py",
+    "src/openclip_gemma/_dimensions.py",
     "src/openclip_gemma/batching.py",
     "src/openclip_gemma/constants.py",
     "src/openclip_gemma/factory.py",
@@ -39,7 +40,7 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_ARCHIVE_FILE_SIZE = 50_000_000
 
 
-def verify_sdist(archive_path: Path, expected_version: str = "0.3.0") -> None:
+def verify_sdist(archive_path: Path, expected_version: str = "0.4.0") -> None:
     if not archive_path.is_file() or not archive_path.name.endswith(".tar.gz"):
         raise ValueError(f"Not a source distribution archive: {archive_path}")
 
@@ -54,7 +55,9 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.3.0") -> None:
         project_root = Path(__file__).resolve().parents[1]
         readme_path = project_root / "README.md"
         readme_members = [
-            member for member in members if PurePosixPath(member.name).name == "README.md"
+            member
+            for member in members
+            if PurePosixPath(member.name).name == "README.md"
         ]
         if len(readme_members) != 1:
             raise ValueError("Source distribution must contain one README.md file.")
@@ -66,7 +69,9 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.3.0") -> None:
         )
         source_readme = readme_path.read_text(encoding="utf-8").replace("\r\n", "\n")
         if readme != source_readme:
-            raise ValueError("Source distribution README does not match the project README.")
+            raise ValueError(
+                "Source distribution README does not match the project README."
+            )
         validate_readme(readme, readme_path, "sdist README", expected_version)
 
         pyproject_members = [
@@ -75,11 +80,11 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.3.0") -> None:
             if PurePosixPath(member.name).name == "pyproject.toml"
         ]
         if len(pyproject_members) != 1:
-            raise ValueError("Source distribution must contain one pyproject.toml file.")
+            raise ValueError(
+                "Source distribution must contain one pyproject.toml file."
+            )
         project = tomllib.loads(
-            archive.extractfile(pyproject_members[0])
-            .read()
-            .decode("utf-8")
+            archive.extractfile(pyproject_members[0]).read().decode("utf-8")
         )["project"]
 
         metadata_members = [
@@ -110,26 +115,34 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.3.0") -> None:
         if "Author: kotadymo\n" not in metadata:
             raise ValueError("Source distribution metadata has an unexpected author.")
         if any(line.startswith("Author-email:") for line in metadata.splitlines()):
-            raise ValueError("Source distribution metadata must not contain an author email.")
+            raise ValueError(
+                "Source distribution metadata must not contain an author email."
+            )
         if "License-Expression: Apache-2.0\n" not in metadata:
             raise ValueError("Source distribution metadata has an unexpected license.")
 
         license_members = [
-            member
-            for member in members
-            if PurePosixPath(member.name).name == "LICENSE"
+            member for member in members if PurePosixPath(member.name).name == "LICENSE"
         ]
         if len(license_members) != 1:
             raise ValueError("Source distribution must contain one LICENSE file.")
         expected_license = (
-            Path(__file__).resolve().parents[1] / "LICENSE"
-        ).read_bytes().replace(b"\r\n", b"\n")
-        packaged_license = archive.extractfile(license_members[0]).read().replace(
-            b"\r\n",
-            b"\n",
+            (Path(__file__).resolve().parents[1] / "LICENSE")
+            .read_bytes()
+            .replace(b"\r\n", b"\n")
+        )
+        packaged_license = (
+            archive.extractfile(license_members[0])
+            .read()
+            .replace(
+                b"\r\n",
+                b"\n",
+            )
         )
         if packaged_license != expected_license:
-            raise ValueError("Source distribution LICENSE does not match the project LICENSE.")
+            raise ValueError(
+                "Source distribution LICENSE does not match the project LICENSE."
+            )
 
         excluded = sorted(
             path
@@ -137,7 +150,9 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.3.0") -> None:
             if PurePosixPath(path).parts[0] in EXCLUDED_TOP_LEVEL
         )
         if excluded:
-            raise ValueError(f"Source distribution contains development files: {excluded}")
+            raise ValueError(
+                f"Source distribution contains development files: {excluded}"
+            )
 
         weight_files = [
             path
@@ -165,7 +180,7 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.3.0") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
-    parser.add_argument("--expected-version", default="0.3.0")
+    parser.add_argument("--expected-version", default="0.4.0")
     args = parser.parse_args()
     try:
         verify_sdist(args.archive, expected_version=args.expected_version)

@@ -137,6 +137,56 @@ def test_encode_image_preserves_batch_order_and_normalize_argument(
     )
 
 
+@pytest.mark.parametrize("truncate_dim", [128, 256, 512, 768])
+def test_encode_image_truncates_and_renormalizes(
+    model_and_processor: tuple[EmbeddingGemmaCLIP, FakeProcessor],
+    truncate_dim: int,
+) -> None:
+    model, _ = model_and_processor
+    image = make_batch([0.5])
+    native = model.encode_image(image)
+
+    result = model.encode_image(image, truncate_dim=truncate_dim)
+
+    assert result.shape == (1, truncate_dim)
+    torch.testing.assert_close(
+        result,
+        torch.nn.functional.normalize(
+            native[:, :truncate_dim],
+            p=2,
+            dim=-1,
+        ),
+    )
+    torch.testing.assert_close(result.norm(dim=-1), torch.ones(1))
+    if truncate_dim == 768:
+        assert torch.equal(result, native)
+
+
+@pytest.mark.parametrize(
+    ("truncate_dim", "exception", "message"),
+    [
+        (127, ValueError, "one of"),
+        (1024, ValueError, "one of"),
+        (True, TypeError, "integer"),
+        (128.0, TypeError, "integer"),
+        ("128", TypeError, "integer"),
+    ],
+)
+def test_encode_image_rejects_invalid_truncate_dimensions(
+    model_and_processor: tuple[EmbeddingGemmaCLIP, FakeProcessor],
+    truncate_dim: object,
+    exception: type[Exception],
+    message: str,
+) -> None:
+    model, _ = model_and_processor
+
+    with pytest.raises(exception, match=message):
+        model.encode_image(
+            make_batch([0.5]),
+            truncate_dim=truncate_dim,  # type: ignore[arg-type]
+        )
+
+
 def test_encode_image_rejects_non_tensor_input(
     model_and_processor: tuple[EmbeddingGemmaCLIP, FakeProcessor],
 ) -> None:

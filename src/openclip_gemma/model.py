@@ -8,7 +8,27 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from openclip_gemma._dimensions import resolve_embedding_dimension
 from openclip_gemma.constants import MODEL_CARD_MAX_CONTEXT_LENGTH
+
+
+def _truncate_and_normalize(
+    embeddings: torch.Tensor,
+    *,
+    truncate_dim: int,
+    modality: str,
+) -> torch.Tensor:
+    if truncate_dim == 768:
+        return embeddings
+
+    truncated = embeddings[..., :truncate_dim]
+    norms = torch.linalg.vector_norm(truncated.float(), dim=-1)
+    if not torch.isfinite(norms).all().item() or (norms <= 0).any().item():
+        raise RuntimeError(
+            f"The backend produced an invalid {modality} embedding after truncation "
+            f"to {truncate_dim} dimensions."
+        )
+    return F.normalize(truncated, p=2, dim=-1)
 
 
 def _pool_and_normalize(
@@ -17,6 +37,7 @@ def _pool_and_normalize(
     *,
     batch_size: int,
     normalize: bool,
+    truncate_dim: int,
     modality: str,
 ) -> torch.Tensor:
     hidden = outputs.last_hidden_state
@@ -47,6 +68,11 @@ def _pool_and_normalize(
     embeddings = F.normalize(pooled, p=2, dim=-1)
     if normalize:
         embeddings = F.normalize(embeddings, p=2, dim=-1)
+    embeddings = _truncate_and_normalize(
+        embeddings,
+        truncate_dim=truncate_dim,
+        modality=modality,
+    )
     if not torch.isfinite(embeddings).all().item():
         raise RuntimeError(f"The backend produced non-finite {modality} embeddings.")
     return embeddings
@@ -62,6 +88,7 @@ class EmbeddingGemmaCLIP(nn.Module):
         *,
         output_dict: bool = False,
         logit_scale_mode: str = "strict",
+        modalities: tuple[str, ...] = ("text", "image"),
     ) -> None:
         super().__init__()
         if not isinstance(backend, nn.Module):
@@ -72,10 +99,25 @@ class EmbeddingGemmaCLIP(nn.Module):
             raise TypeError("logit_scale_mode must be a string.")
         if logit_scale_mode not in {"strict", "cosine"}:
             raise ValueError("logit_scale_mode must be 'strict' or 'cosine'.")
+        if not isinstance(modalities, tuple):
+            raise TypeError(
+                "modalities must be a tuple containing 'text' and optionally 'image'."
+            )
+        if any(not isinstance(modality, str) for modality in modalities):
+            raise TypeError("modalities must contain only strings.")
+        if (
+            "text" not in modalities
+            or len(set(modalities)) != len(modalities)
+            or any(modality not in {"text", "image"} for modality in modalities)
+        ):
+            raise ValueError("modalities must include 'text' and may include 'image'.")
         self.backend = backend
         object.__setattr__(self, "_processor", processor)
         self.output_dict = output_dict
         self.logit_scale_mode = logit_scale_mode
+        self.modalities = tuple(
+            modality for modality in ("text", "image") if modality in modalities
+        )
 
     @property
     def processor(self) -> Any:
@@ -102,6 +144,8 @@ class EmbeddingGemmaCLIP(nn.Module):
         self,
         image: torch.Tensor | None = None,
         text: torch.Tensor | None = None,
+        *,
+        truncate_dim: int | None = None,
     ) -> (
         tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor]
         | dict[str, object]
@@ -115,12 +159,36 @@ class EmbeddingGemmaCLIP(nn.Module):
                 "has no trained OpenCLIP logit_scale."
             )
 
+        expected_dimension = resolve_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
         image_features = (
-            self.encode_image(image, normalize=True) if image is not None else None
+            self.encode_image(
+                image,
+                normalize=True,
+                truncate_dim=truncate_dim,
+            )
+            if image is not None
+            else None
         )
         text_features = (
-            self.encode_text(text, normalize=True) if text is not None else None
+            self.encode_text(
+                text,
+                normalize=True,
+                truncate_dim=truncate_dim,
+            )
+            if text is not None
+            else None
         )
+        for features in (image_features, text_features):
+            if features is not None and (
+                features.ndim != 2 or features.shape[1] != expected_dimension
+            ):
+                raise RuntimeError(
+                    "Encoded image and text features must have "
+                    f"{expected_dimension} dimensions."
+                )
         if image_features is not None:
             feature_device = image_features.device
         elif text_features is not None:
@@ -140,6 +208,8 @@ class EmbeddingGemmaCLIP(nn.Module):
         self,
         image: torch.Tensor,
         text: torch.Tensor,
+        *,
+        truncate_dim: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Return image/text cosine similarity matrices in both orientations."""
         if self.logit_scale_mode != "cosine":
@@ -148,22 +218,48 @@ class EmbeddingGemmaCLIP(nn.Module):
                 "has no trained OpenCLIP logit_scale."
             )
 
-        image_features = self.encode_image(image, normalize=True)
-        text_features = self.encode_text(text, normalize=True)
+        expected_dimension = resolve_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
+        image_features = self.encode_image(
+            image,
+            normalize=True,
+            truncate_dim=truncate_dim,
+        )
+        text_features = self.encode_text(
+            text,
+            normalize=True,
+            truncate_dim=truncate_dim,
+        )
         if image_features.ndim != 2 or text_features.ndim != 2:
-            raise RuntimeError("Encoded image and text features must be rank-2 tensors.")
-        if image_features.shape[1] != 768 or text_features.shape[1] != 768:
-            raise RuntimeError("Encoded image and text features must have 768 dimensions.")
+            raise RuntimeError(
+                "Encoded image and text features must be rank-2 tensors."
+            )
+        if (
+            image_features.shape[1] != expected_dimension
+            or text_features.shape[1] != expected_dimension
+        ):
+            raise RuntimeError(
+                "Encoded image and text features must have "
+                f"{expected_dimension} dimensions."
+            )
         if image_features.device != text_features.device:
-            raise ValueError("Encoded image and text features must be on the same device.")
+            raise ValueError(
+                "Encoded image and text features must be on the same device."
+            )
         if image_features.dtype != text_features.dtype:
             raise TypeError("Encoded image and text features must have the same dtype.")
-        if not torch.isfinite(image_features).all().item() or not torch.isfinite(
-            text_features
-        ).all().item():
+        if (
+            not torch.isfinite(image_features).all().item()
+            or not torch.isfinite(text_features).all().item()
+        ):
             raise ValueError("Encoded image and text features must be finite.")
 
-        if image_features.device.type == "cpu" and image_features.dtype == torch.bfloat16:
+        if (
+            image_features.device.type == "cpu"
+            and image_features.dtype == torch.bfloat16
+        ):
             # CPU BF16 matmul is not supported by every processor feature set.
             image_logits = image_features.float() @ text_features.float().T
             image_logits = image_logits.to(dtype=image_features.dtype)
@@ -177,8 +273,15 @@ class EmbeddingGemmaCLIP(nn.Module):
         self,
         image: torch.Tensor,
         normalize: bool = False,
+        *,
+        truncate_dim: int | None = None,
     ) -> torch.Tensor:
         """Encode preprocessed OpenCLIP-style image batches."""
+        if "image" not in self.modalities:
+            raise RuntimeError(
+                "encode_image() is unavailable because the model was loaded "
+                "without the image modality."
+            )
         if not isinstance(image, torch.Tensor):
             raise TypeError("image must be a torch.Tensor.")
         if image.ndim != 4:
@@ -188,9 +291,7 @@ class EmbeddingGemmaCLIP(nn.Module):
         if image.shape[0] == 0:
             raise ValueError("image batch must contain at least one image.")
         if image.shape[1] != 3:
-            raise ValueError(
-                f"image must have 3 channels; received {image.shape[1]}."
-            )
+            raise ValueError(f"image must have 3 channels; received {image.shape[1]}.")
         if image.shape[2] <= 0 or image.shape[3] <= 0:
             raise ValueError("image height and width must be positive.")
         if image.dtype != torch.float32:
@@ -199,11 +300,17 @@ class EmbeddingGemmaCLIP(nn.Module):
             )
         if not isinstance(normalize, bool):
             raise TypeError("normalize must be a bool.")
+        resolved_truncate_dim = resolve_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
 
         try:
             model_device = next(self.backend.parameters()).device
         except StopIteration as error:
-            raise RuntimeError("The backend has no parameters to determine its device.") from error
+            raise RuntimeError(
+                "The backend has no parameters to determine its device."
+            ) from error
         if image.device != model_device:
             raise ValueError(
                 f"image is on {image.device}, but the model backend is on {model_device}."
@@ -220,9 +327,7 @@ class EmbeddingGemmaCLIP(nn.Module):
                 "preprocessed image height and width must be multiples of "
                 f"patch_size={patch_size}; received {image.shape[2:]}."
             )
-        patch_count = (image.shape[2] // patch_size) * (
-            image.shape[3] // patch_size
-        )
+        patch_count = (image.shape[2] // patch_size) * (image.shape[3] // patch_size)
         max_patches = (
             image_processor.max_soft_tokens * image_processor.pooling_kernel_size**2
         )
@@ -265,6 +370,7 @@ class EmbeddingGemmaCLIP(nn.Module):
                 model_inputs["attention_mask"],
                 batch_size=image.shape[0],
                 normalize=normalize,
+                truncate_dim=resolved_truncate_dim,
                 modality="image",
             )
 
@@ -272,6 +378,8 @@ class EmbeddingGemmaCLIP(nn.Module):
         self,
         text: torch.Tensor,
         normalize: bool = False,
+        *,
+        truncate_dim: int | None = None,
     ) -> torch.Tensor:
         """Encode official EmbeddingGemma token IDs with reconstructed padding mask."""
         if not isinstance(text, torch.Tensor):
@@ -290,11 +398,17 @@ class EmbeddingGemmaCLIP(nn.Module):
             )
         if not isinstance(normalize, bool):
             raise TypeError("normalize must be a bool.")
+        resolved_truncate_dim = resolve_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
 
         try:
             model_device = next(self.backend.parameters()).device
         except StopIteration as error:
-            raise RuntimeError("The backend has no parameters to determine its device.") from error
+            raise RuntimeError(
+                "The backend has no parameters to determine its device."
+            ) from error
         if text.device != model_device:
             raise ValueError(
                 f"text is on {text.device}, but the model backend is on {model_device}."
@@ -307,7 +421,9 @@ class EmbeddingGemmaCLIP(nn.Module):
         bos_token_id = getattr(tokenizer, "bos_token_id", None)
         eos_token_id = getattr(tokenizer, "eos_token_id", None)
         vocab_size = getattr(tokenizer, "vocab_size", None)
-        text_config = getattr(getattr(self.backend, "config", None), "text_config", None)
+        text_config = getattr(
+            getattr(self.backend, "config", None), "text_config", None
+        )
         max_context_length = getattr(text_config, "max_position_embeddings", None)
         if not all(
             isinstance(token_id, int)
@@ -332,9 +448,7 @@ class EmbeddingGemmaCLIP(nn.Module):
                 f"supported context limit of {supported_context_length}."
             )
         if (text < 0).any().item() or (text >= vocab_size).any().item():
-            raise ValueError(
-                f"text token IDs must be in the range [0, {vocab_size})."
-            )
+            raise ValueError(f"text token IDs must be in the range [0, {vocab_size}).")
 
         attention_mask = text.ne(pad_token_id)
         padding_seen = text.eq(pad_token_id).cumsum(dim=1).gt(0)
@@ -344,7 +458,9 @@ class EmbeddingGemmaCLIP(nn.Module):
                 "be represented as text content in the token-ID-only API."
             )
         if (text[:, 0] != bos_token_id).any().item():
-            raise ValueError("Each text sequence must begin with the official BOS token.")
+            raise ValueError(
+                "Each text sequence must begin with the official BOS token."
+            )
         lengths = attention_mask.sum(dim=1)
         if (lengths < 2).any().item():
             raise ValueError("Each text sequence must contain BOS and EOS tokens.")
@@ -365,6 +481,7 @@ class EmbeddingGemmaCLIP(nn.Module):
                 attention_mask,
                 batch_size=text.shape[0],
                 normalize=normalize,
+                truncate_dim=resolved_truncate_dim,
                 modality="text",
             )
 

@@ -15,6 +15,7 @@ from readme_validation import (
 
 REQUIRED_MODULES = {
     "openclip_gemma/__init__.py",
+    "openclip_gemma/_dimensions.py",
     "openclip_gemma/batching.py",
     "openclip_gemma/constants.py",
     "openclip_gemma/factory.py",
@@ -29,7 +30,7 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_WHEEL_FILE_SIZE = 50_000_000
 
 
-def verify_wheel(wheel_path: Path, expected_version: str = "0.3.0") -> None:
+def verify_wheel(wheel_path: Path, expected_version: str = "0.4.0") -> None:
     if not wheel_path.is_file() or wheel_path.suffix != ".whl":
         raise ValueError(f"Not a wheel file: {wheel_path}")
 
@@ -44,13 +45,14 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.3.0") -> None:
         names = {entry.filename for entry in entries}
         missing_modules = REQUIRED_MODULES.difference(names)
         if missing_modules:
-            raise ValueError(f"Wheel is missing package modules: {sorted(missing_modules)}")
+            raise ValueError(
+                f"Wheel is missing package modules: {sorted(missing_modules)}"
+            )
 
         package_entries = {
             name
             for name in names
-            if name.startswith("openclip_gemma/")
-            or ".dist-info/" in name
+            if name.startswith("openclip_gemma/") or ".dist-info/" in name
         }
         unexpected = names.difference(package_entries)
         if unexpected:
@@ -60,7 +62,9 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.3.0") -> None:
             name for name in names if Path(name).suffix.lower() in WEIGHT_SUFFIXES
         ]
         if weight_files:
-            raise ValueError(f"Wheel must not contain model or checkpoint files: {weight_files}")
+            raise ValueError(
+                f"Wheel must not contain model or checkpoint files: {weight_files}"
+            )
 
         oversized = [
             (entry.filename, entry.file_size)
@@ -77,16 +81,18 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.3.0") -> None:
         if len(metadata_files) != 1 or len(wheel_files) != 1:
             raise ValueError("Wheel must contain one METADATA and one WHEEL file.")
         license_files = [
-            name
-            for name in names
-            if name.endswith(".dist-info/licenses/LICENSE")
+            name for name in names if name.endswith(".dist-info/licenses/LICENSE")
         ]
         if len(license_files) != 1:
             raise ValueError("Wheel must contain the project LICENSE file.")
 
-        metadata = archive.read(metadata_files[0]).decode("utf-8").replace(
-            "\r\n",
-            "\n",
+        metadata = (
+            archive.read(metadata_files[0])
+            .decode("utf-8")
+            .replace(
+                "\r\n",
+                "\n",
+            )
         )
         validate_distribution_metadata(
             metadata,
@@ -107,8 +113,10 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.3.0") -> None:
         if "License-Expression: Apache-2.0\n" not in metadata:
             raise ValueError("Wheel metadata has an unexpected license expression.")
         expected_license = (
-            Path(__file__).resolve().parents[1] / "LICENSE"
-        ).read_bytes().replace(b"\r\n", b"\n")
+            (Path(__file__).resolve().parents[1] / "LICENSE")
+            .read_bytes()
+            .replace(b"\r\n", b"\n")
+        )
         packaged_license = archive.read(license_files[0]).replace(b"\r\n", b"\n")
         if packaged_license != expected_license:
             raise ValueError("Wheel LICENSE does not match the project LICENSE.")
@@ -119,7 +127,7 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.3.0") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
-    parser.add_argument("--expected-version", default="0.3.0")
+    parser.add_argument("--expected-version", default="0.4.0")
     args = parser.parse_args()
     try:
         verify_wheel(args.wheel, expected_version=args.expected_version)

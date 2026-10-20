@@ -26,9 +26,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    index_parser = commands.add_parser("index", help="Create or update a video-frame index.")
-    index_parser.add_argument("--videos", type=Path, required=True, help="Video directory.")
-    index_parser.add_argument("--output", type=Path, required=True, help="Index directory.")
+    index_parser = commands.add_parser(
+        "index", help="Create or update a video-frame index."
+    )
+    index_parser.add_argument(
+        "--videos", type=Path, required=True, help="Video directory."
+    )
+    index_parser.add_argument(
+        "--output", type=Path, required=True, help="Index directory."
+    )
     index_parser.add_argument(
         "--interval",
         type=float,
@@ -42,6 +48,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum number of frames encoded together (default: 8).",
     )
     index_parser.add_argument(
+        "--embedding-dim",
+        type=int,
+        choices=(128, 256, 512, 768),
+        default=768,
+        help="Embedding dimension to store (default: 768).",
+    )
+    index_parser.add_argument(
         "--device",
         choices=("cpu", "cuda"),
         default="cpu",
@@ -53,10 +66,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Include videos in subdirectories.",
     )
 
-    search_parser = commands.add_parser("search", help="Search an existing video-frame index.")
-    search_parser.add_argument("--index", type=Path, required=True, help="Index directory.")
-    search_parser.add_argument("--query", required=True, help="Japanese or English search text.")
-    search_parser.add_argument("--top-k", type=int, default=5, help="Number of results.")
+    search_parser = commands.add_parser(
+        "search", help="Search an existing video-frame index."
+    )
+    search_parser.add_argument(
+        "--index", type=Path, required=True, help="Index directory."
+    )
+    search_parser.add_argument(
+        "--query", required=True, help="Japanese or English search text."
+    )
+    search_parser.add_argument(
+        "--top-k", type=int, default=5, help="Number of results."
+    )
     search_parser.add_argument(
         "--device",
         choices=("cpu", "cuda"),
@@ -80,6 +101,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 interval_seconds=args.interval,
                 batch_size=args.batch_size,
                 recursive=args.recursive,
+                embedding_dim=args.embedding_dim,
             )
             print(
                 "Video index updated: "

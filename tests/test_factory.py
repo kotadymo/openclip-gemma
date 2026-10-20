@@ -35,7 +35,9 @@ class FakeImageProcessor:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
 
-    def process_image(self, image: Image.Image, *, do_convert_rgb: bool) -> torch.Tensor:
+    def process_image(
+        self, image: Image.Image, *, do_convert_rgb: bool
+    ) -> torch.Tensor:
         self.calls.append(("convert", do_convert_rgb))
         return torch.zeros((3, image.height, image.width), dtype=torch.uint8)
 
@@ -64,7 +66,10 @@ class FakeImageProcessor:
         image_std: list[float],
     ) -> torch.Tensor:
         self.calls.append(
-            ("rescale", (do_rescale, rescale_factor, do_normalize, image_mean, image_std))
+            (
+                "rescale",
+                (do_rescale, rescale_factor, do_normalize, image_mean, image_std),
+            )
         )
         return image.float() / 255
 
@@ -121,6 +126,107 @@ def test_create_model_applies_cpu_device(
 
     assert result.backend is loaded_model
     assert next(result.backend.parameters()).device.type == "cpu"
+
+
+def test_create_model_can_load_text_only_without_vision_or_audio(
+    loaded_model: torch.nn.Module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(vision_config=object(), audio_config=object())
+    config_loader = Mock(return_value=config)
+    model_loader = Mock(return_value=loaded_model)
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoConfig.from_pretrained", config_loader
+    )
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+    )
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        Mock(return_value=SimpleNamespace()),
+    )
+
+    model = create_model(modalities=("text",))
+
+    assert model.modalities == ("text",)
+    assert config.vision_config is None
+    assert config.audio_config is None
+    config_loader.assert_called_once_with(
+        MODEL_ID,
+        revision=MODEL_REVISION,
+        cache_dir=None,
+    )
+    assert model_loader.call_args.kwargs["config"] is config
+    with pytest.raises(RuntimeError, match="without the image modality"):
+        model.encode_image(torch.zeros((1, 3, 8, 8)))
+
+
+def test_create_model_can_keep_vision_but_omit_audio(
+    loaded_model: torch.nn.Module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vision_config = object()
+    config = SimpleNamespace(vision_config=vision_config, audio_config=object())
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoConfig.from_pretrained",
+        Mock(return_value=config),
+    )
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        Mock(return_value=SimpleNamespace(image_processor=FakeImageProcessor())),
+    )
+
+    model = create_model(modalities=["image", "text"])
+
+    assert model.modalities == ("text", "image")
+    assert config.vision_config is vision_config
+    assert config.audio_config is None
+
+
+@pytest.mark.parametrize(
+    ("modalities", "exception"),
+    [
+        ("text", TypeError),
+        (("image",), ValueError),
+        (("text", "audio"), ValueError),
+        (("text", "text"), ValueError),
+    ],
+)
+def test_create_model_rejects_unsupported_modalities(
+    modalities: object,
+    exception: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_loader = Mock()
+    model_loader = Mock()
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoConfig.from_pretrained", config_loader
+    )
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+    )
+
+    with pytest.raises(exception, match="modalities"):
+        create_model(modalities=modalities)  # type: ignore[arg-type]
+
+    config_loader.assert_not_called()
+    model_loader.assert_not_called()
+
+
+def test_transform_factories_reject_text_only_modalities_before_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_loader = Mock()
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+    )
+
+    with pytest.raises(ValueError, match="requires the image modality"):
+        create_model_and_transforms(modalities=("text",))
+    with pytest.raises(ValueError, match="return_transform=True requires"):
+        create_model_from_pretrained(modalities=("text",))
+
+    model_loader.assert_not_called()
 
 
 def test_create_model_and_transforms_returns_three_elements(
@@ -289,7 +395,9 @@ def test_model_rejects_fp16_module_conversions(conversion: object) -> None:
         conversion(model)  # type: ignore[operator]
 
 
-def test_encode_text_requires_processor_tokenizer_and_generic_encode_is_unimplemented() -> None:
+def test_encode_text_requires_processor_tokenizer_and_generic_encode_is_unimplemented() -> (
+    None
+):
     model = EmbeddingGemmaCLIP(
         backend=torch.nn.Linear(2, 2),
         processor=SimpleNamespace(),
@@ -316,7 +424,9 @@ def test_list_apis_do_not_load_model_or_processor(
 ) -> None:
     model_loader = Mock(side_effect=AssertionError("model weights must not load"))
     processor_loader = Mock(side_effect=AssertionError("processor must not load"))
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", model_loader)
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+    )
     monkeypatch.setattr(
         "openclip_gemma.factory.AutoProcessor.from_pretrained",
         processor_loader,
@@ -343,7 +453,9 @@ def test_create_model_accepts_official_alias_and_existing_model_id(
     loader = Mock(return_value=loaded_model)
     monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
 
-    model = create_model(pretrained=pretrained, output_dict=True, logit_scale_mode="cosine")
+    model = create_model(
+        pretrained=pretrained, output_dict=True, logit_scale_mode="cosine"
+    )
 
     assert model.output_dict is True
     assert model.logit_scale_mode == "cosine"
@@ -358,7 +470,9 @@ def test_create_model_from_pretrained_returns_model_and_one_transform(
     model_loader = Mock(return_value=loaded_model)
     processor = SimpleNamespace(image_processor=FakeImageProcessor())
     processor_loader = Mock(return_value=processor)
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", model_loader)
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+    )
     monkeypatch.setattr(
         "openclip_gemma.factory.AutoProcessor.from_pretrained",
         processor_loader,
@@ -400,7 +514,9 @@ def test_factory_rejects_unsupported_or_invalid_options_before_loading(
     message: str,
 ) -> None:
     model_loader = Mock()
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", model_loader)
+    monkeypatch.setattr(
+        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+    )
 
     with pytest.raises(exception, match=message):
         create_model_from_pretrained(**kwargs)  # type: ignore[arg-type]

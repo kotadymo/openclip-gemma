@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+import runpy
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load_cli(script_name: str) -> dict[str, object]:
+    return runpy.run_path(str(_REPOSITORY_ROOT / "examples" / f"{script_name}.py"))
+
+
+@pytest.mark.parametrize(
+    ("script_name", "arguments"),
+    [
+        (
+            "image_search",
+            ["index", "--images", "photos", "--output", "image-index"],
+        ),
+        (
+            "video_search",
+            ["index", "--videos", "videos", "--output", "video-index"],
+        ),
+    ],
+)
+def test_search_cli_defaults_embedding_dimension_to_768(
+    script_name: str,
+    arguments: list[str],
+) -> None:
+    module = _load_cli(script_name)
+    args = module["_build_parser"]().parse_args(arguments)  # type: ignore[operator]
+
+    assert args.embedding_dim == 768
+
+
+@pytest.mark.parametrize(
+    ("script_name", "arguments"),
+    [
+        (
+            "image_search",
+            [
+                "index",
+                "--images",
+                "photos",
+                "--output",
+                "image-index",
+                "--embedding-dim",
+                "256",
+            ],
+        ),
+        (
+            "video_search",
+            [
+                "index",
+                "--videos",
+                "videos",
+                "--output",
+                "video-index",
+                "--embedding-dim",
+                "256",
+            ],
+        ),
+    ],
+)
+def test_search_cli_forwards_embedding_dimension(
+    script_name: str,
+    arguments: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_cli(script_name)
+    model = object()
+    preprocess = object()
+    index_update = SimpleNamespace(
+        index_path=Path("index.npz"),
+        added=0,
+        updated=0,
+        removed=0,
+        unchanged=0,
+        added_videos=0,
+        updated_videos=0,
+        removed_videos=0,
+        unchanged_videos=0,
+        frame_count=0,
+    )
+    loader = Mock(return_value=(model, preprocess, preprocess))
+    builder = Mock(return_value=index_update)
+    namespace = module["main"].__globals__  # type: ignore[union-attr]
+    monkeypatch.setitem(namespace, "create_model_and_transforms", loader)
+    if script_name == "image_search":
+        monkeypatch.setitem(namespace, "build_or_update_image_index", builder)
+    else:
+        monkeypatch.setitem(namespace, "build_or_update_video_index", builder)
+
+    assert module["main"](arguments) == 0  # type: ignore[operator]
+
+    assert builder.call_args.kwargs["embedding_dim"] == 256
+    loader.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("script_name", "arguments"),
+    [
+        (
+            "image_search",
+            [
+                "index",
+                "--images",
+                "photos",
+                "--output",
+                "image-index",
+                "--embedding-dim",
+                "64",
+            ],
+        ),
+        (
+            "video_search",
+            [
+                "index",
+                "--videos",
+                "videos",
+                "--output",
+                "video-index",
+                "--embedding-dim",
+                "64",
+            ],
+        ),
+    ],
+)
+def test_search_cli_rejects_unsupported_embedding_dimension(
+    script_name: str,
+    arguments: list[str],
+) -> None:
+    module = _load_cli(script_name)
+    with pytest.raises(SystemExit, match="2"):
+        module["_build_parser"]().parse_args(arguments)  # type: ignore[operator]

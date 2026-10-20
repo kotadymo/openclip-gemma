@@ -1,8 +1,8 @@
-# Video frame search (v0.2.0)
+# Video frame search
 
 ## Status and scope
 
-Version 0.2.0 exposes APIs to index sampled video frames and search them with Japanese or English text from `openclip_gemma.video_search`. They are not re-exported from the package root. They reuse the existing image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers.
+The APIs index sampled video frames and search them with Japanese or English text from `openclip_gemma.video_search`. They are not re-exported from the package root. They reuse the image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers. The default is 768 dimensions; v0.4.0 also supports 512, 256, and 128 dimensions through MRL truncation and re-normalization.
 
 The prototype indexes frames independently. It does not recognize motion, event order, or temporal relationships across frames. Search scores are cosine similarities, not probabilities or calibrated confidence.
 
@@ -44,12 +44,12 @@ Create or update an index, optionally including subdirectories:
 ```bash
 uv run python examples/video_search.py index \
   --videos ./videos --output ./video-index --interval 1.0 \
-  --batch-size 8 --device cpu --recursive
+  --batch-size 8 --embedding-dim 256 --device cpu --recursive
 ```
 
 Omit `--recursive` to scan only the selected directory. `--device` accepts `cpu` or `cuda`; CPU is the default. Model weights are downloaded from Hugging Face on first use unless already cached. Reduce the batch size if CUDA runs out of memory; the reported error identifies the video and batch being encoded.
 
-The output is a version-2 `video-index.npz` archive distinct from the image-search `index.npz`. Version 2 stores playback-relative timestamps and exact timestamp origins. Version-1 indexes used absolute PTS-derived timestamps and are rejected; rebuild them rather than reusing them. The archive contains UTF-8 JSON metadata and an `N x 768` float32 embedding matrix. Metadata records:
+The output is a version-3 `video-index.npz` archive distinct from the image-search `index.npz`. Version 2 stored playback-relative timestamps and exact timestamp origins and remains readable at 768 dimensions. Version-1 indexes used absolute PTS-derived timestamps and are rejected; rebuild them rather than reusing them. Version 3 stores UTF-8 JSON metadata and an `N x D` float32 embedding matrix, where `D` is 128, 256, 512, or 768. Metadata records:
 
 - Index kind and format version.
 - Model ID and pinned model revision, precision, embedding dimension, and preprocessing identifier.
@@ -72,7 +72,22 @@ uv run python examples/video_search.py search \
   --top-k 5 --device cpu
 ```
 
-The query is encoded with `get_tokenizer(prompt_name="SearchQuery")` and the existing `encode_text()` method. The normalized query is compared against normalized frame embeddings by dot product. Results are sorted by descending cosine similarity; ties are resolved deterministically by relative path, timestamp, and PTS. `top_k` must be positive, and an empty index or blank query is an error.
+The query is encoded with `get_tokenizer(prompt_name="SearchQuery")` and `encode_text()` at the dimension stored in the index. The normalized query is compared against normalized frame embeddings by dot product. Results are sorted by descending cosine similarity; ties are resolved deterministically by relative path, timestamp, and PTS. `top_k` must be positive, and an empty index or blank query is an error.
+
+## Embedding dimensions and migration
+
+Pass `embedding_dim=128`, `256`, `512`, or `768` to
+`build_or_update_video_index()` or `--embedding-dim` to the CLI. The default is
+768. An existing index cannot be incrementally updated at a different
+dimension; build the alternate dimension in a separate directory.
+
+`convert_video_index(source, destination, embedding_dim=...)` converts stored
+frame vectors without decoding video or loading the model. The destination
+must not exist, and the target dimension cannot exceed the source dimension.
+The conversion truncates and re-normalizes every vector, recalculates its
+checksum, updates format metadata, and leaves the source index unchanged.
+Version-2 768-dimensional indexes can be converted; version-1 timestamp
+indexes remain unsupported.
 
 Output includes the rank, video path, timestamp (`HH:MM:SS.mmm`), and raw cosine score. Use the timestamp to seek in the original video. Scores must not be interpreted as probabilities. This prototype does not create frame previews or clip-level summaries.
 

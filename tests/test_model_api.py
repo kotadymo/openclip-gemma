@@ -7,7 +7,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from openclip_gemma.model import EmbeddingGemmaCLIP
+from openclip_gemma.model import EmbeddingGemmaCLIP, _truncate_and_normalize
 
 
 def _model(
@@ -62,8 +62,14 @@ def test_forward_tuple_has_features_and_float32_scalar_scale() -> None:
     assert "logit_scale" not in dict(model.named_parameters())
     image_encoder.assert_called_once()
     text_encoder.assert_called_once()
-    assert image_encoder.call_args.kwargs == {"normalize": True}
-    assert text_encoder.call_args.kwargs == {"normalize": True}
+    assert image_encoder.call_args.kwargs == {
+        "normalize": True,
+        "truncate_dim": None,
+    }
+    assert text_encoder.call_args.kwargs == {
+        "normalize": True,
+        "truncate_dim": None,
+    }
 
 
 @pytest.mark.parametrize("image_only", [True, False])
@@ -75,8 +81,10 @@ def test_forward_supports_single_modality(
     text_features = torch.ones((3, 768)) if not image_only else None
     _install_fake_encoders(model, image_features, text_features)
 
-    output = model(torch.empty((2, 3, 4, 4)) if image_only else None,
-                   torch.empty((3, 5), dtype=torch.long) if not image_only else None)
+    output = model(
+        torch.empty((2, 3, 4, 4)) if image_only else None,
+        torch.empty((3, 5), dtype=torch.long) if not image_only else None,
+    )
 
     assert isinstance(output, dict)
     assert output["image_features"] is image_features
@@ -98,6 +106,57 @@ def test_forward_accepts_different_image_and_text_batch_sizes() -> None:
 
     assert output[0].shape == (2, 768)
     assert output[1].shape == (5, 768)
+
+
+@pytest.mark.parametrize("truncate_dim", [128, 256, 512, 768])
+def test_forward_uses_one_embedding_dimension_for_both_modalities(
+    truncate_dim: int,
+) -> None:
+    model = _model()
+    image_features = torch.ones((2, truncate_dim))
+    text_features = torch.ones((3, truncate_dim))
+    image_encoder, text_encoder = _install_fake_encoders(
+        model,
+        image_features,
+        text_features,
+    )
+
+    output = model(
+        torch.empty((2, 3, 4, 4)),
+        torch.empty((3, 5), dtype=torch.long),
+        truncate_dim=truncate_dim,
+    )
+
+    assert output[0].shape == (2, truncate_dim)
+    assert output[1].shape == (3, truncate_dim)
+    image_encoder.assert_called_once()
+    text_encoder.assert_called_once()
+    assert image_encoder.call_args.kwargs == {
+        "normalize": True,
+        "truncate_dim": truncate_dim,
+    }
+    assert text_encoder.call_args.kwargs == {
+        "normalize": True,
+        "truncate_dim": truncate_dim,
+    }
+
+
+@pytest.mark.parametrize(
+    ("truncate_dim", "exception"),
+    [(True, TypeError), (0, ValueError), (129, ValueError)],
+)
+def test_forward_rejects_invalid_embedding_dimensions_before_encoding(
+    truncate_dim: object,
+    exception: type[Exception],
+) -> None:
+    model = _model()
+    image_encoder, text_encoder = _install_fake_encoders(model, None, None)
+
+    with pytest.raises(exception, match="truncate_dim"):
+        model(torch.empty((1, 3, 4, 4)), truncate_dim=truncate_dim)  # type: ignore[arg-type]
+
+    image_encoder.assert_not_called()
+    text_encoder.assert_not_called()
 
 
 def test_forward_rejects_both_inputs_missing_before_strict_mode() -> None:
@@ -239,6 +298,50 @@ def test_get_logits_returns_cosine_matrix_and_its_transpose(
     torch.testing.assert_close(text_logits, expected.T)
     image_encoder.assert_called_once()
     text_encoder.assert_called_once()
+
+
+@pytest.mark.parametrize("truncate_dim", [128, 256, 512, 768])
+def test_get_logits_uses_truncated_feature_dimension(truncate_dim: int) -> None:
+    model = _model()
+    image_features = F.normalize(torch.randn((2, truncate_dim)), dim=-1)
+    text_features = F.normalize(torch.randn((3, truncate_dim)), dim=-1)
+    image_encoder, text_encoder = _install_fake_encoders(
+        model,
+        image_features,
+        text_features,
+    )
+
+    image_logits, text_logits = model.get_logits(
+        torch.empty((2, 3, 4, 4)),
+        torch.empty((3, 5), dtype=torch.long),
+        truncate_dim=truncate_dim,
+    )
+
+    expected = image_features @ text_features.T
+    torch.testing.assert_close(image_logits, expected)
+    torch.testing.assert_close(text_logits, expected.T)
+    image_encoder.assert_called_once()
+    text_encoder.assert_called_once()
+    assert image_encoder.call_args.kwargs == {
+        "normalize": True,
+        "truncate_dim": truncate_dim,
+    }
+    assert text_encoder.call_args.kwargs == {
+        "normalize": True,
+        "truncate_dim": truncate_dim,
+    }
+
+
+def test_truncation_rejects_an_embedding_with_zero_prefix_norm() -> None:
+    embeddings = torch.zeros((1, 768))
+    embeddings[0, 128] = 1.0
+
+    with pytest.raises(RuntimeError, match="after truncation to 128"):
+        _truncate_and_normalize(
+            embeddings,
+            truncate_dim=128,
+            modality="text",
+        )
 
 
 @pytest.mark.parametrize(

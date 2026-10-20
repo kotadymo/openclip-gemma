@@ -2,16 +2,37 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import torch
-from transformers import AutoModel, AutoProcessor
+from transformers import AutoConfig, AutoModel, AutoProcessor
 
 from openclip_gemma.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
 from openclip_gemma.model import EmbeddingGemmaCLIP
 from openclip_gemma.transforms import EmbeddingGemmaPreprocess
 
 PRETRAINED_OFFICIAL = "official"
+
+
+def _validate_modalities(
+    modalities: Sequence[str] | None,
+) -> tuple[str, ...] | None:
+    if modalities is None:
+        return None
+    if isinstance(modalities, (str, bytes)) or not isinstance(modalities, Sequence):
+        raise TypeError(
+            "modalities must be a sequence of 'text' and optionally 'image'."
+        )
+    if any(not isinstance(modality, str) for modality in modalities):
+        raise TypeError("modalities must contain only strings.")
+    if (
+        "text" not in modalities
+        or len(set(modalities)) != len(modalities)
+        or any(modality not in {"text", "image"} for modality in modalities)
+    ):
+        raise ValueError("modalities must include 'text' and may include 'image'.")
+    return tuple(modality for modality in ("text", "image") if modality in modalities)
 
 
 def _validate_factory_options(
@@ -22,14 +43,16 @@ def _validate_factory_options(
     cache_dir: str | None,
     output_dict: bool,
     logit_scale_mode: str,
+    modalities: Sequence[str] | None,
     kwargs: dict[str, Any],
-) -> tuple[torch.device, torch.dtype]:
+) -> tuple[torch.device, torch.dtype, tuple[str, ...] | None]:
     if not isinstance(output_dict, bool):
         raise TypeError("output_dict must be a bool.")
     if not isinstance(logit_scale_mode, str):
         raise TypeError("logit_scale_mode must be a string.")
     if logit_scale_mode not in {"strict", "cosine"}:
         raise ValueError("logit_scale_mode must be 'strict' or 'cosine'.")
+    validated_modalities = _validate_modalities(modalities)
     if cache_dir is not None and not isinstance(cache_dir, str):
         raise TypeError("cache_dir must be a string or None.")
     if kwargs:
@@ -102,7 +125,7 @@ def _validate_factory_options(
                 f"found {device_count} CUDA device(s)."
             )
 
-    return resolved_device, dtype
+    return resolved_device, dtype, validated_modalities
 
 
 def _load_model(
@@ -112,13 +135,27 @@ def _load_model(
     dtype: torch.dtype,
     output_dict: bool,
     logit_scale_mode: str,
+    modalities: tuple[str, ...] | None,
 ) -> EmbeddingGemmaCLIP:
     try:
+        model_kwargs: dict[str, Any] = {
+            "revision": MODEL_REVISION,
+            "cache_dir": cache_dir,
+            "dtype": dtype,
+        }
+        if modalities is not None:
+            config = AutoConfig.from_pretrained(
+                MODEL_ID,
+                revision=MODEL_REVISION,
+                cache_dir=cache_dir,
+            )
+            if "image" not in modalities:
+                config.vision_config = None
+            config.audio_config = None
+            model_kwargs["config"] = config
         backend = AutoModel.from_pretrained(
             MODEL_ID,
-            revision=MODEL_REVISION,
-            cache_dir=cache_dir,
-            dtype=dtype,
+            **model_kwargs,
         )
     except Exception as error:
         raise RuntimeError(
@@ -140,7 +177,9 @@ def _load_model(
             f"at revision {MODEL_REVISION}."
         ) from error
 
-    if getattr(processor, "image_processor", None) is None:
+    if (modalities is None or "image" in modalities) and getattr(
+        processor, "image_processor", None
+    ) is None:
         raise RuntimeError("The loaded processor has no image_processor.")
 
     backend = backend.to(device=device, dtype=dtype).eval()
@@ -149,6 +188,7 @@ def _load_model(
         processor=processor,
         output_dict=output_dict,
         logit_scale_mode=logit_scale_mode,
+        modalities=modalities or ("text", "image"),
     ).eval()
 
 
@@ -161,10 +201,11 @@ def create_model(
     *,
     output_dict: bool = False,
     logit_scale_mode: str = "strict",
+    modalities: Sequence[str] | None = None,
     **kwargs: Any,
 ) -> EmbeddingGemmaCLIP:
     """Load the pinned EmbeddingGemma 2 checkpoint as an OpenCLIP-style module."""
-    resolved_device, dtype = _validate_factory_options(
+    resolved_device, dtype, validated_modalities = _validate_factory_options(
         model_name,
         pretrained,
         precision,
@@ -172,6 +213,7 @@ def create_model(
         cache_dir,
         output_dict,
         logit_scale_mode,
+        modalities,
         kwargs,
     )
     return _load_model(
@@ -180,6 +222,7 @@ def create_model(
         dtype=dtype,
         output_dict=output_dict,
         logit_scale_mode=logit_scale_mode,
+        modalities=validated_modalities,
     )
 
 
@@ -192,9 +235,13 @@ def create_model_and_transforms(
     *,
     output_dict: bool = False,
     logit_scale_mode: str = "strict",
+    modalities: Sequence[str] | None = None,
     **kwargs: Any,
 ) -> tuple[EmbeddingGemmaCLIP, EmbeddingGemmaPreprocess, EmbeddingGemmaPreprocess]:
     """Load the model and return deterministic train and validation transforms."""
+    validated_modalities = _validate_modalities(modalities)
+    if validated_modalities is not None and "image" not in validated_modalities:
+        raise ValueError("create_model_and_transforms() requires the image modality.")
     model = create_model(
         model_name,
         pretrained,
@@ -203,6 +250,7 @@ def create_model_and_transforms(
         cache_dir,
         output_dict=output_dict,
         logit_scale_mode=logit_scale_mode,
+        modalities=validated_modalities,
         **kwargs,
     )
     preprocess = EmbeddingGemmaPreprocess(model.processor.image_processor)
@@ -219,14 +267,19 @@ def create_model_from_pretrained(
     cache_dir: str | None = None,
     output_dict: bool = False,
     logit_scale_mode: str = "strict",
+    modalities: Sequence[str] | None = None,
     **kwargs: Any,
-) -> (
-    tuple[EmbeddingGemmaCLIP, EmbeddingGemmaPreprocess]
-    | EmbeddingGemmaCLIP
-):
+) -> tuple[EmbeddingGemmaCLIP, EmbeddingGemmaPreprocess] | EmbeddingGemmaCLIP:
     """Load the supported checkpoint and optionally return its image transform."""
     if not isinstance(return_transform, bool):
         raise TypeError("return_transform must be a bool.")
+    validated_modalities = _validate_modalities(modalities)
+    if (
+        return_transform
+        and validated_modalities is not None
+        and "image" not in validated_modalities
+    ):
+        raise ValueError("return_transform=True requires the image modality.")
     model = create_model(
         model_name,
         pretrained,
@@ -235,6 +288,7 @@ def create_model_from_pretrained(
         cache_dir,
         output_dict=output_dict,
         logit_scale_mode=logit_scale_mode,
+        modalities=validated_modalities,
         **kwargs,
     )
     if not return_transform:

@@ -18,7 +18,8 @@ An independent Python library that provides an OpenCLIP-inspired inference API f
 - Model API includes `forward()`, `get_logits()`, and factory option `output_dict=True`.
 - `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"` (default: `"strict"`).
 - `forward()` returns normalized features and scale `1.0`; `get_logits()` returns unscaled cosine similarities, not trained CLIP logits or probabilities.
-- 768-dimensional embeddings, task-specific text prompts, and CPU or CUDA device selection.
+- Native 768-dimensional embeddings plus MRL truncation to 512, 256, or 128 dimensions, with CPU or CUDA device selection.
+- Optional text-only or text-and-image model loading; the default factory load remains unchanged.
 - A pinned EmbeddingGemma 2 model revision; model weights are downloaded from Hugging Face on first use and are not bundled with this package.
 - Bounded-batch image embedding and incremental Japanese/English text-to-image search.
 - Optional PyAV-based video-frame indexing and text search.
@@ -42,7 +43,7 @@ pip install "openclip-gemma[video]"
 To pin the exact version for reproducible environments:
 
 ```bash
-pip install openclip-gemma==0.3.0
+pip install openclip-gemma==0.4.0
 ```
 
 The first model or tokenizer load downloads the required files from Hugging Face unless they are already cached. The package pins the model revision `914f7f89142e33e77833254d9c9b90c3cef7303b`.
@@ -112,6 +113,41 @@ print(japanese_features.shape)  # torch.Size([1, 768])
 
 The model returns normalized sentence embeddings. You can also request normalization explicitly with `normalize=True`; normalized image and text features can be compared with a matrix product, as in the Quick Start. A larger cosine similarity indicates a closer match among the supplied candidates, but is not a calibrated probability.
 
+## Matryoshka Representation Learning (MRL)
+
+`encode_image()` and `encode_text()` accept a keyword-only `truncate_dim`
+parameter. Supported values are `768`, `512`, `256`, and `128`. The default
+`None` keeps the existing 768-dimensional output exactly; lower dimensions take
+the leading dimensions of the native embedding and L2-normalize the truncated
+vector. Use the same dimension for image and text features before comparing
+them:
+
+```python
+with torch.inference_mode():
+    image_features = model.encode_image(image_tensor, truncate_dim=256)
+    text_features = model.encode_text(text_tokens, truncate_dim=256)
+    cosine_similarities = image_features @ text_features.T
+```
+
+`forward()` and `get_logits()` accept the same `truncate_dim` when explicitly
+constructed with `logit_scale_mode="cosine"`. The strict default and the
+untrained cosine scale behavior are unchanged.
+
+Model loading can omit unused towers with `create_model(modalities=...)`:
+
+```python
+from openclip_gemma import create_model
+
+text_model = create_model(modalities=("text",))
+image_text_model = create_model(modalities=("text", "image"))
+```
+
+`modalities=None` remains the default and preserves the previous full
+checkpoint load. Text is required because the text transformer is shared;
+image-only and audio inference are not supported. A text-only model raises an
+explicit error from `encode_image()`. Factories that return image transforms
+require the image modality.
+
 ## Zero-shot image classification
 
 For a set of candidate labels, encode images and candidate descriptions, then rank each image's candidate scores:
@@ -172,9 +208,10 @@ environment and run:
 ```bash
 uv sync --locked --group dev
 uv run python examples/image_search.py index \
-  --images ./photos --output ./image-index --batch-size 8 --device cpu --recursive
+  --images ./photos --output ./image-index-256 --batch-size 8 \
+  --embedding-dim 256 --device cpu --recursive
 uv run python examples/image_search.py search \
-  --index ./image-index --query "富士山と青空" --top-k 5 --device cpu
+  --index ./image-index-256 --query "富士山と青空" --top-k 5 --device cpu
 ```
 
 Indexing again updates added, changed, and deleted files. Change `--device cpu` to `--device cuda` to request CUDA inference. Lower `--batch-size` if GPU memory is limited. Search uses EmbeddingGemma's `SearchQuery` task prompt and reports unscaled cosine similarity scores, not probabilities. Results with equal scores are ordered by relative image path.
@@ -193,13 +230,25 @@ model, _, preprocess = create_model_and_transforms(device="cpu")
 for path, embedding in iter_image_embeddings(model, preprocess, ["photos/a.jpg"], batch_size=8):
     print(path, embedding.shape, embedding.device)
 
-build_or_update_image_index(model, preprocess, "photos", "image-index", batch_size=8)
-for result in search_images(model, "image-index", "青空の山", top_k=5):
+build_or_update_image_index(
+    model,
+    preprocess,
+    "photos",
+    "image-index-256",
+    batch_size=8,
+    embedding_dim=256,
+)
+for result in search_images(model, "image-index-256", "青空の山", top_k=5):
     print(result.path, f"{result.score:.4f}")
 ```
 
 The streaming iterator yields CPU tensors in input order. Image-search results
 contain raw cosine similarity scores, not probabilities.
+Image indexes use format v2 and store one supported embedding dimension.
+Existing v1 indexes remain readable at 768 dimensions. An incremental update
+cannot mix dimensions; use a separate index directory or convert an existing
+768-dimensional index with `convert_image_index()`. Conversion truncates and
+renormalizes stored vectors without rerunning the model.
 
 ## Video frame search (optional `video` extra)
 
@@ -211,7 +260,7 @@ text. The optional PyAV dependency is installed with
 uv sync --locked --group dev --extra video
 uv run python examples/video_search.py index \
   --videos ./videos --output ./video-index --interval 1.0 \
-  --batch-size 8 --device cpu --recursive
+  --batch-size 8 --embedding-dim 256 --device cpu --recursive
 uv run python examples/video_search.py search \
   --index ./video-index --query "人がドリルで穴を開けている" \
   --top-k 5 --device cpu
@@ -239,6 +288,10 @@ Video search ranks individual sampled frames. It does not understand motion,
 event order, or temporal relationships, and scenes between sampled timestamps
 can be missed. Search loads the full index into RAM and uses brute-force cosine
 scoring, so memory and latency grow with collection size.
+Video indexes use format v3 and support the same MRL dimensions. Existing
+version-2 indexes remain readable at 768 dimensions; version-1 timestamp
+indexes are still unsupported. Use `convert_video_index()` to create a
+separate, smaller-dimensional index without model inference.
 
 ## OpenCLIP differences and compatibility
 
@@ -246,11 +299,12 @@ scoring, so memory and latency grow with collection size.
 
 | Area | `openclip-gemma` behavior |
 | --- | --- |
-| Embeddings | Image and text outputs have 768 features and follow EmbeddingGemma 2's embedding behavior. |
+| Embeddings | The default is the native 768-dimensional EmbeddingGemma 2 output. `truncate_dim` optionally returns 512, 256, or 128 leading dimensions, re-normalized for cosine comparison. |
 | Images | Use the returned official processor transform. `encode_image()` accepts preprocessed float32 `[B, 3, H, W]` tensors; do not feed arbitrary OpenCLIP-normalized tensors or apply preprocessing twice. All images in a dense batch must have the same shape. |
 | Text | `get_tokenizer()` returns Gemma token IDs with dynamically right-padded batches. CLIP token IDs and OpenCLIP's tokenizer are not interchangeable. |
 | Similarity | Normalize embeddings and compute cosine similarity. The model does not provide an OpenCLIP-trained `logit_scale`. |
 | Factory discovery | `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()` expose only the supported EmbeddingGemma 2 checkpoint. |
+| Selective loading | `create_model(modalities=("text",))` omits vision and audio configs; `("text", "image")` omits audio. The default `None` loads the existing full configuration. |
 | Model methods | `encode_image()`, `encode_text()`, `eval()`, and `to()` are supported. `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"`; the default strict mode rejects them. |
 | Scope | The core model API does not support training, fine-tuning, audio, or arbitrary architectures. Video-frame search is a separate v0.2.0 API, not a core OpenCLIP-compatible model feature. |
 
@@ -262,7 +316,9 @@ similarities. Neither API reproduces a trained OpenCLIP `logit_scale`.
 
 For scenario-by-scenario results and migration examples, see the
 [OpenCLIP compatibility report](docs/openclip-compatibility-report-v0.3.0.md)
-and [migration guide](docs/migration-v0.3.0.md).
+and [v0.3.0 migration guide](docs/migration-v0.3.0.md). For MRL index and
+factory changes, see the [v0.4.0 migration guide](docs/migration-v0.4.0.md)
+and [MRL benchmark guide](docs/benchmark-mrl-v0.4.0.md).
 
 ### Migration example
 
