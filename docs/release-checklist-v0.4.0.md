@@ -15,6 +15,8 @@ authorize a package publication.
   directly after model loading, include run and environment metadata in CSV,
   align migration/specification text with current APIs, and reserve conversion
   destinations atomically.
+- [x] Align the changelog's benchmark summary with the JSON query-manifest
+  input and measured storage, memory, ranking, and recall outputs.
 - [x] Pass the complete non-integration pytest suite, Ruff, locked dependency
   check, wheel/sdist build, artifact verification, and clean wheel import.
 - [x] Validate the four follow-up review fixes with focused/full tests,

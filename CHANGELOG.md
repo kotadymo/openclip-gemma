@@ -10,8 +10,9 @@
   preserving legacy 768-dimensional index reads.
 - Add opt-in text-only and text-plus-image factory loading by omitting
   unrequested Transformers vision/audio configs.
-- Add an MRL benchmark harness for latency, storage estimates, and optional
-  line-aligned image-caption recall measurements.
+- Add an MRL benchmark harness for encoder/search latency, measured index and
+  vector storage, memory, ranking agreement, and optional Recall@K from labeled
+  JSON query manifests.
 
 ### Compatibility
 
