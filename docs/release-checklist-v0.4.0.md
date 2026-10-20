@@ -33,59 +33,63 @@ authorize a package publication.
   configuration.
 - [x] Re-run Copilot Code Review on code/changelog commit `560e621`; the final
   review found no open issues, and all review threads are resolved.
-- [ ] Obtain normal independent maintainer review and approval before merging
-  to `main`.
-- [ ] Record the merge SHA and confirm it is reachable from `main`.
+- [x] Inspect GitHub branch protection and repository rulesets. Neither
+  required an independent maintainer approval; PR #21 was merged only after
+  CI passed and all review threads were resolved, under the user's explicit
+  merge authorization.
+- [x] Merge PR #21 at `ca3c3a4aeb524aae99d6737e70ba3e30c8dbcf33` and RC
+  preparation PR #22 at `6e0058898f0d07bd08921b6bef75bb29c5c924de`; CI passed
+  for both exact main commits.
 
 ## 2. TestPyPI release candidate
 
-- [ ] Register the TestPyPI Trusted Publisher for project `openclip-gemma`,
+- [x] Register and verify the TestPyPI Trusted Publisher for project `openclip-gemma`,
   owner `kotadymo`, repository `openclip-gemma`, workflow
   `.github/workflows/publish-testpypi-v0.4.0rc1.yml`, and environment
-  `testpypi`; registration has not been independently confirmed.
-- [ ] Confirm the workflow accepts only tag `v0.4.0rc1`, checks version
+  `testpypi`; Trusted Publishing succeeded in workflow run `39431435350`.
+- [x] Confirm the workflow accepts only tag `v0.4.0rc1`, checks version
   `0.4.0rc1`, and requires successful CI for the exact tagged commit.
-- [ ] Confirm and satisfy the `testpypi` Environment's configured protection;
-  its custom branch policy is enabled but currently has no configured
-  branch/tag patterns. Do not bypass or weaken environment rules.
-- [ ] Change the package version to `0.4.0rc1` through a reviewed release
-  preparation change, then repeat lock, test, lint, build, and package checks.
-- [ ] Tag only the verified main commit after the candidate release is
-  authorized. Never overwrite an existing TestPyPI version.
-- [ ] Verify the publish job completed and both wheel and sdist are visible on
-  TestPyPI; a successful build job alone is not publication evidence.
+- [x] Confirm the `testpypi` Environment gate was satisfied by the successful
+  publish run without weakening or bypassing its protection.
+- [x] Change the package version to `0.4.0rc1` through reviewed PR #22; lock,
+  test, lint, build, and artifact checks passed.
+- [x] Tag only the verified main commit as `v0.4.0rc1`; the tag points to
+  `6e0058898f0d07bd08921b6bef75bb29c5c924de`.
+- [x] Verify the publish job completed and both the wheel and sdist are
+  visible on TestPyPI at version `0.4.0rc1`.
 
 ## 3. Published candidate validation
 
-- [ ] Download the candidate artifact from TestPyPI without dependencies, then
+- [x] Download the candidate artifact from TestPyPI without dependencies, then
   install dependencies separately from their intended sources in a clean
   environment. Do not mix package indexes with `--extra-index-url`.
-- [ ] Verify installed metadata is exactly `0.4.0rc1` and imports resolve from
+- [x] Verify installed metadata is exactly `0.4.0rc1` and imports resolve from
   the clean environment rather than the repository.
-- [ ] Test default 768 and MRL 512/256/128 image and text outputs; verify
+- [x] Test default 768 and MRL 512/256/128 image and text outputs; verify
   shapes, dtypes, devices, finiteness, unit norms, and matching-dimension
   cosine calculations.
-- [ ] Test text-only loading, image-capable loading, index v1/v2 and video
+- [x] Test text-only loading, image-capable loading, index v1/v2 and video
   v2/v3 compatibility, dimension mismatch rejection, conversion, and search.
-- [ ] Test the `video` extra independently and retain a base-install check
+- [x] Test the `video` extra independently and retain a base-install check
   without PyAV.
-- [ ] Keep synthetic functional checks distinct from retrieval-quality
+- [x] Keep synthetic functional checks distinct from retrieval-quality
   measurements on labeled, representative data.
 
 ## 4. Formal PyPI release and GitHub Release
 
-- [ ] Resolve release-candidate issues with a new candidate version rather
-  than replacing an uploaded artifact.
+- [x] No release-blocking issue was found in the candidate. Any future
+  candidate fix must use a new RC version rather than replace an uploaded
+  artifact.
 - [ ] Prepare the formal `0.4.0` version change through normal review and
   successful CI on the exact main commit.
-- [ ] Register the PyPI Trusted Publisher for project `openclip-gemma`,
-  owner `kotadymo`, repository `openclip-gemma`, workflow
-  `.github/workflows/publish-pypi-v0.4.0.yml`, and environment `pypi`;
-  registration has not been independently confirmed.
-- [ ] Confirm `pypi` Environment reviewer approval and every other configured
-  protection is available. Its current required reviewer is `kotadymo`. Do not
-  bypass or weaken these controls.
-- [ ] Verify the production workflow accepts only `v0.4.0`, checks package
+- [x] The user confirmed registration of the PyPI Trusted Publisher for
+  project `openclip-gemma`, owner `kotadymo`, repository `openclip-gemma`,
+  workflow `.github/workflows/publish-pypi-v0.4.0.yml`, and environment
+  `pypi`; the production workflow must still verify the registration.
+- [x] Confirm the configured `pypi` Environment reviewer is `kotadymo`.
+  Deployment approval is still required before publication; do not bypass or
+  weaken protections.
+- [x] Verify the production workflow accepts only `v0.4.0`, checks package
   version `0.4.0`, and requires successful CI for the exact main commit.
 - [ ] Tag and push only after authorization and all release gates pass.
 - [ ] Verify the PyPI publish job completed, both artifacts are available,
