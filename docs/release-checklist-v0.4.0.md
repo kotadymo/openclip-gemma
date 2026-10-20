@@ -13,8 +13,9 @@ authorize a package publication.
 - [x] Run available CPU pinned-model MRL comparisons and record exact results.
   CUDA and other platform checks remain unverified locally because the required
   hardware is unavailable.
-- [ ] Create the implementation PR from the v0.4.0 feature branch.
-- [ ] Require normal review and successful CI before merging to `main`.
+- [x] Create the implementation PR from the v0.4.0 feature branch.
+- [ ] Obtain normal review and successful CI for the latest PR commit before
+  merging to `main`.
 - [ ] Record the merge SHA and confirm it is reachable from `main`.
 
 ## 2. TestPyPI release candidate
