@@ -27,8 +27,13 @@ authorize a package publication.
   BF16 on an NVIDIA RTX 4070 Ti SUPER using `.venv-cuda`; broader platform and
   application-data retrieval-quality checks remain separate.
 - [x] Create the implementation PR from the v0.4.0 feature branch.
-- [ ] Obtain normal review and successful CI for the latest PR commit before
-  merging to `main`.
+- [x] Pass CI for latest PR head `560e621` on Windows and Ubuntu with Python
+  3.12, 3.13, and 3.14. The manual CPU integration jobs were skipped by
+  workflow configuration.
+- [x] Re-run Copilot Code Review on the latest PR head; the final review found
+  no open issues, and all review threads are resolved.
+- [ ] Obtain normal independent maintainer review and approval before merging
+  to `main`.
 - [ ] Record the merge SHA and confirm it is reachable from `main`.
 
 ## 2. TestPyPI release candidate
@@ -36,11 +41,12 @@ authorize a package publication.
 - [ ] Register the TestPyPI Trusted Publisher for project `openclip-gemma`,
   owner `kotadymo`, repository `openclip-gemma`, workflow
   `.github/workflows/publish-testpypi-v0.4.0rc1.yml`, and environment
-  `testpypi`.
+  `testpypi`; registration has not been independently confirmed.
 - [ ] Confirm the workflow accepts only tag `v0.4.0rc1`, checks version
   `0.4.0rc1`, and requires successful CI for the exact tagged commit.
-- [ ] Confirm the `testpypi` Environment's configured protection is satisfied;
-  do not bypass reviewer approval or other environment rules.
+- [ ] Confirm and satisfy the `testpypi` Environment's configured protection;
+  its custom branch policy is enabled but currently has no configured
+  branch/tag patterns. Do not bypass or weaken environment rules.
 - [ ] Change the package version to `0.4.0rc1` through a reviewed release
   preparation change, then repeat lock, test, lint, build, and package checks.
 - [ ] Tag only the verified main commit after the candidate release is
@@ -73,9 +79,11 @@ authorize a package publication.
   successful CI on the exact main commit.
 - [ ] Register the PyPI Trusted Publisher for project `openclip-gemma`,
   owner `kotadymo`, repository `openclip-gemma`, workflow
-  `.github/workflows/publish-pypi-v0.4.0.yml`, and environment `pypi`.
+  `.github/workflows/publish-pypi-v0.4.0.yml`, and environment `pypi`;
+  registration has not been independently confirmed.
 - [ ] Confirm `pypi` Environment reviewer approval and every other configured
-  protection is available. Do not bypass or weaken these controls.
+  protection is available. Its current required reviewer is `kotadymo`. Do not
+  bypass or weaken these controls.
 - [ ] Verify the production workflow accepts only `v0.4.0`, checks package
   version `0.4.0`, and requires successful CI for the exact main commit.
 - [ ] Tag and push only after authorization and all release gates pass.
