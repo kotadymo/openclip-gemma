@@ -27,9 +27,10 @@ authorize a package publication.
   BF16 on an NVIDIA RTX 4070 Ti SUPER using `.venv-cuda`; broader platform and
   application-data retrieval-quality checks remain separate.
 - [x] Create the implementation PR from the v0.4.0 feature branch.
-- [x] Pass CI for latest PR head `89f8e2f` on Windows and Ubuntu with Python
-  3.12, 3.13, and 3.14. The manual CPU integration jobs were skipped by
-  workflow configuration.
+- [x] Pass CI for implementation commit `5880286` and documentation/status
+  commits through `768365b` on Windows and Ubuntu with Python 3.12, 3.13, and
+  3.14. The manual CPU integration jobs were skipped by workflow
+  configuration.
 - [x] Re-run Copilot Code Review on code/changelog commit `560e621`; the final
   review found no open issues, and all review threads are resolved.
 - [ ] Obtain normal independent maintainer review and approval before merging
