@@ -6,14 +6,9 @@ from collections.abc import Sequence
 from typing import Any
 
 import torch
-from transformers import AutoConfig, AutoTokenizer
 
-from openclip_gemma.constants import (
-    MODEL_CARD_MAX_CONTEXT_LENGTH,
-    MODEL_ID,
-    MODEL_NAME,
-    MODEL_REVISION,
-)
+from openclip_gemma.constants import MODEL_NAME
+from openclip_gemma.registry import get_default_registry
 
 OFFICIAL_PROMPTS = {
     "BitextMining": "task: search result | query: ",
@@ -173,78 +168,11 @@ def get_tokenizer(
     ``context_length`` bounds truncation; returned batches are padded to the
     longest sequence in that batch rather than to this full length.
     """
-    if not isinstance(model_name, str):
-        raise TypeError("model_name must be a string.")
-    normalized_model_name = model_name.strip().lower().replace("_", "-")
-    if normalized_model_name != MODEL_NAME:
-        raise ValueError(
-            f"Unsupported model_name {model_name!r}; only {MODEL_NAME!r} is supported."
-        )
-    if prompt_name is not None and prompt_name not in OFFICIAL_PROMPTS:
-        available = ", ".join(sorted(OFFICIAL_PROMPTS))
-        raise ValueError(
-            f"Unsupported prompt_name {prompt_name!r}; choose one of: {available}."
-        )
-    if context_length is not None and (
-        isinstance(context_length, bool)
-        or not isinstance(context_length, int)
-        or context_length < 2
-    ):
-        raise ValueError("context_length must be an integer of at least 2.")
-    if cache_dir is not None and not isinstance(cache_dir, str):
-        raise TypeError("cache_dir must be a string or None.")
-
-    try:
-        config = AutoConfig.from_pretrained(
-            MODEL_ID,
-            revision=MODEL_REVISION,
-            cache_dir=cache_dir,
-        )
-    except Exception as error:
-        raise RuntimeError(
-            f"Failed to load the configuration for {MODEL_ID!r} "
-            f"at revision {MODEL_REVISION}."
-        ) from error
-
-    text_config = getattr(config, "text_config", None)
-    max_context_length = getattr(text_config, "max_position_embeddings", None)
-    if (
-        isinstance(max_context_length, bool)
-        or not isinstance(max_context_length, int)
-        or max_context_length < 2
-    ):
-        raise RuntimeError(
-            "The model configuration has no valid text max_position_embeddings."
-        )
-    supported_context_length = min(
-        max_context_length,
-        MODEL_CARD_MAX_CONTEXT_LENGTH,
-    )
-    resolved_context_length = (
-        supported_context_length if context_length is None else context_length
-    )
-    if resolved_context_length > supported_context_length:
-        raise ValueError(
-            f"context_length={resolved_context_length} exceeds the documented "
-            f"supported context limit of {supported_context_length}."
-        )
-
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            MODEL_ID,
-            revision=MODEL_REVISION,
-            cache_dir=cache_dir,
-        )
-    except Exception as error:
-        raise RuntimeError(
-            f"Failed to load the tokenizer for {MODEL_ID!r} "
-            f"at revision {MODEL_REVISION}."
-        ) from error
-
-    return EmbeddingGemmaTokenizer(
-        tokenizer,
-        max_context_length=supported_context_length,
-        model_max_position_embeddings=max_context_length,
-        context_length=resolved_context_length,
+    descriptor = get_default_registry().resolve(model_name)
+    return descriptor.backend.create_tokenizer(
+        model_id=descriptor.model_id,
+        revision=descriptor.revision,
+        cache_dir=cache_dir,
         prompt_name=prompt_name,
+        context_length=context_length,
     )

@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 import torch
 
-import openclip_gemma.tokenizer as tokenizer_module
-from openclip_gemma.factory import MODEL_ID, MODEL_REVISION
+import openclip_gemma.backends.embeddinggemma2 as backend_module
+from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
 from openclip_gemma.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 
@@ -32,10 +32,7 @@ class FakeHFAutoTokenizer:
             elif text == "<eos>":
                 content = [self.eos_token_id]
             else:
-                content = [
-                    3 + (sum(map(ord, piece)) % 100)
-                    for piece in text.split()
-                ]
+                content = [3 + (sum(map(ord, piece)) % 100) for piece in text.split()]
             sequence = [self.bos_token_id, *content, self.eos_token_id]
             if kwargs["truncation"] and len(sequence) > kwargs["max_length"]:
                 sequence = sequence[: kwargs["max_length"]]
@@ -64,21 +61,19 @@ def fake_hf_loaders(
 
     def load_config(*args: Any, **kwargs: Any) -> SimpleNamespace:
         calls.append({"loader": "config", "args": args, **kwargs})
-        return SimpleNamespace(
-            text_config=SimpleNamespace(max_position_embeddings=32)
-        )
+        return SimpleNamespace(text_config=SimpleNamespace(max_position_embeddings=32))
 
     def load_tokenizer(*args: Any, **kwargs: Any) -> FakeHFAutoTokenizer:
         calls.append({"loader": "tokenizer", "args": args, **kwargs})
         return backend
 
     monkeypatch.setattr(
-        tokenizer_module,
+        backend_module,
         "AutoConfig",
         SimpleNamespace(from_pretrained=load_config),
     )
     monkeypatch.setattr(
-        tokenizer_module,
+        backend_module,
         "AutoTokenizer",
         SimpleNamespace(from_pretrained=load_tokenizer),
     )
@@ -148,9 +143,7 @@ def test_tokenizer_applies_official_prompt_once(
     tokenizer(["a cat"])
 
     assert tokenizer.prompts == OFFICIAL_PROMPTS
-    assert backend.calls[0][0] == [
-        f"{OFFICIAL_PROMPTS['SearchQuery']}a cat"
-    ]
+    assert backend.calls[0][0] == [f"{OFFICIAL_PROMPTS['SearchQuery']}a cat"]
     with pytest.raises(ValueError, match="already starts with an official task prompt"):
         tokenizer(f"{OFFICIAL_PROMPTS['SearchQuery']}a cat")
 
@@ -183,7 +176,13 @@ def test_tokenizer_truncates_and_preserves_eos(
         ("unknown", None, None, ValueError, "Unsupported model_name"),
         ("embeddinggemma-2", "Unknown", None, ValueError, "Unsupported prompt_name"),
         ("embeddinggemma-2", None, 1, ValueError, "at least 2"),
-        ("embeddinggemma-2", None, 33, ValueError, "documented supported context limit"),
+        (
+            "embeddinggemma-2",
+            None,
+            33,
+            ValueError,
+            "documented supported context limit",
+        ),
         ("embeddinggemma-2", None, True, ValueError, "integer of at least 2"),
     ],
 )
@@ -209,7 +208,7 @@ def test_context_length_default_is_capped_by_official_model_card(
 ) -> None:
     backend, _ = fake_hf_loaders
     monkeypatch.setattr(
-        tokenizer_module,
+        backend_module,
         "AutoConfig",
         SimpleNamespace(
             from_pretrained=lambda *args, **kwargs: SimpleNamespace(

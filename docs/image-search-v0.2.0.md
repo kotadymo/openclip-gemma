@@ -30,6 +30,20 @@ The output directory contains a single `index.npz` archive with:
 
 Format version 2 stores the selected embedding dimension. Existing version-1 indexes remain readable only at 768 dimensions. Metadata includes the format version, absolute image root, recursion setting, model ID and pinned revision, model precision (`fp32` or `bf16`), embedding dimension, preprocessing identifier, entry count, relative image paths, source file sizes and `mtime_ns` values, storage dtype, and a SHA-256 checksum of the embedding matrix.
 
+New version-2 indexes also record the backend ID, normalization, index and
+query prompt policy, and `embedding_space_id`. The signature is SHA-256 over a
+compact UTF-8 JSON array of field/value pairs in this fixed order:
+`backend_id`, `model_id`, `model_revision`, `embedding_dimension`,
+`embedding_strategy`, `normalization`, `preprocessing_id`, `index_prompt`,
+`query_prompt_name`, `query_prompt`, `model_precision`, `storage_dtype`, and
+`sampling_method`. Null prompt and sampling values are included explicitly.
+This deterministic signature does not use Python's randomized `hash()`.
+Updates and searches reject a different backend, model revision, dimension,
+normalization, preprocessing, prompt, or precision even when the vector
+dimensions match. Existing version-1 and v0.4.0 version-2 indexes are accepted
+only when their stored EmbeddingGemma 2 checkpoint, preprocessing, strategy,
+dimension, and precision fields identify the known compatible space.
+
 The loader checks the ZIP directory and NPY headers before loading arrays, then uses `numpy.load(..., allow_pickle=False)` and validates archive members, metadata, path safety, matrix dimensions and dtype, finite values, checksum, model revision, precision, and preprocessing identifier. It rejects archives larger than 512 MiB or with more than 512 MiB of expanded members, and limits metadata to 64 MiB. These hard limits bound a single archive but mean very large collections must be split across indexes. Incompatible or damaged archives fail explicitly; they are not silently discarded or rebuilt.
 
 Updates are written to a temporary file in the output directory, flushed, and atomically installed with `os.replace`. A process interruption before replacement preserves the previous complete index; an unused temporary file may remain.

@@ -3,16 +3,40 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import torch
-from transformers import AutoConfig, AutoModel, AutoProcessor
 
 from openclip_gemma.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
 from openclip_gemma.model import EmbeddingGemmaCLIP
+from openclip_gemma.registry import ModelDescriptor, get_default_registry
 from openclip_gemma.transforms import EmbeddingGemmaPreprocess
 
+__all__ = [
+    "MODEL_ID",
+    "MODEL_NAME",
+    "MODEL_REVISION",
+    "PRETRAINED_OFFICIAL",
+    "EmbeddingGemmaCLIP",
+    "EmbeddingGemmaPreprocess",
+    "create_model",
+    "create_model_and_transforms",
+    "create_model_from_pretrained",
+    "list_models",
+    "list_pretrained",
+]
+
 PRETRAINED_OFFICIAL = "official"
+
+
+@dataclass(frozen=True)
+class _FactoryOptions:
+    descriptor: ModelDescriptor
+    checkpoint_id: str
+    device: torch.device
+    dtype: torch.dtype
+    modalities: tuple[str, ...] | None
 
 
 def _validate_modalities(
@@ -45,7 +69,7 @@ def _validate_factory_options(
     logit_scale_mode: str,
     modalities: Sequence[str] | None,
     kwargs: dict[str, Any],
-) -> tuple[torch.device, torch.dtype, tuple[str, ...] | None]:
+) -> _FactoryOptions:
     if not isinstance(output_dict, bool):
         raise TypeError("output_dict must be a bool.")
     if not isinstance(logit_scale_mode, str):
@@ -59,13 +83,7 @@ def _validate_factory_options(
         names = ", ".join(sorted(kwargs))
         raise TypeError(f"Unsupported keyword argument(s): {names}.")
 
-    if not isinstance(model_name, str):
-        raise TypeError("model_name must be a string.")
-    normalized_model_name = model_name.strip().lower().replace("_", "-")
-    if normalized_model_name != MODEL_NAME:
-        raise ValueError(
-            f"Unsupported model_name {model_name!r}; only {MODEL_NAME!r} is supported."
-        )
+    descriptor = get_default_registry().resolve(model_name)
 
     if pretrained is None:
         raise ValueError(
@@ -73,11 +91,7 @@ def _validate_factory_options(
         )
     if not isinstance(pretrained, str):
         raise TypeError("pretrained must be a string.")
-    if pretrained not in {PRETRAINED_OFFICIAL, MODEL_ID}:
-        raise ValueError(
-            f"Unsupported pretrained checkpoint {pretrained!r}; "
-            f"use {PRETRAINED_OFFICIAL!r} or {MODEL_ID!r}."
-        )
+    checkpoint_id = descriptor.checkpoint_for(pretrained)
 
     if not isinstance(precision, str):
         raise TypeError("precision must be a string ('fp32' or 'bf16').")
@@ -125,71 +139,33 @@ def _validate_factory_options(
                 f"found {device_count} CUDA device(s)."
             )
 
-    return resolved_device, dtype, validated_modalities
+    return _FactoryOptions(
+        descriptor=descriptor,
+        checkpoint_id=checkpoint_id,
+        device=resolved_device,
+        dtype=dtype,
+        modalities=validated_modalities,
+    )
 
 
 def _load_model(
+    options: _FactoryOptions,
     *,
     cache_dir: str | None,
-    device: torch.device,
-    dtype: torch.dtype,
     output_dict: bool,
     logit_scale_mode: str,
-    modalities: tuple[str, ...] | None,
 ) -> EmbeddingGemmaCLIP:
-    try:
-        model_kwargs: dict[str, Any] = {
-            "revision": MODEL_REVISION,
-            "cache_dir": cache_dir,
-            "dtype": dtype,
-        }
-        if modalities is not None:
-            config = AutoConfig.from_pretrained(
-                MODEL_ID,
-                revision=MODEL_REVISION,
-                cache_dir=cache_dir,
-            )
-            if "image" not in modalities:
-                config.vision_config = None
-            config.audio_config = None
-            model_kwargs["config"] = config
-        backend = AutoModel.from_pretrained(
-            MODEL_ID,
-            **model_kwargs,
-        )
-    except Exception as error:
-        raise RuntimeError(
-            f"Failed to load {MODEL_ID!r} at revision {MODEL_REVISION}."
-        ) from error
-
-    if not isinstance(backend, torch.nn.Module):
-        raise TypeError("The Transformers model loader did not return an nn.Module.")
-
-    try:
-        processor = AutoProcessor.from_pretrained(
-            MODEL_ID,
-            revision=MODEL_REVISION,
-            cache_dir=cache_dir,
-        )
-    except Exception as error:
-        raise RuntimeError(
-            f"Failed to load the processor for {MODEL_ID!r} "
-            f"at revision {MODEL_REVISION}."
-        ) from error
-
-    if (modalities is None or "image" in modalities) and getattr(
-        processor, "image_processor", None
-    ) is None:
-        raise RuntimeError("The loaded processor has no image_processor.")
-
-    backend = backend.to(device=device, dtype=dtype).eval()
-    return EmbeddingGemmaCLIP(
-        backend=backend,
-        processor=processor,
+    """Delegate model loading to the Registry-selected backend."""
+    return options.descriptor.backend.load_model(
+        model_id=options.checkpoint_id,
+        revision=options.descriptor.revision,
+        cache_dir=cache_dir,
+        device=options.device,
+        dtype=options.dtype,
         output_dict=output_dict,
         logit_scale_mode=logit_scale_mode,
-        modalities=modalities or ("text", "image"),
-    ).eval()
+        modalities=options.modalities,
+    )
 
 
 def create_model(
@@ -205,7 +181,7 @@ def create_model(
     **kwargs: Any,
 ) -> EmbeddingGemmaCLIP:
     """Load the pinned EmbeddingGemma 2 checkpoint as an OpenCLIP-style module."""
-    resolved_device, dtype, validated_modalities = _validate_factory_options(
+    options = _validate_factory_options(
         model_name,
         pretrained,
         precision,
@@ -217,12 +193,10 @@ def create_model(
         kwargs,
     )
     return _load_model(
+        options,
         cache_dir=cache_dir,
-        device=resolved_device,
-        dtype=dtype,
         output_dict=output_dict,
         logit_scale_mode=logit_scale_mode,
-        modalities=validated_modalities,
     )
 
 
@@ -253,7 +227,8 @@ def create_model_and_transforms(
         modalities=validated_modalities,
         **kwargs,
     )
-    preprocess = EmbeddingGemmaPreprocess(model.processor.image_processor)
+    descriptor = get_default_registry().resolve(model_name)
+    preprocess = descriptor.backend.create_preprocess(model)
     return model, preprocess, preprocess
 
 
@@ -294,20 +269,21 @@ def create_model_from_pretrained(
     if not return_transform:
         return model
 
-    preprocess = EmbeddingGemmaPreprocess(model.processor.image_processor)
+    descriptor = get_default_registry().resolve(model_name)
+    preprocess = descriptor.backend.create_preprocess(model)
     return model, preprocess
 
 
 def list_models() -> list[str]:
     """Return the supported model names without loading model resources."""
-    return [MODEL_NAME]
+    return get_default_registry().list_models()
 
 
 def list_pretrained(as_str: bool = False) -> list[tuple[str, str]] | list[str]:
     """Return supported model/pretrained-tag pairs without loading model resources."""
     if not isinstance(as_str, bool):
         raise TypeError("as_str must be a bool.")
-    entries = [(MODEL_NAME, PRETRAINED_OFFICIAL)]
+    entries = get_default_registry().list_pretrained()
     if as_str:
         return [f"{model_name}:{tag}" for model_name, tag in entries]
     return entries
