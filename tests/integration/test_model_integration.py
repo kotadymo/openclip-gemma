@@ -9,8 +9,8 @@ import pytest
 import torch
 from PIL import Image, ImageDraw
 
-from openclip_gemma import EmbeddingGemmaCLIP, create_model_and_transforms
-from openclip_gemma.factory import MODEL_ID, MODEL_REVISION
+from openvlclip import EmbeddingGemmaCLIP, create_model_and_transforms
+from openvlclip.factory import MODEL_ID, MODEL_REVISION
 
 pytestmark = [
     pytest.mark.integration,

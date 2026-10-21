@@ -5,7 +5,7 @@ import pytest
 
 _VALIDATION_PATH = Path(__file__).resolve().parents[1] / "tools" / "readme_validation.py"
 _VALIDATION_SPEC = importlib.util.spec_from_file_location(
-    "openclip_gemma_readme_validation",
+    "openvlclip_readme_validation",
     _VALIDATION_PATH,
 )
 if _VALIDATION_SPEC is None or _VALIDATION_SPEC.loader is None:
@@ -57,18 +57,18 @@ def test_validates_local_markdown_links(tmp_path: Path) -> None:
 
 def test_checks_metadata_against_project_and_readme(tmp_path: Path) -> None:
     readme_path = tmp_path / "README.md"
-    readme = "# openclip-gemma v0.2.0"
+    readme = "# OpenVLCLIP v0.5.0"
     readme_path.write_text(readme, encoding="utf-8")
     project: dict[str, object] = {
-        "name": "openclip-gemma",
+        "name": "openvlclip",
         "requires-python": ">=3.12,<3.15,!=3.14.1",
         "dependencies": ["numpy>=1.26,<3"],
         "optional-dependencies": {"video": ["av>=19.0.1,<20"]},
     }
     metadata = (
         "Metadata-Version: 2.4\n"
-        "Name: openclip-gemma\n"
-        "Version: 0.2.0\n"
+        "Name: openvlclip\n"
+        "Version: 0.5.0\n"
         "Requires-Python: >=3.12, !=3.14.1, <3.15\n"
         "Requires-Dist: numpy>=1.26,<3\n"
         "Provides-Extra: video\n"
@@ -78,7 +78,7 @@ def test_checks_metadata_against_project_and_readme(tmp_path: Path) -> None:
 
     validate_distribution_metadata(
         metadata,
-        "0.2.0",
+        "0.5.0",
         project,
         readme,
         "wheel",
@@ -88,7 +88,7 @@ def test_checks_metadata_against_project_and_readme(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Requires-Dist"):
         validate_distribution_metadata(
             metadata.replace("av>=19.0.1", "av>=18.0.0"),
-            "0.2.0",
+            "0.5.0",
             project,
             readme,
             "wheel",

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from openclip_gemma.index_storage import (
+from openvlclip.index_storage import (
     IndexArchiveError,
     _open_numpy_archive,
     _save_numpy_archive_atomic,
@@ -74,7 +74,7 @@ def test_rejects_archive_above_configured_file_size_limit(
         {"kind": "test"},
         {"embeddings": np.ones((1, 2), dtype=np.float32)},
     )
-    monkeypatch.setattr("openclip_gemma.index_storage._MAX_ARCHIVE_BYTES", 1)
+    monkeypatch.setattr("openvlclip.index_storage._MAX_ARCHIVE_BYTES", 1)
 
     with (
         pytest.raises(IndexArchiveError, match="size limit"),

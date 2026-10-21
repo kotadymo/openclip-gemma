@@ -1,14 +1,14 @@
-"""OpenCLIP-compatible factory API for EmbeddingGemma 2."""
+"""OpenCLIP-inspired inference API for EmbeddingGemma 2."""
 
-from openclip_gemma.factory import (
+from openvlclip.factory import (
     create_model,
     create_model_and_transforms,
     create_model_from_pretrained,
     list_models,
     list_pretrained,
 )
-from openclip_gemma.model import EmbeddingGemmaCLIP
-from openclip_gemma.tokenizer import get_tokenizer
+from openvlclip.model import EmbeddingGemmaCLIP
+from openvlclip.tokenizer import get_tokenizer
 
 __all__ = [
     "EmbeddingGemmaCLIP",

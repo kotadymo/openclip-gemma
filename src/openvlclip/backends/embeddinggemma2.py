@@ -9,13 +9,13 @@ import torch
 from torch.nn import functional as F
 from transformers import AutoConfig, AutoModel, AutoProcessor, AutoTokenizer
 
-from openclip_gemma._dimensions import (
+from openvlclip._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
     validate_positive_embedding_dimension,
 )
-from openclip_gemma.capabilities import capabilities_for_modalities, freeze_capabilities
-from openclip_gemma.constants import (
+from openvlclip.capabilities import capabilities_for_modalities, freeze_capabilities
+from openvlclip.constants import (
     BACKEND_ID,
     EMBEDDING_NORMALIZATION,
     IMAGE_PREPROCESSING_ID,
@@ -23,13 +23,13 @@ from openclip_gemma.constants import (
     MODEL_ID,
     MODEL_REVISION,
 )
-from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
-from openclip_gemma.model import EmbeddingGemmaCLIP
-from openclip_gemma.tokenizer import (
+from openvlclip.embedding_space import EmbeddingSpaceMetadata
+from openvlclip.model import EmbeddingGemmaCLIP
+from openvlclip.tokenizer import (
     OFFICIAL_PROMPTS,
     EmbeddingGemmaTokenizer,
 )
-from openclip_gemma.transforms import EmbeddingGemmaPreprocess
+from openvlclip.transforms import EmbeddingGemmaPreprocess
 
 SUPPORTED_EMBEDDING_DIMENSIONS = (128, 256, 512, 768)
 _NATIVE_EMBEDDING_DIMENSION = DEFAULT_EMBEDDING_DIMENSION

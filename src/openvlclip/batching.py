@@ -11,10 +11,10 @@ from typing import Protocol
 import torch
 from PIL import Image
 
-from openclip_gemma._dimensions import (
+from openvlclip._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
 )
-from openclip_gemma.backends.base import validate_model_embedding_dimension
+from openvlclip.backends.base import validate_model_embedding_dimension
 
 type ImagePath = str | PathLike[str]
 type ImageEmbedding = tuple[Path, torch.Tensor]

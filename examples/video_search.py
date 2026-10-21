@@ -6,10 +6,10 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from openclip_gemma import create_model, create_model_and_transforms
-from openclip_gemma.constants import MODEL_NAME
-from openclip_gemma.registry import get_default_registry
-from openclip_gemma.video_search import (
+from openvlclip import create_model, create_model_and_transforms
+from openvlclip.constants import MODEL_NAME
+from openvlclip.registry import get_default_registry
+from openvlclip.video_search import (
     build_or_update_video_index,
     search_video,
 )

@@ -6,14 +6,14 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from openclip_gemma import create_model, create_model_and_transforms
-from openclip_gemma.constants import MODEL_NAME
-from openclip_gemma.image_search import (
+from openvlclip import create_model, create_model_and_transforms
+from openvlclip.constants import MODEL_NAME
+from openvlclip.image_search import (
     ImageIndexError,
     build_or_update_image_index,
     search_images,
 )
-from openclip_gemma.registry import get_default_registry
+from openvlclip.registry import get_default_registry
 
 
 def _parse_embedding_dim(value: str) -> int:

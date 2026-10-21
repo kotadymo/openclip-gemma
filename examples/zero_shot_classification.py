@@ -9,13 +9,13 @@ from pathlib import Path
 import torch
 from PIL import Image, ImageDraw
 
-from openclip_gemma import (
+from openvlclip import (
     EmbeddingGemmaCLIP,
     create_model_and_transforms,
     get_tokenizer,
 )
-from openclip_gemma.constants import MODEL_NAME
-from openclip_gemma.tokenizer import OFFICIAL_PROMPTS, EmbeddingGemmaTokenizer
+from openvlclip.constants import MODEL_NAME
+from openvlclip.tokenizer import OFFICIAL_PROMPTS, EmbeddingGemmaTokenizer
 
 DEFAULT_CANDIDATES = [
     "a red circle on a blue background",

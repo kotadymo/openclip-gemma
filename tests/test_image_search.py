@@ -10,10 +10,10 @@ import torch
 from PIL import Image
 from torch import nn
 
-from openclip_gemma import image_search
-from openclip_gemma.backends.embeddinggemma2 import EmbeddingGemma2Backend
-from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
-from openclip_gemma.image_search import (
+from openvlclip import image_search
+from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
+from openvlclip.embedding_space import EmbeddingSpaceMetadata
+from openvlclip.image_search import (
     ImageIndexCompatibilityError,
     ImageIndexError,
     _load_index,
@@ -22,7 +22,7 @@ from openclip_gemma.image_search import (
     convert_image_index,
     search_images,
 )
-from openclip_gemma.index_storage import _save_numpy_archive_atomic
+from openvlclip.index_storage import _save_numpy_archive_atomic
 
 
 class FakeImageSearchModel(nn.Module):

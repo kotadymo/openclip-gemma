@@ -9,8 +9,8 @@ import pytest
 import torch
 from PIL import Image, ImageDraw
 
-from openclip_gemma import create_model_and_transforms
-from openclip_gemma.image_search import (
+from openvlclip import create_model_and_transforms
+from openvlclip.image_search import (
     build_or_update_image_index,
     search_images,
 )

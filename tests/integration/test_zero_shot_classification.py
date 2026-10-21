@@ -12,8 +12,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw
 
-from openclip_gemma import create_model_and_transforms, get_tokenizer
-from openclip_gemma.factory import MODEL_ID, MODEL_REVISION
+from openvlclip import create_model_and_transforms, get_tokenizer
+from openvlclip.factory import MODEL_ID, MODEL_REVISION
 
 _EXAMPLE = runpy.run_path(
     str(Path(__file__).resolve().parents[2] / "examples" / "zero_shot_classification.py")

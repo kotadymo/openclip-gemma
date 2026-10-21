@@ -8,7 +8,7 @@ import torch
 from PIL import Image
 from torch import nn
 
-from openclip_gemma.batching import iter_image_embeddings
+from openvlclip.batching import iter_image_embeddings
 
 
 class FakeEncoder(nn.Module):

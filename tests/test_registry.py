@@ -8,23 +8,23 @@ import torch
 from PIL import Image
 from torch import nn
 
-import openclip_gemma.factory as factory_module
-import openclip_gemma.tokenizer as tokenizer_module
-from openclip_gemma.capabilities import (
+import openvlclip.factory as factory_module
+import openvlclip.tokenizer as tokenizer_module
+from openvlclip.capabilities import (
     CAPABILITY_KEYS,
     capabilities_for_modalities,
     freeze_capabilities,
 )
-from openclip_gemma.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
-from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
-from openclip_gemma.factory import create_model_and_transforms
-from openclip_gemma.model import EmbeddingGemmaCLIP
-from openclip_gemma.registry import (
+from openvlclip.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
+from openvlclip.embedding_space import EmbeddingSpaceMetadata
+from openvlclip.factory import create_model_and_transforms
+from openvlclip.model import EmbeddingGemmaCLIP
+from openvlclip.registry import (
     ModelDescriptor,
     ModelRegistry,
     get_default_registry,
 )
-from openclip_gemma.tokenizer import get_tokenizer
+from openvlclip.tokenizer import get_tokenizer
 
 
 class FakeTokenizer:

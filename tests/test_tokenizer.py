@@ -6,9 +6,9 @@ from typing import Any
 import pytest
 import torch
 
-import openclip_gemma.backends.embeddinggemma2 as backend_module
-from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
-from openclip_gemma.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
+import openvlclip.backends.embeddinggemma2 as backend_module
+from openvlclip.constants import MODEL_ID, MODEL_REVISION
+from openvlclip.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 
 class FakeHFAutoTokenizer:

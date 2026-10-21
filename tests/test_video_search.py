@@ -13,11 +13,11 @@ import torch
 from PIL import Image
 from torch import nn
 
-from openclip_gemma import video_search
-from openclip_gemma.backends.embeddinggemma2 import EmbeddingGemma2Backend
-from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
-from openclip_gemma.index_storage import _save_numpy_archive_atomic
-from openclip_gemma.video_search import (
+from openvlclip import video_search
+from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
+from openvlclip.embedding_space import EmbeddingSpaceMetadata
+from openvlclip.index_storage import _save_numpy_archive_atomic
+from openvlclip.video_search import (
     VideoIndexCompatibilityError,
     VideoSearchError,
     _build_or_update_video_index,
@@ -387,7 +387,7 @@ def test_missing_pyav_reports_optional_dependency_install_command(
 
     monkeypatch.setattr(builtins, "__import__", import_without_av)
 
-    with pytest.raises(VideoSearchError, match=r"pip install openclip-gemma\[video\]"):
+    with pytest.raises(VideoSearchError, match=r"pip install openvlclip\[video\]"):
         video_search._load_av()
 
 
@@ -804,7 +804,7 @@ def test_interval_and_index_kind_mismatches_are_rejected(
         {"embeddings": np.empty((0, 768), dtype=np.float32)},
     )
     with pytest.raises(
-        VideoIndexCompatibilityError, match="not an openclip-gemma video index"
+        VideoIndexCompatibilityError, match="not an OpenVLCLIP video index"
     ):
         _load_video_index(index_dir)
 

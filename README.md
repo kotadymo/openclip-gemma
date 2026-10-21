@@ -1,11 +1,11 @@
-# openclip-gemma
+# OpenVLCLIP
 
 An independent Python library that provides an OpenCLIP-inspired inference API for Google's EmbeddingGemma 2 model. It lets Python applications use familiar image and text encoding calls while retaining EmbeddingGemma's own tokenizer, image processing, task prompts, and embedding behavior.
 
 > [!IMPORTANT]
 > **Unofficial project**
 >
-> `openclip-gemma` is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or officially maintained by Google, Google DeepMind, or the OpenCLIP project.
+> `openvlclip` is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or officially maintained by Google, Google DeepMind, or the OpenCLIP project.
 >
 > This library provides an OpenCLIP-inspired interface for Google's EmbeddingGemma 2 model. It is not a drop-in replacement for OpenCLIP and does not claim full API compatibility.
 
@@ -31,22 +31,27 @@ are supported, up to but not including Python 3.15, except Python 3.14.1
 (`>=3.12,<3.15,!=3.14.1`).
 
 ```bash
-pip install openclip-gemma
+pip install openvlclip
 ```
 
 Install the optional video dependency for video-frame indexing and search:
 
 ```bash
-pip install "openclip-gemma[video]"
+pip install "openvlclip[video]"
 ```
 
 To pin the exact version for reproducible environments:
 
 ```bash
-pip install openclip-gemma==0.4.0
+pip install openvlclip==0.5.0
 ```
 
 The first model or tokenizer load downloads the required files from Hugging Face unless they are already cached. The package pins the model revision `914f7f89142e33e77833254d9c9b90c3cef7303b`.
+
+For migration from the v0.4.0 distribution and import namespace, see the
+[v0.5.0 migration guide](docs/migration-v0.5.0.md). `openvlclip` is a separate
+distribution; installing it does not uninstall `openclip-gemma` or provide an
+`openclip_gemma` import alias.
 
 Batch image embedding, image search, and video-frame search are documented in
 the [batch embedding guide](docs/batch-embeddings-v0.2.0.md),
@@ -61,7 +66,7 @@ This example creates an image in memory, embeds it and a few candidate descripti
 from PIL import Image, ImageDraw
 import torch
 
-from openclip_gemma import create_model_and_transforms, get_tokenizer
+from openvlclip import create_model_and_transforms, get_tokenizer
 
 device = "cpu"
 model, _, preprocess = create_model_and_transforms(
@@ -136,7 +141,7 @@ untrained cosine scale behavior are unchanged.
 Model loading can omit unused towers with `create_model(modalities=...)`:
 
 ```python
-from openclip_gemma import create_model
+from openvlclip import create_model
 
 text_model = create_model(modalities=("text",))
 image_text_model = create_model(modalities=("text", "image"))
@@ -162,7 +167,7 @@ For a set of candidate labels, encode images and candidate descriptions, then ra
 from PIL import Image, ImageDraw
 import torch
 
-from openclip_gemma import create_model_and_transforms, get_tokenizer
+from openvlclip import create_model_and_transforms, get_tokenizer
 
 device = "cpu"
 model, _, preprocess = create_model_and_transforms(
@@ -206,7 +211,7 @@ Use the prompt appropriate to the role of the text (for example, a search query 
 
 ## Image search
 
-Image indexing and text search are provided by the `openclip_gemma` package.
+Image indexing and text search are provided by the `openvlclip` package.
 The CLI demo is available from the repository source (examples are not
 included in the wheel). From a source checkout, install the development
 environment and run:
@@ -224,13 +229,13 @@ Indexing again updates added, changed, and deleted files. Change `--device cpu` 
 
 The local index is a versioned NumPy `.npz` archive containing JSON metadata and float32 embeddings; it is read with pickle loading disabled and replaced atomically after a successful update. Image and video index archives are limited to 512 MiB each; split larger collections into multiple indexes. File changes are detected using relative path, size, and modification time in nanoseconds. Touching or rewriting an unchanged image can trigger an unnecessary re-embedding; rewriting a file while preserving both size and timestamp can evade detection. Remove the index and rebuild it if a full refresh is needed. A damaged image or incompatible/corrupt index stops the operation with an error rather than silently skipping data. See the [image search design and storage notes](docs/image-search-v0.2.0.md).
 
-The Python API is available from `openclip_gemma.batching` and
-`openclip_gemma.image_search`:
+The Python API is available from `openvlclip.batching` and
+`openvlclip.image_search`:
 
 ```python
-from openclip_gemma import create_model_and_transforms
-from openclip_gemma.batching import iter_image_embeddings
-from openclip_gemma.image_search import build_or_update_image_index, search_images
+from openvlclip import create_model_and_transforms
+from openvlclip.batching import iter_image_embeddings
+from openvlclip.image_search import build_or_update_image_index, search_images
 
 model, _, preprocess = create_model_and_transforms(device="cpu")
 for path, embedding in iter_image_embeddings(model, preprocess, ["photos/a.jpg"], batch_size=8):
@@ -260,7 +265,7 @@ renormalizes stored vectors without rerunning the model.
 
 Video indexing and search sample frames and match them to Japanese or English
 text. The optional PyAV dependency is installed with
-`pip install "openclip-gemma[video]"`. From a source checkout:
+`pip install "openvlclip[video]"`. From a source checkout:
 
 ```bash
 uv sync --locked --group dev --extra video
@@ -276,11 +281,11 @@ MP4 is the primary target; `.mp4`, `.m4v`, `.mov`, `.mkv`, `.webm`, and `.avi` p
 
 Search ranks individual sampled frames by cosine similarity. Timestamps are relative to the container playback start, or the video stream start when the container start is unavailable; if neither is present, the first decoded frame defines zero. It does not understand motion, event order, or temporal relationships, and a scene between sampled timestamps can be missed. The local `video-index.npz` archive stores frame embeddings and timing metadata separately from image indexes, uses pickle-disabled NumPy loading, and is atomically replaced. Video additions, changes, and deletions are reconciled by relative path, file size, and modification time in nanoseconds; preserving both size and timestamp can evade change detection. See the [video search design notes](docs/video-search-v0.2.0.md) for storage, sampling, validation, and decoder limitations.
 
-The API is available in `openclip_gemma.video_search`:
+The API is available in `openvlclip.video_search`:
 
 ```python
-from openclip_gemma import create_model_and_transforms
-from openclip_gemma.video_search import build_or_update_video_index, search_video
+from openvlclip import create_model_and_transforms
+from openvlclip.video_search import build_or_update_video_index, search_video
 
 model, _, preprocess = create_model_and_transforms(device="cpu")
 build_or_update_video_index(
@@ -301,9 +306,9 @@ separate, smaller-dimensional index without model inference.
 
 ## OpenCLIP differences and compatibility
 
-`openclip-gemma` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. Only the `embeddinggemma-2` model is supported.
+`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. Only the `embeddinggemma-2` model is supported.
 
-| Area | `openclip-gemma` behavior |
+| Area | `openvlclip` behavior |
 | --- | --- |
 | Embeddings | The default is the native 768-dimensional EmbeddingGemma 2 output. `truncate_dim` optionally returns 512, 256, or 128 leading dimensions, re-normalized for cosine comparison. |
 | Images | Use the returned official processor transform. `encode_image()` accepts preprocessed float32 `[B, 3, H, W]` tensors; do not feed arbitrary OpenCLIP-normalized tensors or apply preprocessing twice. All images in a dense batch must have the same shape. |
@@ -424,13 +429,13 @@ The test skips CUDA checks when CUDA is unavailable; verify the probe reports `t
 
 ## License and model terms
 
-The `openclip-gemma` library is distributed under the [Apache License 2.0](LICENSE). It does not include EmbeddingGemma 2 model weights or OpenCLIP implementation code. OpenCLIP is distributed under the MIT License; EmbeddingGemma 2 weights are governed by the terms and license stated by Google for the pinned model revision on its [Hugging Face model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md).
+The OpenVLCLIP library is distributed under the [Apache License 2.0](LICENSE). It does not include EmbeddingGemma 2 model weights or OpenCLIP implementation code. OpenCLIP is distributed under the MIT License; EmbeddingGemma 2 weights are governed by the terms and license stated by Google for the pinned model revision on its [Hugging Face model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md).
 
 The library license does not replace or alter the separate terms that apply to downloaded model weights or third-party dependencies. Review those terms before use.
 
 ## About the name
 
-The name `openclip-gemma` reflects the purpose of this project: providing an OpenCLIP-inspired interface for Google's EmbeddingGemma 2 model.
+The name OpenVLCLIP reflects the goal of providing familiar interfaces across vision and vision-language foundation models. Version 0.5.0 supports EmbeddingGemma 2 only; it does not claim OpenCLIP affiliation or full OpenCLIP compatibility.
 
 This is an independently developed library, not an official extension of OpenCLIP or a Google-maintained package.
 

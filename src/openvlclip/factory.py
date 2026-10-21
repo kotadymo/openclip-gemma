@@ -8,10 +8,10 @@ from typing import Any
 
 import torch
 
-from openclip_gemma.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
-from openclip_gemma.model import EmbeddingGemmaCLIP
-from openclip_gemma.registry import ModelDescriptor, get_default_registry
-from openclip_gemma.transforms import EmbeddingGemmaPreprocess
+from openvlclip.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
+from openvlclip.model import EmbeddingGemmaCLIP
+from openvlclip.registry import ModelDescriptor, get_default_registry
+from openvlclip.transforms import EmbeddingGemmaPreprocess
 
 __all__ = [
     "MODEL_ID",

@@ -2,7 +2,7 @@ import inspect
 from collections.abc import Callable
 from typing import Any
 
-import openclip_gemma
+import openvlclip
 
 
 def _signature_contract(
@@ -15,7 +15,7 @@ def _signature_contract(
 
 
 def test_public_api_exports() -> None:
-    assert openclip_gemma.__all__ == [
+    assert openvlclip.__all__ == [
         "EmbeddingGemmaCLIP",
         "create_model",
         "create_model_and_transforms",
@@ -24,13 +24,13 @@ def test_public_api_exports() -> None:
         "list_models",
         "list_pretrained",
     ]
-    assert openclip_gemma.EmbeddingGemmaCLIP.__name__ == "EmbeddingGemmaCLIP"
-    assert callable(openclip_gemma.create_model)
-    assert callable(openclip_gemma.create_model_and_transforms)
-    assert callable(openclip_gemma.create_model_from_pretrained)
-    assert callable(openclip_gemma.get_tokenizer)
-    assert callable(openclip_gemma.list_models)
-    assert callable(openclip_gemma.list_pretrained)
+    assert openvlclip.EmbeddingGemmaCLIP.__name__ == "EmbeddingGemmaCLIP"
+    assert callable(openvlclip.create_model)
+    assert callable(openvlclip.create_model_and_transforms)
+    assert callable(openvlclip.create_model_from_pretrained)
+    assert callable(openvlclip.get_tokenizer)
+    assert callable(openvlclip.list_models)
+    assert callable(openvlclip.list_pretrained)
 
 
 def test_factory_signatures_preserve_v040_contract() -> None:
@@ -50,12 +50,12 @@ def test_factory_signatures_preserve_v040_contract() -> None:
         ("modalities", keyword_only, None),
         ("kwargs", variadic_keyword, empty),
     ]
-    assert _signature_contract(openclip_gemma.create_model) == factory_arguments
+    assert _signature_contract(openvlclip.create_model) == factory_arguments
     assert (
-        _signature_contract(openclip_gemma.create_model_and_transforms)
+        _signature_contract(openvlclip.create_model_and_transforms)
         == factory_arguments
     )
-    assert _signature_contract(openclip_gemma.create_model_from_pretrained) == [
+    assert _signature_contract(openvlclip.create_model_from_pretrained) == [
         ("model_name", positional, "embeddinggemma-2"),
         ("pretrained", positional, "official"),
         ("precision", positional, "fp32"),
@@ -67,14 +67,14 @@ def test_factory_signatures_preserve_v040_contract() -> None:
         ("modalities", keyword_only, None),
         ("kwargs", variadic_keyword, empty),
     ]
-    assert _signature_contract(openclip_gemma.get_tokenizer) == [
+    assert _signature_contract(openvlclip.get_tokenizer) == [
         ("model_name", positional, "embeddinggemma-2"),
         ("prompt_name", keyword_only, None),
         ("context_length", keyword_only, None),
         ("cache_dir", keyword_only, None),
     ]
-    assert _signature_contract(openclip_gemma.list_models) == []
-    assert _signature_contract(openclip_gemma.list_pretrained) == [
+    assert _signature_contract(openvlclip.list_models) == []
+    assert _signature_contract(openvlclip.list_pretrained) == [
         ("as_str", positional, False)
     ]
 
@@ -83,7 +83,7 @@ def test_model_signatures_preserve_v040_contract() -> None:
     positional = inspect.Parameter.POSITIONAL_OR_KEYWORD.name
     keyword_only = inspect.Parameter.KEYWORD_ONLY.name
     empty = inspect.Parameter.empty
-    model = openclip_gemma.EmbeddingGemmaCLIP
+    model = openvlclip.EmbeddingGemmaCLIP
 
     assert _signature_contract(model.encode_image) == [
         ("self", positional, empty),

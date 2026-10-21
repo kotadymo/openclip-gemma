@@ -8,11 +8,11 @@ from typing import TYPE_CHECKING, Any, NoReturn
 import torch
 from torch import nn
 
-from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
+from openvlclip.embedding_space import EmbeddingSpaceMetadata
 
 if TYPE_CHECKING:
-    from openclip_gemma.backends.base import Backend
-    from openclip_gemma.tokenizer import EmbeddingGemmaTokenizer
+    from openvlclip.backends.base import Backend
+    from openvlclip.tokenizer import EmbeddingGemmaTokenizer
 
 
 class EmbeddingGemmaCLIP(nn.Module):
@@ -50,7 +50,7 @@ class EmbeddingGemmaCLIP(nn.Module):
         ):
             raise ValueError("modalities must include 'text' and may include 'image'.")
         if inference_backend is None:
-            from openclip_gemma.backends.embeddinggemma2 import EmbeddingGemma2Backend
+            from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
 
             inference_backend = EmbeddingGemma2Backend()
         if not callable(

@@ -7,8 +7,8 @@ from typing import Any
 
 import torch
 
-from openclip_gemma.constants import MODEL_NAME
-from openclip_gemma.registry import get_default_registry
+from openvlclip.constants import MODEL_NAME
+from openvlclip.registry import get_default_registry
 
 OFFICIAL_PROMPTS = {
     "BitextMining": "task: search result | query: ",

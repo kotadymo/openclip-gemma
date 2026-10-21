@@ -23,10 +23,10 @@ import numpy as np
 import torch
 from PIL import Image
 
-from openclip_gemma import create_model_and_transforms
-from openclip_gemma.backends.embeddinggemma2 import SUPPORTED_EMBEDDING_DIMENSIONS
-from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
-from openclip_gemma.image_search import (
+from openvlclip import create_model_and_transforms
+from openvlclip.backends.embeddinggemma2 import SUPPORTED_EMBEDDING_DIMENSIONS
+from openvlclip.constants import MODEL_ID, MODEL_REVISION
+from openvlclip.image_search import (
     build_or_update_image_index,
     search_images,
 )
@@ -384,7 +384,7 @@ def _process_rss_bytes() -> int:
             raise
         raise RuntimeError(
             "Process RSS measurement requires the benchmark extra; install "
-            "openclip-gemma[benchmark]."
+            "openvlclip[benchmark]."
         ) from error
     return int(psutil.Process().memory_info().rss)
 
@@ -555,7 +555,7 @@ def run_benchmark(
                 )
             rss_after_image_embedding = _process_rss_bytes()
 
-            with TemporaryDirectory(prefix="openclip-gemma-mrl-") as temporary_root:
+            with TemporaryDirectory(prefix="openvlclip-mrl-") as temporary_root:
                 index_dir = Path(temporary_root) / str(embedding_dim)
                 _synchronize(device)
                 index_started = time.perf_counter()

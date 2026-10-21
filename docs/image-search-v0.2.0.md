@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-The image-index API builds a local index and searches it with Japanese or English text. The APIs are available from `openclip_gemma.image_search`. Video and frame search are documented separately.
+The image-index API builds a local index and searches it with Japanese or English text. The APIs are available from `openvlclip.image_search`. Video and frame search are documented separately.
 
 The indexer supports JPEG, PNG, and WebP files. It uses the pinned EmbeddingGemma 2 model, the supplied official image preprocessing transform, and the `encode_image()` and `encode_text()` methods. The default remains 768 dimensions; v0.4.0 also supports 512, 256, and 128 dimensions through MRL truncation and re-normalization.
 
@@ -102,4 +102,4 @@ uv run pytest tests/integration/test_image_search_integration.py -v
 
 Integration results validate embedding and search execution, not semantic retrieval quality. Synthetic test images must not be treated as evidence of recognition accuracy. Brute-force cosine search is appropriate for an initial correct implementation; FAISS or other indexing acceleration is deferred.
 
-The APIs are `build_or_update_image_index()` and `search_images()` in `openclip_gemma.image_search`; the batch iterator is in `openclip_gemma.batching`. They are not re-exported from the package root. No changes are made to the existing OpenCLIP-style API.
+The APIs are `build_or_update_image_index()` and `search_images()` in `openvlclip.image_search`; the batch iterator is in `openvlclip.batching`. They are not re-exported from the package root. No changes are made to the existing OpenCLIP-style API.
