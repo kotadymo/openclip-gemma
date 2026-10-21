@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, NoReturn
 import torch
 from torch import nn
 
-from openclip_gemma._dimensions import resolve_embedding_dimension
 from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
 
 if TYPE_CHECKING:
@@ -27,7 +26,7 @@ class EmbeddingGemmaCLIP(nn.Module):
         output_dict: bool = False,
         logit_scale_mode: str = "strict",
         modalities: tuple[str, ...] = ("text", "image"),
-        inference_backend: Backend | None = None,
+        inference_backend: Backend[Any, Any, Any] | None = None,
     ) -> None:
         super().__init__()
         if not isinstance(backend, nn.Module):
@@ -58,6 +57,12 @@ class EmbeddingGemmaCLIP(nn.Module):
             getattr(inference_backend, "encode_image", None)
         ) or not callable(getattr(inference_backend, "encode_text", None)):
             raise TypeError("inference_backend must implement image and text encoding.")
+        if not callable(
+            getattr(inference_backend, "validate_embedding_dimension", None)
+        ):
+            raise TypeError(
+                "inference_backend must implement validate_embedding_dimension()."
+            )
         self.backend = backend
         object.__setattr__(self, "_processor", processor)
         object.__setattr__(self, "_inference_backend", inference_backend)
@@ -81,6 +86,18 @@ class EmbeddingGemmaCLIP(nn.Module):
     def embedding_space_metadata(self) -> EmbeddingSpaceMetadata:
         """Return backend-owned identity settings used by persisted indexes."""
         return self._inference_backend.embedding_space_metadata
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        """Validate a dimension using this model's backend policy."""
+        return self._inference_backend.validate_embedding_dimension(
+            value,
+            name=name,
+        )
 
     def _create_tokenizer(
         self,
@@ -132,7 +149,7 @@ class EmbeddingGemmaCLIP(nn.Module):
                 "has no trained OpenCLIP logit_scale."
             )
 
-        expected_dimension = resolve_embedding_dimension(
+        expected_dimension = self.validate_embedding_dimension(
             truncate_dim,
             name="truncate_dim",
         )
@@ -191,7 +208,7 @@ class EmbeddingGemmaCLIP(nn.Module):
                 "has no trained OpenCLIP logit_scale."
             )
 
-        expected_dimension = resolve_embedding_dimension(
+        expected_dimension = self.validate_embedding_dimension(
             truncate_dim,
             name="truncate_dim",
         )

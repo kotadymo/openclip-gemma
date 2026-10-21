@@ -119,6 +119,18 @@ class FakeVideoModel(nn.Module):
         self.embedding_space_metadata = (
             embedding_space_metadata or EmbeddingGemma2Backend.embedding_space_metadata
         )
+        self._dimension_backend = EmbeddingGemma2Backend()
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        return self._dimension_backend.validate_embedding_dimension(
+            value,
+            name=name,
+        )
 
     def encode_image(
         self,

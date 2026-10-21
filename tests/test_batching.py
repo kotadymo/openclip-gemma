@@ -112,7 +112,7 @@ def test_batch_size_bounds_each_encoded_batch(tmp_path: Path) -> None:
     assert model.batch_sizes == [2, 2, 1]
 
 
-@pytest.mark.parametrize("embedding_dim", [128, 256, 512, 768])
+@pytest.mark.parametrize("embedding_dim", [128, 256, 384, 512, 768])
 def test_streams_requested_embedding_dimension(
     tmp_path: Path,
     embedding_dim: int,
@@ -133,9 +133,9 @@ def test_streams_requested_embedding_dimension(
 
 @pytest.mark.parametrize(
     ("embedding_dim", "exception"),
-    [(127, ValueError), (1024, ValueError), (True, TypeError)],
+    [(0, ValueError), (-1, ValueError), (True, TypeError)],
 )
-def test_rejects_unsupported_embedding_dimensions(
+def test_rejects_non_positive_or_non_integer_embedding_dimensions(
     embedding_dim: object,
     exception: type[Exception],
 ) -> None:
@@ -146,6 +146,23 @@ def test_rejects_unsupported_embedding_dimensions(
             [],
             embedding_dim=embedding_dim,  # type: ignore[arg-type]
         )
+
+
+def test_generic_encoder_accepts_a_model_specific_dimension(
+    tmp_path: Path,
+) -> None:
+    path = _write_image(tmp_path / "image.png", red=100)
+
+    results = list(
+        iter_image_embeddings(
+            FakeEncoder(),
+            _preprocess,
+            [path],
+            embedding_dim=384,
+        )
+    )
+
+    assert results[0][1].shape == (384,)
 
 
 @pytest.mark.parametrize("suffix", [".jpg", ".png"])

@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from openclip_gemma._dimensions import validate_embedding_dimension
+from openclip_gemma._dimensions import validate_positive_embedding_dimension
 
 _SIGNATURE_FIELDS = (
     "backend_id",
@@ -48,7 +48,7 @@ class EmbeddingSpace:
 
     def __post_init__(self) -> None:
         try:
-            dimension = validate_embedding_dimension(
+            dimension = validate_positive_embedding_dimension(
                 self.embedding_dimension,
                 name="embedding_dimension",
             )

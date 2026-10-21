@@ -144,7 +144,7 @@ def test_forward_uses_one_embedding_dimension_for_both_modalities(
 
 @pytest.mark.parametrize(
     ("truncate_dim", "exception"),
-    [(True, TypeError), (0, ValueError), (129, ValueError)],
+    [(True, TypeError), (0, ValueError), (129, ValueError), (384, ValueError)],
 )
 def test_forward_rejects_invalid_embedding_dimensions_before_encoding(
     truncate_dim: object,

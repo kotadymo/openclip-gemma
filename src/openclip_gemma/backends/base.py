@@ -2,23 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Mapping
+from typing import Protocol, TypeVar
 
 import torch
-from PIL import Image
 
+from openclip_gemma._dimensions import validate_positive_embedding_dimension
 from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
 
-if TYPE_CHECKING:
-    from openclip_gemma.model import EmbeddingGemmaCLIP
-    from openclip_gemma.tokenizer import EmbeddingGemmaTokenizer
-
-type ImagePreprocess = Callable[[Image.Image], torch.Tensor]
-type BackendTokenizer = Callable[[str | Sequence[str]], torch.Tensor]
+ModelT = TypeVar("ModelT", bound=torch.nn.Module)
+TokenizerT = TypeVar("TokenizerT")
+PreprocessT = TypeVar("PreprocessT")
 
 
-class Backend(Protocol):
+class Backend(Protocol[ModelT, TokenizerT, PreprocessT]):
     """Model-specific loading and inference operations used by the shared Factory."""
 
     backend_id: str
@@ -26,6 +23,13 @@ class Backend(Protocol):
     embedding_space_metadata: EmbeddingSpaceMetadata
 
     def capabilities_for(self, modalities: tuple[str, ...]) -> Mapping[str, bool]: ...
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int: ...
 
     def load_model(
         self,
@@ -38,7 +42,7 @@ class Backend(Protocol):
         output_dict: bool,
         logit_scale_mode: str,
         modalities: tuple[str, ...] | None,
-    ) -> EmbeddingGemmaCLIP: ...
+    ) -> ModelT: ...
 
     def create_tokenizer(
         self,
@@ -48,13 +52,13 @@ class Backend(Protocol):
         cache_dir: str | None,
         prompt_name: str | None,
         context_length: int | None,
-    ) -> EmbeddingGemmaTokenizer: ...
+    ) -> TokenizerT: ...
 
-    def create_preprocess(self, model: EmbeddingGemmaCLIP) -> ImagePreprocess: ...
+    def create_preprocess(self, model: ModelT) -> PreprocessT: ...
 
     def encode_image(
         self,
-        model: EmbeddingGemmaCLIP,
+        model: ModelT,
         image: torch.Tensor,
         *,
         normalize: bool,
@@ -63,9 +67,25 @@ class Backend(Protocol):
 
     def encode_text(
         self,
-        model: EmbeddingGemmaCLIP,
+        model: ModelT,
         text: torch.Tensor,
         *,
         normalize: bool,
         truncate_dim: int | None,
     ) -> torch.Tensor: ...
+
+
+def validate_model_embedding_dimension(
+    model: object,
+    value: object,
+    *,
+    name: str,
+) -> int:
+    """Delegate dimension policy to a model backend when one is available."""
+    validator = getattr(model, "validate_embedding_dimension", None)
+    if callable(validator):
+        dimension = validator(value, name=name)
+    else:
+        dimension = validate_positive_embedding_dimension(value, name=name)
+
+    return validate_positive_embedding_dimension(dimension, name=name)

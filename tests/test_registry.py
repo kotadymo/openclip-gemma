@@ -1,18 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
-from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 import torch
+from PIL import Image
 from torch import nn
 
 import openclip_gemma.factory as factory_module
 import openclip_gemma.tokenizer as tokenizer_module
-from openclip_gemma.backends.embeddinggemma2 import EmbeddingGemma2Backend
-from openclip_gemma.capabilities import CAPABILITY_KEYS
+from openclip_gemma.capabilities import (
+    CAPABILITY_KEYS,
+    capabilities_for_modalities,
+    freeze_capabilities,
+)
 from openclip_gemma.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
+from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
 from openclip_gemma.factory import create_model_and_transforms
 from openclip_gemma.model import EmbeddingGemmaCLIP
 from openclip_gemma.registry import (
@@ -23,18 +27,68 @@ from openclip_gemma.registry import (
 from openclip_gemma.tokenizer import get_tokenizer
 
 
-class FakeBackend(EmbeddingGemma2Backend):
+class FakeTokenizer:
+    pass
+
+
+class FakePreprocess:
+    def __call__(self, image: Image.Image) -> torch.Tensor:
+        return torch.zeros((3, image.height, image.width))
+
+
+class FakeModel(nn.Module):
+    def __init__(
+        self,
+        backend: FakeBackend,
+        modalities: tuple[str, ...],
+    ) -> None:
+        super().__init__()
+        self.anchor = nn.Parameter(torch.zeros(()))
+        self.backend = backend
+        self.modalities = modalities
+        self.embedding_space_metadata = backend.embedding_space_metadata
+        self.capabilities = backend.capabilities_for(modalities)
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        return self.backend.validate_embedding_dimension(value, name=name)
+
+
+class FakeBackend:
     backend_id = "test-backend"
-    embedding_space_metadata = replace(
-        EmbeddingGemma2Backend.embedding_space_metadata,
-        backend_id="test-backend",
+    capabilities = freeze_capabilities(
+        {
+            "image_embedding": True,
+            "text_embedding": True,
+            "image_text_similarity": True,
+            "patch_embedding": False,
+            "text_similarity_map": False,
+            "mrl": False,
+            "selective_loading": True,
+        }
+    )
+    embedding_space_metadata = EmbeddingSpaceMetadata(
+        backend_id=backend_id,
         model_id="test/model",
         model_revision="test-revision",
+        embedding_strategy="test-native-v1",
+        normalization="l2",
+        preprocessing_id="test-preprocess-v1",
+        index_prompt=None,
+        query_prompt_name=None,
+        query_prompt=None,
     )
 
     def __init__(self) -> None:
         self.load_options: dict[str, object] | None = None
-        self.preprocessed_model: EmbeddingGemmaCLIP | None = None
+        self.preprocessed_model: FakeModel | None = None
+        self.tokenizer_options: dict[str, object] | None = None
+        self.loaded_model: FakeModel | None = None
+        self.preprocess = FakePreprocess()
 
     def load_model(
         self,
@@ -47,7 +101,7 @@ class FakeBackend(EmbeddingGemma2Backend):
         output_dict: bool,
         logit_scale_mode: str,
         modalities: tuple[str, ...] | None,
-    ) -> EmbeddingGemmaCLIP:
+    ) -> FakeModel:
         self.load_options = {
             "model_id": model_id,
             "revision": revision,
@@ -58,20 +112,84 @@ class FakeBackend(EmbeddingGemma2Backend):
             "logit_scale_mode": logit_scale_mode,
             "modalities": modalities,
         }
-        raw_model = nn.Linear(2, 2, device=device, dtype=dtype)
-        processor = SimpleNamespace(image_processor=object())
-        return EmbeddingGemmaCLIP(
-            raw_model,
-            processor,
-            output_dict=output_dict,
-            logit_scale_mode=logit_scale_mode,
-            modalities=modalities or ("text", "image"),
-            inference_backend=self,
-        ).eval()
+        model = FakeModel(self, modalities or ("text", "image"))
+        self.loaded_model = model.to(device=device, dtype=dtype).eval()
+        return self.loaded_model
 
-    def create_preprocess(self, model: EmbeddingGemmaCLIP):
+    def create_tokenizer(
+        self,
+        *,
+        model_id: str,
+        revision: str,
+        cache_dir: str | None,
+        prompt_name: str | None,
+        context_length: int | None,
+    ) -> FakeTokenizer:
+        self.tokenizer_options = {
+            "model_id": model_id,
+            "revision": revision,
+            "cache_dir": cache_dir,
+            "prompt_name": prompt_name,
+            "context_length": context_length,
+        }
+        return FakeTokenizer()
+
+    def create_preprocess(self, model: FakeModel) -> FakePreprocess:
         self.preprocessed_model = model
-        return super().create_preprocess(model)
+        return self.preprocess
+
+    def capabilities_for(self, modalities: tuple[str, ...]) -> Mapping[str, bool]:
+        return capabilities_for_modalities(self.capabilities, modalities)
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        if value is None:
+            return 384
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"{name} must be the integer 384.")
+        if value != 384:
+            raise ValueError(f"{name} must be 384; received {value}.")
+        return value
+
+    def encode_image(
+        self,
+        _model: FakeModel,
+        image: torch.Tensor,
+        *,
+        normalize: bool,
+        truncate_dim: int | None,
+    ) -> torch.Tensor:
+        del _model
+        del normalize
+        dimension = self.validate_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
+        return image.new_zeros((image.shape[0], dimension))
+
+    def encode_text(
+        self,
+        _model: FakeModel,
+        text: torch.Tensor,
+        *,
+        normalize: bool,
+        truncate_dim: int | None,
+    ) -> torch.Tensor:
+        del _model
+        del normalize
+        dimension = self.validate_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
+        return torch.zeros(
+            (text.shape[0], dimension),
+            device=text.device,
+            dtype=torch.float32,
+        )
 
 
 def _fake_registry(backend: FakeBackend) -> ModelRegistry:
@@ -116,6 +234,32 @@ def test_registry_rejects_duplicate_names_and_invalid_descriptors() -> None:
         replace(descriptor, pretrained_aliases={MODEL_ID: "unknown-tag"})
 
 
+def test_registry_resolves_backend_only_for_exact_checkpoint_identity() -> None:
+    backend = FakeBackend()
+    registry = _fake_registry(backend)
+    metadata = backend.embedding_space_metadata
+
+    assert (
+        registry.resolve_backend_for_embedding_space(
+            backend_id=metadata.backend_id,
+            model_id=metadata.model_id,
+            revision=metadata.model_revision,
+        )
+        is backend
+    )
+    for backend_id, model_id, revision in (
+        ("other-backend", metadata.model_id, metadata.model_revision),
+        (metadata.backend_id, "other/model", metadata.model_revision),
+        (metadata.backend_id, metadata.model_id, "other-revision"),
+    ):
+        with pytest.raises(ValueError, match="No registered backend"):
+            registry.resolve_backend_for_embedding_space(
+                backend_id=backend_id,
+                model_id=model_id,
+                revision=revision,
+            )
+
+
 def test_registry_fake_backend_receives_factory_tokenizer_and_transform_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -132,7 +276,6 @@ def test_registry_fake_backend_receives_factory_tokenizer_and_transform_calls(
         logit_scale_mode="cosine",
     )
 
-    assert isinstance(model, EmbeddingGemmaCLIP)
     assert backend.load_options == {
         "model_id": "test/checkpoint",
         "revision": "test-revision",
@@ -145,27 +288,27 @@ def test_registry_fake_backend_receives_factory_tokenizer_and_transform_calls(
     }
     assert backend.preprocessed_model is model
     assert preprocess_train is preprocess_val
+    assert isinstance(preprocess_train, FakePreprocess)
+    assert isinstance(model, FakeModel)
+    assert not isinstance(model, EmbeddingGemmaCLIP)
     assert model.embedding_space_metadata is backend.embedding_space_metadata
+    assert model.validate_embedding_dimension(None, name="embedding_dim") == 384
 
-    tokenizer_result = object()
-    tokenizer_loader = Mock(return_value=tokenizer_result)
-    backend.create_tokenizer = tokenizer_loader  # type: ignore[method-assign]
-
-    result = get_tokenizer(
+    tokenizer_result = get_tokenizer(
         "fake-model",
         prompt_name="SearchQuery",
         context_length=128,
         cache_dir="token-cache",
     )
 
-    assert result is tokenizer_result
-    tokenizer_loader.assert_called_once_with(
-        model_id="test/model",
-        revision="test-revision",
-        cache_dir="token-cache",
-        prompt_name="SearchQuery",
-        context_length=128,
-    )
+    assert isinstance(tokenizer_result, FakeTokenizer)
+    assert backend.tokenizer_options == {
+        "model_id": "test/model",
+        "revision": "test-revision",
+        "cache_dir": "token-cache",
+        "prompt_name": "SearchQuery",
+        "context_length": 128,
+    }
 
 
 def test_model_capabilities_are_immutable_and_respect_selective_loading(
@@ -190,3 +333,7 @@ def test_model_capabilities_are_immutable_and_respect_selective_loading(
     assert text_model.capabilities["text_embedding"] is True
     with pytest.raises(TypeError):
         text_model.capabilities["image_embedding"] = True  # type: ignore[index]
+
+    assert isinstance(full_model, FakeModel)
+    with pytest.raises(ValueError, match="must be 384"):
+        full_model.validate_embedding_dimension(768, name="embedding_dim")

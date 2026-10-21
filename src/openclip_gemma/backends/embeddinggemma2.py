@@ -9,7 +9,11 @@ import torch
 from torch.nn import functional as F
 from transformers import AutoConfig, AutoModel, AutoProcessor, AutoTokenizer
 
-from openclip_gemma._dimensions import EMBEDDING_STRATEGY, resolve_embedding_dimension
+from openclip_gemma._dimensions import (
+    DEFAULT_EMBEDDING_DIMENSION,
+    EMBEDDING_STRATEGY,
+    validate_positive_embedding_dimension,
+)
 from openclip_gemma.capabilities import capabilities_for_modalities, freeze_capabilities
 from openclip_gemma.constants import (
     BACKEND_ID,
@@ -27,7 +31,8 @@ from openclip_gemma.tokenizer import (
 )
 from openclip_gemma.transforms import EmbeddingGemmaPreprocess
 
-_NATIVE_EMBEDDING_DIMENSION = 768
+SUPPORTED_EMBEDDING_DIMENSIONS = (128, 256, 512, 768)
+_NATIVE_EMBEDDING_DIMENSION = DEFAULT_EMBEDDING_DIMENSION
 
 
 def _truncate_and_normalize(
@@ -121,6 +126,23 @@ class EmbeddingGemma2Backend:
         query_prompt_name="SearchQuery",
         query_prompt=OFFICIAL_PROMPTS["SearchQuery"],
     )
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        """Validate dimensions supported by EmbeddingGemma 2's MRL head."""
+        if value is None:
+            return _NATIVE_EMBEDDING_DIMENSION
+        dimension = validate_positive_embedding_dimension(value, name=name)
+        if dimension not in SUPPORTED_EMBEDDING_DIMENSIONS:
+            supported = ", ".join(str(item) for item in SUPPORTED_EMBEDDING_DIMENSIONS)
+            raise ValueError(
+                f"{name} must be one of {{{supported}}}; received {dimension}."
+            )
+        return dimension
 
     def capabilities_for(self, modalities: tuple[str, ...]) -> Mapping[str, bool]:
         """Expose only operations supported by the loaded modalities."""
@@ -304,7 +326,7 @@ class EmbeddingGemma2Backend:
             )
         if not isinstance(normalize, bool):
             raise TypeError("normalize must be a bool.")
-        resolved_truncate_dim = resolve_embedding_dimension(
+        resolved_truncate_dim = self.validate_embedding_dimension(
             truncate_dim,
             name="truncate_dim",
         )
@@ -403,7 +425,7 @@ class EmbeddingGemma2Backend:
             )
         if not isinstance(normalize, bool):
             raise TypeError("normalize must be a bool.")
-        resolved_truncate_dim = resolve_embedding_dimension(
+        resolved_truncate_dim = self.validate_embedding_dimension(
             truncate_dim,
             name="truncate_dim",
         )

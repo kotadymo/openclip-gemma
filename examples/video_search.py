@@ -7,10 +7,27 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from openclip_gemma import create_model, create_model_and_transforms
+from openclip_gemma.constants import MODEL_NAME
+from openclip_gemma.registry import get_default_registry
 from openclip_gemma.video_search import (
     build_or_update_video_index,
     search_video,
 )
+
+
+def _parse_embedding_dim(value: str) -> int:
+    try:
+        dimension = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("embedding_dim must be an integer.") from error
+    return (
+        get_default_registry()
+        .resolve(MODEL_NAME)
+        .backend.validate_embedding_dimension(
+            dimension,
+            name="embedding_dim",
+        )
+    )
 
 
 def _format_timestamp(timestamp_seconds: float) -> str:
@@ -49,8 +66,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     index_parser.add_argument(
         "--embedding-dim",
-        type=int,
-        choices=(128, 256, 512, 768),
+        type=_parse_embedding_dim,
         default=768,
         help="Embedding dimension to store (default: 768).",
     )

@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from types import MappingProxyType
+from typing import Any
 
 from openclip_gemma.backends.base import Backend
 from openclip_gemma.capabilities import freeze_capabilities
@@ -33,7 +34,7 @@ class ModelDescriptor:
     pretrained_aliases: Mapping[str, str]
     capabilities: Mapping[str, bool]
     embedding_space_metadata: EmbeddingSpaceMetadata
-    backend: Backend
+    backend: Backend[Any, Any, Any]
 
     def __post_init__(self) -> None:
         canonical_name = normalize_model_name(self.model_name)
@@ -55,6 +56,7 @@ class ModelDescriptor:
             "load_model",
             "create_tokenizer",
             "create_preprocess",
+            "validate_embedding_dimension",
             "encode_image",
             "encode_text",
         ):
@@ -164,6 +166,26 @@ class ModelRegistry:
             raise ValueError(
                 f"Unsupported model_name {model_name!r}; supported models: {supported}."
             ) from error
+
+    def resolve_backend_for_embedding_space(
+        self,
+        *,
+        backend_id: str,
+        model_id: str,
+        revision: str,
+    ) -> Backend[Any, Any, Any]:
+        """Find a registered backend by the stable checkpoint identity in an index."""
+        for descriptor in self._descriptors:
+            if (
+                descriptor.backend_id == backend_id
+                and descriptor.model_id == model_id
+                and descriptor.revision == revision
+            ):
+                return descriptor.backend
+        raise ValueError(
+            "No registered backend matches the embedding-space identity "
+            f"{backend_id!r}/{model_id!r}@{revision!r}."
+        )
 
     def list_models(self) -> list[str]:
         """Return canonical model names in registry order."""

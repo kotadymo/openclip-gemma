@@ -16,8 +16,9 @@ from PIL import Image
 from openclip_gemma._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
-    validate_embedding_dimension,
+    validate_positive_embedding_dimension,
 )
+from openclip_gemma.backends.base import validate_model_embedding_dimension
 from openclip_gemma.batching import ImagePath, iter_image_embeddings
 from openclip_gemma.constants import (
     BACKEND_ID,
@@ -37,6 +38,7 @@ from openclip_gemma.index_storage import (
     _open_numpy_archive,
     _save_numpy_archive_atomic,
 )
+from openclip_gemma.registry import get_default_registry
 from openclip_gemma.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 _INDEX_FILENAME = "index.npz"
@@ -72,6 +74,13 @@ class _ImageSearchModel(Protocol):
     embedding_space_metadata: EmbeddingSpaceMetadata
 
     def parameters(self) -> Iterator[torch.nn.Parameter]: ...
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int: ...
 
     def encode_image(
         self,
@@ -221,6 +230,11 @@ def _model_embedding_space(
             "The model does not expose registered embedding-space metadata."
         )
     try:
+        embedding_dimension = validate_model_embedding_dimension(
+            model,
+            embedding_dimension,
+            name="embedding_dimension",
+        )
         return metadata.for_index(
             embedding_dimension=embedding_dimension,
             model_precision=precision,
@@ -372,7 +386,10 @@ def _save_index(index_dir: Path, index: _ImageIndex, precision: str) -> Path:
     if embeddings.ndim != 2 or embeddings.shape[0] != len(index.records):
         raise ImageIndexError("Refusing to save an index with inconsistent dimensions.")
     try:
-        validate_embedding_dimension(embeddings.shape[1], name="embedding_dimension")
+        validate_positive_embedding_dimension(
+            embeddings.shape[1],
+            name="embedding_dimension",
+        )
     except (TypeError, ValueError) as error:
         raise ImageIndexError(
             "Refusing to save an index with an unsupported embedding dimension."
@@ -426,7 +443,7 @@ def _load_index(
         raise
 
     if expected_embedding_dimension is not None:
-        expected_embedding_dimension = validate_embedding_dimension(
+        expected_embedding_dimension = validate_positive_embedding_dimension(
             expected_embedding_dimension,
             name="embedding_dim",
         )
@@ -490,7 +507,7 @@ def _validate_metadata(
             "Image index embedding_strategy is missing or unsupported."
         )
     try:
-        embedding_dimension = validate_embedding_dimension(
+        embedding_dimension = validate_positive_embedding_dimension(
             metadata.get("embedding_dimension"),
             name="embedding_dimension",
         )
@@ -603,7 +620,8 @@ def _build_or_update_image_index(
 ) -> ImageIndexUpdate:
     """Create or incrementally update a safe, local image index."""
     _validate_batch_size(batch_size)
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_model_embedding_dimension(
+        model,
         embedding_dim,
         name="embedding_dim",
     )
@@ -865,11 +883,45 @@ def convert_image_index(
     embedding_dim: int,
 ) -> Path:
     """Convert an image index to a supported dimension without model inference."""
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_positive_embedding_dimension(
         embedding_dim,
         name="embedding_dim",
     )
     index = _load_index(index_dir)
+    try:
+        backend = get_default_registry().resolve_backend_for_embedding_space(
+            backend_id=index.embedding_space.backend_id,
+            model_id=index.embedding_space.model_id,
+            revision=index.embedding_space.model_revision,
+        )
+    except ValueError as error:
+        raise ImageIndexCompatibilityError(
+            "Image index conversion requires a registered backend matching its "
+            "embedding-space identity."
+        ) from error
+    if (
+        index.embedding_space.embedding_strategy
+        != backend.embedding_space_metadata.embedding_strategy
+    ):
+        raise ImageIndexCompatibilityError(
+            "Image index conversion is not supported for this embedding strategy."
+        )
+    source_dimension = index.embeddings.shape[1]
+    try:
+        validate_model_embedding_dimension(
+            backend,
+            source_dimension,
+            name="source_embedding_dimension",
+        )
+    except (TypeError, ValueError) as error:
+        raise ImageIndexCompatibilityError(
+            "Image index source dimension is not supported by its registered backend."
+        ) from error
+    embedding_dim = validate_model_embedding_dimension(
+        backend,
+        embedding_dim,
+        name="embedding_dim",
+    )
     source_dir = Path(index_dir).expanduser().resolve()
     destination = Path(output_dir).expanduser()
     if destination.exists():
@@ -877,7 +929,6 @@ def convert_image_index(
     if destination.resolve() == source_dir:
         raise ValueError("Image index conversion output must differ from its source.")
 
-    source_dimension = index.embeddings.shape[1]
     if embedding_dim > source_dimension:
         raise ValueError(
             f"Cannot expand an image index from {source_dimension} to "

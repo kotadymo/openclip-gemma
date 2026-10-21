@@ -18,8 +18,9 @@ from PIL import Image
 from openclip_gemma._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
-    validate_embedding_dimension,
+    validate_positive_embedding_dimension,
 )
+from openclip_gemma.backends.base import validate_model_embedding_dimension
 from openclip_gemma.batching import _iter_preprocessed_embeddings
 from openclip_gemma.constants import (
     BACKEND_ID,
@@ -48,6 +49,7 @@ from openclip_gemma.index_storage import (
     _open_numpy_archive,
     _save_numpy_archive_atomic,
 )
+from openclip_gemma.registry import get_default_registry
 from openclip_gemma.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 _VIDEO_INDEX_FILENAME = "video-index.npz"
@@ -507,7 +509,7 @@ def _save_video_index(
             "Refusing to save a video index with inconsistent dimensions."
         )
     try:
-        validate_embedding_dimension(
+        validate_positive_embedding_dimension(
             index.embeddings.shape[1],
             name="embedding_dimension",
         )
@@ -655,7 +657,7 @@ def _validate_video_metadata(
             "Video index embedding_strategy is missing or unsupported."
         )
     try:
-        embedding_dimension = validate_embedding_dimension(
+        embedding_dimension = validate_positive_embedding_dimension(
             metadata.get("embedding_dimension"),
             name="embedding_dimension",
         )
@@ -846,7 +848,7 @@ def _load_video_index(
             f"Could not read video index {index_path}: {error}"
         ) from error
     if expected_embedding_dimension is not None:
-        expected_embedding_dimension = validate_embedding_dimension(
+        expected_embedding_dimension = validate_positive_embedding_dimension(
             expected_embedding_dimension,
             name="embedding_dim",
         )
@@ -948,7 +950,8 @@ def _build_or_update_video_index(
     """Create or incrementally update a versioned index of sampled video frames."""
     interval_seconds, interval_fraction = _validate_interval(interval)
     _validate_batch_size(batch_size)
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_model_embedding_dimension(
+        model,
         embedding_dim,
         name="embedding_dim",
     )
@@ -1218,11 +1221,45 @@ def convert_video_index(
     embedding_dim: int,
 ) -> Path:
     """Convert a video index to a supported dimension without model inference."""
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_positive_embedding_dimension(
         embedding_dim,
         name="embedding_dim",
     )
     index = _load_video_index(index_dir)
+    try:
+        backend = get_default_registry().resolve_backend_for_embedding_space(
+            backend_id=index.embedding_space.backend_id,
+            model_id=index.embedding_space.model_id,
+            revision=index.embedding_space.model_revision,
+        )
+    except ValueError as error:
+        raise VideoIndexCompatibilityError(
+            "Video index conversion requires a registered backend matching its "
+            "embedding-space identity."
+        ) from error
+    if (
+        index.embedding_space.embedding_strategy
+        != backend.embedding_space_metadata.embedding_strategy
+    ):
+        raise VideoIndexCompatibilityError(
+            "Video index conversion is not supported for this embedding strategy."
+        )
+    source_dimension = index.embeddings.shape[1]
+    try:
+        validate_model_embedding_dimension(
+            backend,
+            source_dimension,
+            name="source_embedding_dimension",
+        )
+    except (TypeError, ValueError) as error:
+        raise VideoIndexCompatibilityError(
+            "Video index source dimension is not supported by its registered backend."
+        ) from error
+    embedding_dim = validate_model_embedding_dimension(
+        backend,
+        embedding_dim,
+        name="embedding_dim",
+    )
     source_dir = Path(index_dir).expanduser().resolve()
     destination = Path(output_dir).expanduser()
     if destination.exists():
@@ -1230,7 +1267,6 @@ def convert_video_index(
     if destination.resolve() == source_dir:
         raise ValueError("Video index conversion output must differ from its source.")
 
-    source_dimension = index.embeddings.shape[1]
     if embedding_dim > source_dimension:
         raise ValueError(
             f"Cannot expand a video index from {source_dimension} to "

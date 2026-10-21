@@ -24,7 +24,7 @@ import torch
 from PIL import Image
 
 from openclip_gemma import create_model_and_transforms
-from openclip_gemma._dimensions import SUPPORTED_EMBEDDING_DIMENSIONS
+from openclip_gemma.backends.embeddinggemma2 import SUPPORTED_EMBEDDING_DIMENSIONS
 from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
 from openclip_gemma.image_search import (
     build_or_update_image_index,
