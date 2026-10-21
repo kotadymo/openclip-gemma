@@ -7,7 +7,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from openclip_gemma.model import EmbeddingGemmaCLIP, _truncate_and_normalize
+from openclip_gemma.backends.embeddinggemma2 import _truncate_and_normalize
+from openclip_gemma.model import EmbeddingGemmaCLIP
 
 
 def _model(
@@ -143,7 +144,7 @@ def test_forward_uses_one_embedding_dimension_for_both_modalities(
 
 @pytest.mark.parametrize(
     ("truncate_dim", "exception"),
-    [(True, TypeError), (0, ValueError), (129, ValueError)],
+    [(True, TypeError), (0, ValueError), (129, ValueError), (384, ValueError)],
 )
 def test_forward_rejects_invalid_embedding_dimensions_before_encoding(
     truncate_dim: object,

@@ -117,6 +117,18 @@ def test_search_cli_forwards_embedding_dimension(
             ],
         ),
         (
+            "image_search",
+            [
+                "index",
+                "--images",
+                "photos",
+                "--output",
+                "image-index",
+                "--embedding-dim",
+                "384",
+            ],
+        ),
+        (
             "video_search",
             [
                 "index",
@@ -128,6 +140,18 @@ def test_search_cli_forwards_embedding_dimension(
                 "64",
             ],
         ),
+        (
+            "video_search",
+            [
+                "index",
+                "--videos",
+                "videos",
+                "--output",
+                "video-index",
+                "--embedding-dim",
+                "384",
+            ],
+        ),
     ],
 )
 def test_search_cli_rejects_unsupported_embedding_dimension(
@@ -137,3 +161,32 @@ def test_search_cli_rejects_unsupported_embedding_dimension(
     module = _load_cli(script_name)
     with pytest.raises(SystemExit, match="2"):
         module["_build_parser"]().parse_args(arguments)  # type: ignore[operator]
+
+
+@pytest.mark.parametrize("script_name", ["image_search", "video_search"])
+def test_search_cli_delegates_dimension_validation_to_backend(
+    script_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_cli(script_name)
+    validator = Mock(return_value=384)
+    backend = SimpleNamespace(validate_embedding_dimension=validator)
+    registry = SimpleNamespace(
+        resolve=Mock(return_value=SimpleNamespace(backend=backend))
+    )
+    namespace = module["_build_parser"].__globals__  # type: ignore[union-attr]
+    monkeypatch.setitem(namespace, "get_default_registry", lambda: registry)
+    args = module["_build_parser"]().parse_args(
+        [
+            "index",
+            "--images" if script_name == "image_search" else "--videos",
+            "input",
+            "--output",
+            "index",
+            "--embedding-dim",
+            "384",
+        ]
+    )
+
+    assert args.embedding_dim == 384
+    validator.assert_called_once_with(384, name="embedding_dim")

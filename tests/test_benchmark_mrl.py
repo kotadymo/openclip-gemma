@@ -15,6 +15,7 @@ from PIL import Image
 from torch import nn
 
 from openclip_gemma import image_search
+from openclip_gemma.backends.embeddinggemma2 import EmbeddingGemma2Backend
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _BENCHMARK_NAMESPACE: dict[str, Any] = runpy.run_path(
@@ -35,6 +36,7 @@ class FakeModel(nn.Module):
         super().__init__()
         self.anchor = nn.Parameter(torch.zeros(()))
         self.image_batch_sizes: list[int] = []
+        self.embedding_space_metadata = EmbeddingGemma2Backend.embedding_space_metadata
 
     def encode_image(
         self,
@@ -91,8 +93,7 @@ def _write_image(path: Path, color: tuple[int, int, int]) -> Path:
 
 def test_image_batches_remain_on_cpu_and_encode_in_input_order() -> None:
     tensors = [
-        torch.full((1, 2, 2), value, dtype=torch.float32)
-        for value in (1.0, 2.0, 3.0)
+        torch.full((1, 2, 2), value, dtype=torch.float32) for value in (1.0, 2.0, 3.0)
     ]
     batches = _image_batches(tensors, batch_size=2)  # type: ignore[operator]
 
@@ -256,18 +257,22 @@ def test_run_benchmark_measures_real_index_and_labeled_queries(
         metrics = report["dimensions"][str(dimension)]
         assert metrics["index"]["image_count"] == 3
         assert metrics["index"]["vector_bytes"] == 3 * dimension * 4
-        assert metrics["index"]["serialized_index_bytes"] > metrics["index"][
-            "vector_bytes"
-        ]
+        assert (
+            metrics["index"]["serialized_index_bytes"]
+            > metrics["index"]["vector_bytes"]
+        )
         assert (
             metrics["process_rss_bytes"]["after_query_search"]
             == 12350 + dimension_index * 4
         )
         assert metrics["cuda_allocator"] == "unmeasured"
         assert metrics["query_search"]["recall_at_k"]["1"] == 1.0
-    assert report["dimensions"]["128"]["query_search"][
-        "ranking_agreement_vs_768"
-    ]["top_k_overlap"] == 1.0
+    assert (
+        report["dimensions"]["128"]["query_search"]["ranking_agreement_vs_768"][
+            "top_k_overlap"
+        ]
+        == 1.0
+    )
 
     csv_report = _serialize_report(report, "csv")  # type: ignore[operator]
     assert "serialized_index_bytes" in csv_report

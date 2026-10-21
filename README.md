@@ -148,6 +148,12 @@ image-only and audio inference are not supported. A text-only model raises an
 explicit error from `encode_image()`. Factories that return image transforms
 require the image modality.
 
+`model.capabilities` is a read-only mapping with `image_embedding`,
+`text_embedding`, `image_text_similarity`, `patch_embedding`,
+`text_similarity_map`, `mrl`, and `selective_loading` flags. Its values reflect
+the loaded modalities: a text-only model reports image embedding and
+image/text similarity as unavailable.
+
 ## Zero-shot image classification
 
 For a set of candidate labels, encode images and candidate descriptions, then rank each image's candidate scores:
@@ -305,6 +311,7 @@ separate, smaller-dimensional index without model inference.
 | Similarity | Normalize embeddings and compute cosine similarity. The model does not provide an OpenCLIP-trained `logit_scale`. |
 | Factory discovery | `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()` expose only the supported EmbeddingGemma 2 checkpoint. |
 | Selective loading | `create_model(modalities=("text",))` omits vision and audio configs; `("text", "image")` omits audio. The default `None` loads the existing full configuration. |
+| Capabilities | `model.capabilities` is immutable and reflects the loaded modalities; unsupported patch embeddings and similarity maps are reported as false. |
 | Model methods | `encode_image()`, `encode_text()`, `eval()`, and `to()` are supported. `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"`; the default strict mode rejects them. |
 | Scope | The core model API does not support training, fine-tuning, audio, or arbitrary architectures. Video-frame search is a separate v0.2.0 API, not a core OpenCLIP-compatible model feature. |
 

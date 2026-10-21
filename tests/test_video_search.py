@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import json
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,8 @@ from PIL import Image
 from torch import nn
 
 from openclip_gemma import video_search
+from openclip_gemma.backends.embeddinggemma2 import EmbeddingGemma2Backend
+from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
 from openclip_gemma.index_storage import _save_numpy_archive_atomic
 from openclip_gemma.video_search import (
     VideoIndexCompatibilityError,
@@ -103,12 +106,31 @@ class FakeAV:
 
 
 class FakeVideoModel(nn.Module):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        embedding_space_metadata: EmbeddingSpaceMetadata | None = None,
+    ) -> None:
         super().__init__()
         self.anchor = nn.Parameter(torch.zeros(()))
         self.batch_sizes: list[int] = []
         self.inference_modes: list[bool] = []
         self.received_tokens: list[torch.Tensor] = []
+        self.embedding_space_metadata = (
+            embedding_space_metadata or EmbeddingGemma2Backend.embedding_space_metadata
+        )
+        self._dimension_backend = EmbeddingGemma2Backend()
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        return self._dimension_backend.validate_embedding_dimension(
+            value,
+            name=name,
+        )
 
     def encode_image(
         self,
@@ -200,7 +222,19 @@ def _rewrite_video_index_version(index_path: Path, version: int) -> None:
     _rewrite_video_index_metadata(
         index_path,
         {"format_version": version},
-        remove=("embedding_strategy",) if version == 2 else (),
+        remove=(
+            (
+                "embedding_strategy",
+                "backend_id",
+                "normalization",
+                "index_prompt",
+                "query_prompt_name",
+                "query_prompt",
+                "embedding_space_id",
+            )
+            if version == 2
+            else ()
+        ),
     )
 
 
@@ -495,6 +529,40 @@ def test_video_index_builds_and_searches_at_requested_dimension(
     assert metadata["format_version"] == 3
     assert metadata["embedding_dimension"] == embedding_dim
     assert metadata["embedding_strategy"] == "leading-dimensions-l2-v1"
+
+
+def test_video_search_rejects_model_with_same_dimension_but_different_space(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    index_dir = tmp_path / "index"
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+    build_or_update_video_index(
+        FakeVideoModel(),
+        _preprocess,
+        videos_dir,
+        index_dir,
+    )
+    metadata = replace(
+        EmbeddingGemma2Backend.embedding_space_metadata,
+        model_id="different/model",
+    )
+    monkeypatch.setattr(
+        video_search,
+        "get_tokenizer",
+        lambda **kwargs: pytest.fail("incompatible model must fail before tokenizing"),
+    )
+
+    with pytest.raises(VideoIndexCompatibilityError, match="embedding space"):
+        search_video(
+            FakeVideoModel(embedding_space_metadata=metadata), index_dir, "red"
+        )
 
 
 @pytest.mark.parametrize("strategy", [None, "unsupported-strategy"])

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import os
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -18,13 +18,27 @@ from PIL import Image
 from openclip_gemma._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
-    validate_embedding_dimension,
+    validate_positive_embedding_dimension,
 )
+from openclip_gemma.backends.base import validate_model_embedding_dimension
 from openclip_gemma.batching import _iter_preprocessed_embeddings
-from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
+from openclip_gemma.constants import (
+    BACKEND_ID,
+    EMBEDDING_NORMALIZATION,
+    IMAGE_PREPROCESSING_ID,
+    MODEL_ID,
+    MODEL_REVISION,
+)
+from openclip_gemma.embedding_space import (
+    EmbeddingSpace,
+    has_embedding_space_metadata,
+)
 from openclip_gemma.image_search import (
     _PREPROCESSING_ID,
+    ImageIndexCompatibilityError,
+    _get_search_tokenizer,
     _ImageSearchModel,
+    _model_embedding_space,
     _model_settings,
     _path_key,
     _validate_batch_size,
@@ -35,7 +49,8 @@ from openclip_gemma.index_storage import (
     _open_numpy_archive,
     _save_numpy_archive_atomic,
 )
-from openclip_gemma.tokenizer import get_tokenizer
+from openclip_gemma.registry import get_default_registry
+from openclip_gemma.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 _VIDEO_INDEX_FILENAME = "video-index.npz"
 _VIDEO_INDEX_KIND = "openclip-gemma.video-index"
@@ -99,6 +114,7 @@ class _VideoIndex:
     frames: tuple[_FrameRecord, ...]
     embeddings: _EmbeddingMatrix
     precision: str
+    embedding_space: EmbeddingSpace
 
 
 @dataclass(frozen=True)
@@ -371,17 +387,87 @@ def _frame_sort_key(record: _FrameRecord) -> tuple[str, float, str, int]:
     )
 
 
+def _video_embedding_space(
+    model: _ImageSearchModel,
+    *,
+    embedding_dimension: int,
+    precision: str,
+) -> EmbeddingSpace:
+    try:
+        return _model_embedding_space(
+            model,
+            embedding_dimension=embedding_dimension,
+            precision=precision,
+            sampling_method=_SAMPLING_METHOD,
+        )
+    except ImageIndexCompatibilityError as error:
+        raise VideoIndexCompatibilityError(str(error)) from error
+
+
+def _embedding_space_from_video_metadata(
+    metadata: dict[str, Any],
+    *,
+    embedding_dimension: int,
+    precision: str,
+) -> EmbeddingSpace:
+    if has_embedding_space_metadata(metadata):
+        try:
+            embedding_space = EmbeddingSpace.from_metadata(metadata)
+        except (TypeError, ValueError) as error:
+            raise VideoIndexCompatibilityError(
+                f"Video index embedding-space metadata is invalid: {error}"
+            ) from error
+        if embedding_space.embedding_strategy != EMBEDDING_STRATEGY:
+            raise VideoIndexCompatibilityError(
+                "Video index embedding_strategy is missing or unsupported."
+            )
+        if embedding_space.sampling_method != _SAMPLING_METHOD:
+            raise VideoIndexCompatibilityError(
+                "Video index sampling_method does not match the current configuration."
+            )
+        return embedding_space
+
+    for name, expected in (
+        ("model_id", MODEL_ID),
+        ("model_revision", MODEL_REVISION),
+        ("preprocessing_id", _PREPROCESSING_ID),
+        ("storage_dtype", "float32"),
+        ("sampling_method", _SAMPLING_METHOD),
+    ):
+        if metadata.get(name) != expected:
+            raise VideoIndexCompatibilityError(
+                f"Video index {name} does not match the current configuration."
+            )
+    strategy = metadata.get("embedding_strategy", EMBEDDING_STRATEGY)
+    if strategy != EMBEDDING_STRATEGY:
+        raise VideoIndexCompatibilityError(
+            "Video index embedding_strategy is missing or unsupported."
+        )
+    return EmbeddingSpace(
+        backend_id=BACKEND_ID,
+        model_id=MODEL_ID,
+        model_revision=MODEL_REVISION,
+        embedding_dimension=embedding_dimension,
+        embedding_strategy=EMBEDDING_STRATEGY,
+        normalization=EMBEDDING_NORMALIZATION,
+        preprocessing_id=IMAGE_PREPROCESSING_ID,
+        index_prompt=None,
+        query_prompt_name="SearchQuery",
+        query_prompt=OFFICIAL_PROMPTS["SearchQuery"],
+        model_precision=precision,
+        sampling_method=_SAMPLING_METHOD,
+    )
+
+
 def _metadata_for_index(index: _VideoIndex, precision: str) -> dict[str, object]:
+    if index.embedding_space.model_precision != precision:
+        raise VideoSearchError(
+            "Video index precision does not match its embedding space."
+        )
     return {
         "kind": _VIDEO_INDEX_KIND,
         "format_version": _VIDEO_INDEX_FORMAT_VERSION,
-        "model_id": MODEL_ID,
-        "model_revision": MODEL_REVISION,
-        "model_precision": precision,
-        "embedding_dimension": int(index.embeddings.shape[1]),
-        "embedding_strategy": EMBEDDING_STRATEGY,
-        "preprocessing_id": _PREPROCESSING_ID,
-        "storage_dtype": "float32",
+        **index.embedding_space.to_metadata(),
         "video_root": str(index.video_root),
         "recursive": index.recursive,
         "interval_seconds": index.interval_seconds,
@@ -423,7 +509,7 @@ def _save_video_index(
             "Refusing to save a video index with inconsistent dimensions."
         )
     try:
-        validate_embedding_dimension(
+        validate_positive_embedding_dimension(
             index.embeddings.shape[1],
             name="embedding_dimension",
         )
@@ -549,6 +635,7 @@ def _validate_video_metadata(
     tuple[_VideoRecord, ...],
     tuple[_FrameRecord, ...],
     int,
+    EmbeddingSpace,
 ]:
     if metadata.get("kind") != _VIDEO_INDEX_KIND:
         raise VideoIndexCompatibilityError(
@@ -569,20 +656,8 @@ def _validate_video_metadata(
         raise VideoIndexCompatibilityError(
             "Video index embedding_strategy is missing or unsupported."
         )
-    for name, expected in (
-        ("model_id", MODEL_ID),
-        ("model_revision", MODEL_REVISION),
-        ("preprocessing_id", _PREPROCESSING_ID),
-        ("storage_dtype", "float32"),
-        ("sampling_method", _SAMPLING_METHOD),
-    ):
-        if metadata.get(name) != expected:
-            raise VideoIndexCompatibilityError(
-                f"Video index {name} does not match the current configuration."
-            )
-
     try:
-        embedding_dimension = validate_embedding_dimension(
+        embedding_dimension = validate_positive_embedding_dimension(
             metadata.get("embedding_dimension"),
             name="embedding_dimension",
         )
@@ -606,6 +681,19 @@ def _validate_video_metadata(
     if expected_precision is not None and precision != expected_precision:
         raise VideoIndexCompatibilityError(
             "Video index model precision does not match the loaded model."
+        )
+
+    embedding_space = _embedding_space_from_video_metadata(
+        metadata,
+        embedding_dimension=embedding_dimension,
+        precision=precision,
+    )
+    if (
+        embedding_space.embedding_dimension != embedding_dimension
+        or embedding_space.model_precision != precision
+    ):
+        raise VideoIndexCompatibilityError(
+            "Video index embedding-space metadata conflicts with its legacy fields."
         )
 
     interval = metadata.get("interval_seconds")
@@ -712,7 +800,15 @@ def _validate_video_metadata(
         raise VideoSearchError(
             "Video index metadata contains an invalid embedding checksum."
         )
-    return video_root, recursive, interval_seconds, videos, frames, embedding_dimension
+    return (
+        video_root,
+        recursive,
+        interval_seconds,
+        videos,
+        frames,
+        embedding_dimension,
+        embedding_space,
+    )
 
 
 def _load_video_index(
@@ -722,6 +818,7 @@ def _load_video_index(
     expected_precision: str | None = None,
     expected_interval: float | None = None,
     expected_embedding_dimension: int | None = None,
+    expected_embedding_space: EmbeddingSpace | None = None,
 ) -> _VideoIndex:
     index_path = Path(index_dir).expanduser() / _VIDEO_INDEX_FILENAME
     try:
@@ -736,6 +833,7 @@ def _load_video_index(
                 videos,
                 frames,
                 embedding_dimension,
+                embedding_space,
             ) = _validate_video_metadata(
                 metadata,
                 expected_root=expected_root,
@@ -750,7 +848,7 @@ def _load_video_index(
             f"Could not read video index {index_path}: {error}"
         ) from error
     if expected_embedding_dimension is not None:
-        expected_embedding_dimension = validate_embedding_dimension(
+        expected_embedding_dimension = validate_positive_embedding_dimension(
             expected_embedding_dimension,
             name="embedding_dim",
         )
@@ -760,6 +858,14 @@ def _load_video_index(
                 f"dimension {expected_embedding_dimension}; convert it or use a new "
                 "index directory."
             )
+    if (
+        expected_embedding_space is not None
+        and embedding_space != expected_embedding_space
+    ):
+        raise VideoIndexCompatibilityError(
+            "Video index embedding space does not match the requested model, "
+            "revision, preprocessing, prompt, sampling, or precision."
+        )
     expected_shape = (len(frames), embedding_dimension)
     if embeddings.dtype != np.float32 or embeddings.shape != expected_shape:
         raise VideoSearchError(
@@ -779,7 +885,8 @@ def _load_video_index(
         videos,
         frames,
         embeddings,
-        str(metadata["model_precision"]),
+        embedding_space.model_precision,
+        embedding_space,
     )
 
 
@@ -843,7 +950,8 @@ def _build_or_update_video_index(
     """Create or incrementally update a versioned index of sampled video frames."""
     interval_seconds, interval_fraction = _validate_interval(interval)
     _validate_batch_size(batch_size)
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_model_embedding_dimension(
+        model,
         embedding_dim,
         name="embedding_dim",
     )
@@ -853,6 +961,11 @@ def _build_or_update_video_index(
         raise ValueError(f"Video index output path is not a directory: {output_dir}")
     index_path = output_dir / _VIDEO_INDEX_FILENAME
     _, precision = _model_settings(model)
+    embedding_space = _video_embedding_space(
+        model,
+        embedding_dimension=embedding_dim,
+        precision=precision,
+    )
 
     previous: _VideoIndex | None = None
     if index_path.exists():
@@ -864,6 +977,7 @@ def _build_or_update_video_index(
             expected_precision=precision,
             expected_interval=interval_seconds,
             expected_embedding_dimension=embedding_dim,
+            expected_embedding_space=embedding_space,
         )
     elif not videos:
         raise ValueError(f"No supported video files were found in {root}.")
@@ -958,6 +1072,7 @@ def _build_or_update_video_index(
         tuple(frame_records),
         embeddings,
         precision,
+        embedding_space,
     )
     saved_path = _save_video_index(output_dir, index, precision)
     return VideoIndexUpdate(
@@ -986,8 +1101,23 @@ def _search_video_index(
     index = _load_video_index(index_dir, expected_precision=precision)
     if not index.frames:
         raise ValueError("The video index is empty; run the index command first.")
+    expected_embedding_space = _video_embedding_space(
+        model,
+        embedding_dimension=index.embeddings.shape[1],
+        precision=precision,
+    )
+    if index.embedding_space != expected_embedding_space:
+        raise VideoIndexCompatibilityError(
+            "Video index embedding space does not match the search model, revision, "
+            "preprocessing, prompt, sampling, or precision."
+        )
 
-    tokenizer = get_tokenizer(prompt_name="SearchQuery")
+    prompt_name = index.embedding_space.query_prompt_name
+    if prompt_name is None:
+        raise VideoIndexCompatibilityError(
+            "Video index does not define a compatible text query prompt."
+        )
+    tokenizer = _get_search_tokenizer(model, prompt_name, get_tokenizer)
     tokens = tokenizer(query).to(device)
     with torch.inference_mode():
         embedding_dimension = index.embeddings.shape[1]
@@ -1091,11 +1221,45 @@ def convert_video_index(
     embedding_dim: int,
 ) -> Path:
     """Convert a video index to a supported dimension without model inference."""
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_positive_embedding_dimension(
         embedding_dim,
         name="embedding_dim",
     )
     index = _load_video_index(index_dir)
+    try:
+        backend = get_default_registry().resolve_backend_for_embedding_space(
+            backend_id=index.embedding_space.backend_id,
+            model_id=index.embedding_space.model_id,
+            revision=index.embedding_space.model_revision,
+        )
+    except ValueError as error:
+        raise VideoIndexCompatibilityError(
+            "Video index conversion requires a registered backend matching its "
+            "embedding-space identity."
+        ) from error
+    if (
+        index.embedding_space.embedding_strategy
+        != backend.embedding_space_metadata.embedding_strategy
+    ):
+        raise VideoIndexCompatibilityError(
+            "Video index conversion is not supported for this embedding strategy."
+        )
+    source_dimension = index.embeddings.shape[1]
+    try:
+        validate_model_embedding_dimension(
+            backend,
+            source_dimension,
+            name="source_embedding_dimension",
+        )
+    except (TypeError, ValueError) as error:
+        raise VideoIndexCompatibilityError(
+            "Video index source dimension is not supported by its registered backend."
+        ) from error
+    embedding_dim = validate_model_embedding_dimension(
+        backend,
+        embedding_dim,
+        name="embedding_dim",
+    )
     source_dir = Path(index_dir).expanduser().resolve()
     destination = Path(output_dir).expanduser()
     if destination.exists():
@@ -1103,7 +1267,6 @@ def convert_video_index(
     if destination.resolve() == source_dir:
         raise ValueError("Video index conversion output must differ from its source.")
 
-    source_dimension = index.embeddings.shape[1]
     if embedding_dim > source_dimension:
         raise ValueError(
             f"Cannot expand a video index from {source_dimension} to "
@@ -1128,6 +1291,7 @@ def convert_video_index(
         index.frames,
         truncated,
         index.precision,
+        replace(index.embedding_space, embedding_dimension=embedding_dim),
     )
     try:
         destination.mkdir(parents=True, exist_ok=False)

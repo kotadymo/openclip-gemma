@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 
@@ -16,22 +16,35 @@ from PIL import Image
 from openclip_gemma._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
-    validate_embedding_dimension,
+    validate_positive_embedding_dimension,
 )
+from openclip_gemma.backends.base import validate_model_embedding_dimension
 from openclip_gemma.batching import ImagePath, iter_image_embeddings
-from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
+from openclip_gemma.constants import (
+    BACKEND_ID,
+    EMBEDDING_NORMALIZATION,
+    IMAGE_PREPROCESSING_ID,
+    MODEL_ID,
+    MODEL_REVISION,
+)
+from openclip_gemma.embedding_space import (
+    EmbeddingSpace,
+    EmbeddingSpaceMetadata,
+    has_embedding_space_metadata,
+)
 from openclip_gemma.index_storage import (
     IndexArchiveError,
     _array_sha256,
     _open_numpy_archive,
     _save_numpy_archive_atomic,
 )
-from openclip_gemma.tokenizer import get_tokenizer
+from openclip_gemma.registry import get_default_registry
+from openclip_gemma.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 _INDEX_FILENAME = "index.npz"
 _INDEX_FORMAT_VERSION = 2
 _LEGACY_INDEX_FORMAT_VERSION = 1
-_PREPROCESSING_ID = "embeddinggemma-2-official-image-preprocess-v1"
+_PREPROCESSING_ID = IMAGE_PREPROCESSING_ID
 _SUPPORTED_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".webp"})
 _SCORE_BLOCK_SIZE = 4096
 
@@ -58,7 +71,16 @@ class ImageIndexCompatibilityError(ImageIndexError):
 
 
 class _ImageSearchModel(Protocol):
+    embedding_space_metadata: EmbeddingSpaceMetadata
+
     def parameters(self) -> Iterator[torch.nn.Parameter]: ...
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int: ...
 
     def encode_image(
         self,
@@ -76,6 +98,10 @@ class _ImageSearchModel(Protocol):
     ) -> torch.Tensor: ...
 
 
+class _QueryTokenizer(Protocol):
+    def __call__(self, text: str) -> torch.Tensor: ...
+
+
 @dataclass(frozen=True)
 class _ImageRecord:
     relative_path: str
@@ -90,6 +116,7 @@ class _ImageIndex:
     records: tuple[_ImageRecord, ...]
     embeddings: _EmbeddingMatrix
     precision: str
+    embedding_space: EmbeddingSpace
 
 
 @dataclass(frozen=True)
@@ -190,6 +217,109 @@ def _model_settings(model: _ImageSearchModel) -> tuple[torch.device, str]:
     return parameter.device, precision
 
 
+def _model_embedding_space(
+    model: _ImageSearchModel,
+    *,
+    embedding_dimension: int,
+    precision: str,
+    sampling_method: str | None = None,
+) -> EmbeddingSpace:
+    metadata = getattr(model, "embedding_space_metadata", None)
+    if not isinstance(metadata, EmbeddingSpaceMetadata):
+        raise ImageIndexCompatibilityError(
+            "The model does not expose registered embedding-space metadata."
+        )
+    try:
+        embedding_dimension = validate_model_embedding_dimension(
+            model,
+            embedding_dimension,
+            name="embedding_dimension",
+        )
+        return metadata.for_index(
+            embedding_dimension=embedding_dimension,
+            model_precision=precision,
+            sampling_method=sampling_method,
+        )
+    except (TypeError, ValueError) as error:
+        raise ImageIndexCompatibilityError(
+            f"The model exposes invalid embedding-space metadata: {error}"
+        ) from error
+
+
+def _get_search_tokenizer(
+    model: _ImageSearchModel,
+    prompt_name: str,
+    fallback: Callable[..., _QueryTokenizer],
+) -> _QueryTokenizer:
+    backend_tokenizer = getattr(model, "_create_tokenizer", None)
+    if callable(backend_tokenizer):
+        return backend_tokenizer(prompt_name=prompt_name)
+
+    metadata = getattr(model, "embedding_space_metadata", None)
+    if (
+        isinstance(metadata, EmbeddingSpaceMetadata)
+        and metadata.backend_id == BACKEND_ID
+        and metadata.model_id == MODEL_ID
+        and metadata.model_revision == MODEL_REVISION
+        and metadata.query_prompt_name == prompt_name
+        and metadata.query_prompt == OFFICIAL_PROMPTS.get(prompt_name)
+    ):
+        return fallback(prompt_name=prompt_name)
+    raise ImageIndexCompatibilityError(
+        "The model backend does not provide a tokenizer for the index query prompt."
+    )
+
+
+def _embedding_space_from_metadata(
+    metadata: dict[str, object],
+    *,
+    embedding_dimension: int,
+    precision: str,
+) -> EmbeddingSpace:
+    if has_embedding_space_metadata(metadata):
+        try:
+            embedding_space = EmbeddingSpace.from_metadata(metadata)
+        except (TypeError, ValueError) as error:
+            raise ImageIndexCompatibilityError(
+                f"Image index embedding-space metadata is invalid: {error}"
+            ) from error
+        if embedding_space.embedding_strategy != EMBEDDING_STRATEGY:
+            raise ImageIndexCompatibilityError(
+                "Image index embedding_strategy is missing or unsupported."
+            )
+        return embedding_space
+
+    compatibility_fields = {
+        "model_id": MODEL_ID,
+        "model_revision": MODEL_REVISION,
+        "preprocessing_id": _PREPROCESSING_ID,
+        "storage_dtype": "float32",
+    }
+    for name, expected in compatibility_fields.items():
+        if metadata.get(name) != expected:
+            raise ImageIndexCompatibilityError(
+                f"Image index {name} does not match the current model configuration."
+            )
+    strategy = metadata.get("embedding_strategy", EMBEDDING_STRATEGY)
+    if strategy != EMBEDDING_STRATEGY:
+        raise ImageIndexCompatibilityError(
+            "Image index embedding_strategy is missing or unsupported."
+        )
+    return EmbeddingSpace(
+        backend_id=BACKEND_ID,
+        model_id=MODEL_ID,
+        model_revision=MODEL_REVISION,
+        embedding_dimension=embedding_dimension,
+        embedding_strategy=EMBEDDING_STRATEGY,
+        normalization=EMBEDDING_NORMALIZATION,
+        preprocessing_id=_PREPROCESSING_ID,
+        index_prompt=None,
+        query_prompt_name="SearchQuery",
+        query_prompt=OFFICIAL_PROMPTS["SearchQuery"],
+        model_precision=precision,
+    )
+
+
 def _record_signature(record: _ImageRecord) -> tuple[int, int]:
     return record.size_bytes, record.mtime_ns
 
@@ -227,15 +357,13 @@ def _parse_record(value: object) -> _ImageRecord:
 
 
 def _metadata_for_index(index: _ImageIndex, precision: str) -> dict[str, object]:
+    if index.embedding_space.model_precision != precision:
+        raise ImageIndexError(
+            "Image index precision does not match its embedding space."
+        )
     return {
         "format_version": _INDEX_FORMAT_VERSION,
-        "model_id": MODEL_ID,
-        "model_revision": MODEL_REVISION,
-        "model_precision": precision,
-        "embedding_dimension": int(index.embeddings.shape[1]),
-        "embedding_strategy": EMBEDDING_STRATEGY,
-        "preprocessing_id": _PREPROCESSING_ID,
-        "storage_dtype": "float32",
+        **index.embedding_space.to_metadata(),
         "image_root": str(index.image_root),
         "recursive": index.recursive,
         "entry_count": len(index.records),
@@ -258,7 +386,10 @@ def _save_index(index_dir: Path, index: _ImageIndex, precision: str) -> Path:
     if embeddings.ndim != 2 or embeddings.shape[0] != len(index.records):
         raise ImageIndexError("Refusing to save an index with inconsistent dimensions.")
     try:
-        validate_embedding_dimension(embeddings.shape[1], name="embedding_dimension")
+        validate_positive_embedding_dimension(
+            embeddings.shape[1],
+            name="embedding_dimension",
+        )
     except (TypeError, ValueError) as error:
         raise ImageIndexError(
             "Refusing to save an index with an unsupported embedding dimension."
@@ -282,6 +413,7 @@ def _load_index(
     expected_root: Path | None = None,
     expected_precision: str | None = None,
     expected_embedding_dimension: int | None = None,
+    expected_embedding_space: EmbeddingSpace | None = None,
 ) -> _ImageIndex:
     index_path = Path(index_dir).expanduser() / _INDEX_FILENAME
     try:
@@ -289,7 +421,13 @@ def _load_index(
             index_path,
             expected_arrays=frozenset({"embeddings"}),
         ) as (metadata, archive):
-            records, image_root, recursive, embedding_dimension = _validate_metadata(
+            (
+                records,
+                image_root,
+                recursive,
+                embedding_dimension,
+                embedding_space,
+            ) = _validate_metadata(
                 metadata,
                 expected_root=expected_root,
                 expected_precision=expected_precision,
@@ -305,7 +443,7 @@ def _load_index(
         raise
 
     if expected_embedding_dimension is not None:
-        expected_embedding_dimension = validate_embedding_dimension(
+        expected_embedding_dimension = validate_positive_embedding_dimension(
             expected_embedding_dimension,
             name="embedding_dim",
         )
@@ -315,6 +453,14 @@ def _load_index(
                 f"dimension {expected_embedding_dimension}; convert it or use a new "
                 "index directory."
             )
+    if (
+        expected_embedding_space is not None
+        and embedding_space != expected_embedding_space
+    ):
+        raise ImageIndexCompatibilityError(
+            "Image index embedding space does not match the requested model, "
+            "revision, preprocessing, prompt, or precision."
+        )
     expected_shape = (len(records), embedding_dimension)
     if embeddings.dtype != np.float32 or embeddings.shape != expected_shape:
         raise ImageIndexError(
@@ -334,7 +480,8 @@ def _load_index(
         recursive,
         records,
         embeddings,
-        str(metadata["model_precision"]),
+        embedding_space.model_precision,
+        embedding_space,
     )
 
 
@@ -343,7 +490,7 @@ def _validate_metadata(
     *,
     expected_root: Path | None,
     expected_precision: str | None,
-) -> tuple[tuple[_ImageRecord, ...], Path, bool, int]:
+) -> tuple[tuple[_ImageRecord, ...], Path, bool, int, EmbeddingSpace]:
     version = metadata.get("format_version")
     if type(version) is not int or version not in {
         _LEGACY_INDEX_FORMAT_VERSION,
@@ -359,20 +506,8 @@ def _validate_metadata(
         raise ImageIndexCompatibilityError(
             "Image index embedding_strategy is missing or unsupported."
         )
-    compatibility_fields = {
-        "model_id": MODEL_ID,
-        "model_revision": MODEL_REVISION,
-        "preprocessing_id": _PREPROCESSING_ID,
-        "storage_dtype": "float32",
-    }
-    for name, expected in compatibility_fields.items():
-        if metadata.get(name) != expected:
-            raise ImageIndexCompatibilityError(
-                f"Image index {name} does not match the current model configuration."
-            )
-
     try:
-        embedding_dimension = validate_embedding_dimension(
+        embedding_dimension = validate_positive_embedding_dimension(
             metadata.get("embedding_dimension"),
             name="embedding_dimension",
         )
@@ -397,6 +532,19 @@ def _validate_metadata(
         raise ImageIndexCompatibilityError(
             "Image index model precision does not match the loaded model; "
             "rebuild the index using the same precision."
+        )
+
+    embedding_space = _embedding_space_from_metadata(
+        metadata,
+        embedding_dimension=embedding_dimension,
+        precision=precision,
+    )
+    if (
+        embedding_space.embedding_dimension != embedding_dimension
+        or embedding_space.model_precision != precision
+    ):
+        raise ImageIndexCompatibilityError(
+            "Image index embedding-space metadata conflicts with its legacy fields."
         )
 
     root_value = metadata.get("image_root")
@@ -447,7 +595,7 @@ def _validate_metadata(
         raise ImageIndexError(
             "Image index metadata contains an invalid embedding checksum."
         )
-    return records, image_root, recursive, embedding_dimension
+    return records, image_root, recursive, embedding_dimension, embedding_space
 
 
 def _file_signature(path: Path) -> tuple[int, int]:
@@ -472,7 +620,8 @@ def _build_or_update_image_index(
 ) -> ImageIndexUpdate:
     """Create or incrementally update a safe, local image index."""
     _validate_batch_size(batch_size)
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_model_embedding_dimension(
+        model,
         embedding_dim,
         name="embedding_dim",
     )
@@ -483,6 +632,11 @@ def _build_or_update_image_index(
     index_path = output_dir / _INDEX_FILENAME
     device, precision = _model_settings(model)
     del device
+    embedding_space = _model_embedding_space(
+        model,
+        embedding_dimension=embedding_dim,
+        precision=precision,
+    )
 
     previous: _ImageIndex | None = None
     if index_path.exists():
@@ -493,6 +647,7 @@ def _build_or_update_image_index(
             expected_root=root,
             expected_precision=precision,
             expected_embedding_dimension=embedding_dim,
+            expected_embedding_space=embedding_space,
         )
     elif not records:
         raise ValueError(f"No supported images were found in {root}.")
@@ -584,7 +739,14 @@ def _build_or_update_image_index(
                 f"Image changed during indexing: {path}. Run the index command again."
             )
 
-    index = _ImageIndex(root, recursive, records, embeddings, precision)
+    index = _ImageIndex(
+        root,
+        recursive,
+        records,
+        embeddings,
+        precision,
+        embedding_space,
+    )
     saved_path = _save_index(output_dir, index, precision)
     return ImageIndexUpdate(saved_path, added, updated, removed, unchanged)
 
@@ -610,8 +772,23 @@ def _search_index(
     index = _load_index(index_dir, expected_precision=precision)
     if not index.records:
         raise ValueError("The image index is empty; run the index command first.")
+    expected_embedding_space = _model_embedding_space(
+        model,
+        embedding_dimension=index.embeddings.shape[1],
+        precision=precision,
+    )
+    if index.embedding_space != expected_embedding_space:
+        raise ImageIndexCompatibilityError(
+            "Image index embedding space does not match the search model, revision, "
+            "preprocessing, prompt, or precision."
+        )
 
-    tokenizer = get_tokenizer(prompt_name="SearchQuery")
+    prompt_name = index.embedding_space.query_prompt_name
+    if prompt_name is None:
+        raise ImageIndexCompatibilityError(
+            "Image index does not define a compatible text query prompt."
+        )
+    tokenizer = _get_search_tokenizer(model, prompt_name, get_tokenizer)
     tokens = tokenizer(query).to(device)
     with torch.inference_mode():
         embedding_dimension = index.embeddings.shape[1]
@@ -706,11 +883,45 @@ def convert_image_index(
     embedding_dim: int,
 ) -> Path:
     """Convert an image index to a supported dimension without model inference."""
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_positive_embedding_dimension(
         embedding_dim,
         name="embedding_dim",
     )
     index = _load_index(index_dir)
+    try:
+        backend = get_default_registry().resolve_backend_for_embedding_space(
+            backend_id=index.embedding_space.backend_id,
+            model_id=index.embedding_space.model_id,
+            revision=index.embedding_space.model_revision,
+        )
+    except ValueError as error:
+        raise ImageIndexCompatibilityError(
+            "Image index conversion requires a registered backend matching its "
+            "embedding-space identity."
+        ) from error
+    if (
+        index.embedding_space.embedding_strategy
+        != backend.embedding_space_metadata.embedding_strategy
+    ):
+        raise ImageIndexCompatibilityError(
+            "Image index conversion is not supported for this embedding strategy."
+        )
+    source_dimension = index.embeddings.shape[1]
+    try:
+        validate_model_embedding_dimension(
+            backend,
+            source_dimension,
+            name="source_embedding_dimension",
+        )
+    except (TypeError, ValueError) as error:
+        raise ImageIndexCompatibilityError(
+            "Image index source dimension is not supported by its registered backend."
+        ) from error
+    embedding_dim = validate_model_embedding_dimension(
+        backend,
+        embedding_dim,
+        name="embedding_dim",
+    )
     source_dir = Path(index_dir).expanduser().resolve()
     destination = Path(output_dir).expanduser()
     if destination.exists():
@@ -718,7 +929,6 @@ def convert_image_index(
     if destination.resolve() == source_dir:
         raise ValueError("Image index conversion output must differ from its source.")
 
-    source_dimension = index.embeddings.shape[1]
     if embedding_dim > source_dimension:
         raise ValueError(
             f"Cannot expand an image index from {source_dimension} to "
@@ -741,6 +951,7 @@ def convert_image_index(
         index.records,
         truncated,
         index.precision,
+        replace(index.embedding_space, embedding_dimension=embedding_dim),
     )
     try:
         destination.mkdir(parents=True, exist_ok=False)

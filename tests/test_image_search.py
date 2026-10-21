@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,8 @@ from PIL import Image
 from torch import nn
 
 from openclip_gemma import image_search
+from openclip_gemma.backends.embeddinggemma2 import EmbeddingGemma2Backend
+from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
 from openclip_gemma.image_search import (
     ImageIndexCompatibilityError,
     ImageIndexError,
@@ -23,11 +26,31 @@ from openclip_gemma.index_storage import _save_numpy_archive_atomic
 
 
 class FakeImageSearchModel(nn.Module):
-    def __init__(self, dtype: torch.dtype = torch.float32) -> None:
+    def __init__(
+        self,
+        dtype: torch.dtype = torch.float32,
+        *,
+        embedding_space_metadata: EmbeddingSpaceMetadata | None = None,
+    ) -> None:
         super().__init__()
         self.anchor = nn.Parameter(torch.zeros((), dtype=dtype))
         self.encoded_image_count = 0
         self.received_tokens: list[torch.Tensor] = []
+        self.embedding_space_metadata = (
+            embedding_space_metadata or EmbeddingGemma2Backend.embedding_space_metadata
+        )
+        self._dimension_backend = EmbeddingGemma2Backend()
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        return self._dimension_backend.validate_embedding_dimension(
+            value,
+            name=name,
+        )
 
     def encode_image(
         self,
@@ -137,7 +160,20 @@ def _rewrite_index_version(index_path: Path, version: int) -> None:
     _rewrite_index_metadata(
         index_path,
         {"format_version": version},
-        remove=("embedding_strategy",) if version == 1 else (),
+        remove=(
+            (
+                "embedding_strategy",
+                "backend_id",
+                "normalization",
+                "index_prompt",
+                "query_prompt_name",
+                "query_prompt",
+                "sampling_method",
+                "embedding_space_id",
+            )
+            if version == 1
+            else ()
+        ),
     )
 
 
@@ -485,32 +521,73 @@ def test_search_rejects_empty_query(tmp_path: Path) -> None:
         _search_index(FakeImageSearchModel(), tmp_path / "missing", "   ")
 
 
-def test_loader_rejects_incompatible_model_revision(
+def test_update_rejects_incompatible_model_revision(tmp_path: Path) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "one.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    _build(FakeImageSearchModel(), images_dir, index_dir)
+    metadata = replace(
+        EmbeddingGemma2Backend.embedding_space_metadata,
+        model_revision="different-revision",
+    )
+
+    with pytest.raises(ImageIndexCompatibilityError, match="embedding space"):
+        _build(
+            FakeImageSearchModel(embedding_space_metadata=metadata),
+            images_dir,
+            index_dir,
+        )
+
+
+def test_update_rejects_incompatible_preprocessing(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     images_dir = tmp_path / "photos"
     _write_image(images_dir / "one.png", (255, 0, 0))
     index_dir = tmp_path / "index"
     _build(FakeImageSearchModel(), images_dir, index_dir)
-    monkeypatch.setattr(image_search, "MODEL_REVISION", "different-revision")
+    metadata = replace(
+        EmbeddingGemma2Backend.embedding_space_metadata,
+        preprocessing_id="different-preprocess",
+    )
 
-    with pytest.raises(ImageIndexCompatibilityError, match="model_revision"):
-        _load_index(index_dir)
+    with pytest.raises(ImageIndexCompatibilityError, match="embedding space"):
+        _build(
+            FakeImageSearchModel(embedding_space_metadata=metadata),
+            images_dir,
+            index_dir,
+        )
 
 
-def test_loader_rejects_incompatible_preprocessing(
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("backend_id", "different-backend"),
+        ("model_id", "different/model"),
+        ("normalization", "different-normalization"),
+        ("query_prompt", "different query prefix"),
+    ],
+)
+def test_update_rejects_equal_dimension_from_incompatible_embedding_space(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
 ) -> None:
     images_dir = tmp_path / "photos"
     _write_image(images_dir / "one.png", (255, 0, 0))
     index_dir = tmp_path / "index"
     _build(FakeImageSearchModel(), images_dir, index_dir)
-    monkeypatch.setattr(image_search, "_PREPROCESSING_ID", "different-preprocess")
+    metadata = replace(
+        EmbeddingGemma2Backend.embedding_space_metadata,
+        **{field: value},
+    )
 
-    with pytest.raises(ImageIndexCompatibilityError, match="preprocessing_id"):
-        _load_index(index_dir)
+    with pytest.raises(ImageIndexCompatibilityError, match="embedding space"):
+        _build(
+            FakeImageSearchModel(embedding_space_metadata=metadata),
+            images_dir,
+            index_dir,
+        )
 
 
 def test_loader_rejects_different_model_precision(tmp_path: Path) -> None:

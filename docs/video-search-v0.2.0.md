@@ -58,6 +58,15 @@ The output is a version-3 `video-index.npz` archive distinct from the image-sear
 - Each sampled frame's video path, PTS, time base, playback origin, and relative timestamp in seconds.
 - The embedding matrix checksum.
 
+New version-3 indexes include a deterministic `embedding_space_id` over the
+backend, model and revision, dimension and strategy, normalization,
+preprocessing, prompts, precision, storage dtype, and sampling method. Its
+SHA-256 input is a compact UTF-8 JSON array of field/value pairs in a fixed
+order; null values are explicit and Python's randomized `hash()` is not used.
+Search and updates reject same-dimension indexes from a different embedding
+space. Existing version-2 and v0.4.0 version-3 indexes remain readable only
+when their legacy fields identify the pinned EmbeddingGemma 2 configuration.
+
 The loader preflights ZIP member names, NPY array headers, archive size, expanded member size, and metadata size before loading arrays; NumPy loading also has pickle disabled. It then validates metadata, paths, counts, dimensions, finite values, checksum, model revision, precision, preprocessing, and requested sampling interval. The archive and expanded members are each limited to 512 MiB, and metadata is limited to 64 MiB. Image and video archives are not interchangeable. Writes use a temporary file followed by an atomic replacement, so a failed decode or embedding does not replace the previous complete index.
 
 Re-running the index command reconciles additions, modifications, and removals. A file is considered changed when its relative path is new or its size or `mtime_ns` differs. Rewriting a video while preserving both size and modification time can evade detection; touching or rewriting identical content can trigger an unnecessary full re-embedding. The detector does not hash source videos. Use a new output directory or remove `video-index.npz` for a full rebuild. The full embedding matrix and frame metadata are loaded into system memory for search; the implementation is a brute-force baseline, not an approximate-nearest-neighbor index.

@@ -16,7 +16,7 @@ from openclip_gemma import (
     list_models,
     list_pretrained,
 )
-from openclip_gemma.factory import MODEL_ID, MODEL_REVISION
+from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
 from openclip_gemma.transforms import EmbeddingGemmaPreprocess
 
 
@@ -78,11 +78,11 @@ class FakeImageProcessor:
 def loaded_model(monkeypatch: pytest.MonkeyPatch) -> torch.nn.Module:
     model = torch.nn.Linear(2, 2)
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoModel.from_pretrained",
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained",
         Mock(return_value=model),
     )
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        "openclip_gemma.backends.embeddinggemma2.AutoProcessor.from_pretrained",
         Mock(return_value=SimpleNamespace(image_processor=FakeImageProcessor())),
     )
     return model
@@ -117,7 +117,9 @@ def test_create_model_applies_precision(
     expected_dtype: torch.dtype,
 ) -> None:
     loader = Mock(return_value=loaded_model)
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
+    monkeypatch.setattr(
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained", loader
+    )
 
     result = create_model(precision=precision)
 
@@ -142,13 +144,15 @@ def test_create_model_can_load_text_only_without_vision_or_audio(
     config_loader = Mock(return_value=config)
     model_loader = Mock(return_value=loaded_model)
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoConfig.from_pretrained", config_loader
+        "openclip_gemma.backends.embeddinggemma2.AutoConfig.from_pretrained",
+        config_loader,
     )
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained",
+        model_loader,
     )
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        "openclip_gemma.backends.embeddinggemma2.AutoProcessor.from_pretrained",
         Mock(return_value=SimpleNamespace()),
     )
 
@@ -174,11 +178,11 @@ def test_create_model_can_keep_vision_but_omit_audio(
     vision_config = object()
     config = SimpleNamespace(vision_config=vision_config, audio_config=object())
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoConfig.from_pretrained",
+        "openclip_gemma.backends.embeddinggemma2.AutoConfig.from_pretrained",
         Mock(return_value=config),
     )
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        "openclip_gemma.backends.embeddinggemma2.AutoProcessor.from_pretrained",
         Mock(return_value=SimpleNamespace(image_processor=FakeImageProcessor())),
     )
 
@@ -206,10 +210,12 @@ def test_create_model_rejects_unsupported_modalities(
     config_loader = Mock()
     model_loader = Mock()
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoConfig.from_pretrained", config_loader
+        "openclip_gemma.backends.embeddinggemma2.AutoConfig.from_pretrained",
+        config_loader,
     )
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained",
+        model_loader,
     )
 
     with pytest.raises(exception, match="modalities"):
@@ -224,7 +230,8 @@ def test_transform_factories_reject_text_only_modalities_before_loading(
 ) -> None:
     model_loader = Mock()
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained",
+        model_loader,
     )
 
     with pytest.raises(ValueError, match="requires the image modality"):
@@ -242,7 +249,7 @@ def test_create_model_and_transforms_returns_three_elements(
     processor = SimpleNamespace(image_processor=FakeImageProcessor())
     processor_loader = Mock(return_value=processor)
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        "openclip_gemma.backends.embeddinggemma2.AutoProcessor.from_pretrained",
         processor_loader,
     )
 
@@ -300,7 +307,9 @@ def test_rejects_unknown_model_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loader = Mock()
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
+    monkeypatch.setattr(
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained", loader
+    )
 
     with pytest.raises(ValueError, match="Unsupported model_name"):
         create_model("unknown-model")
@@ -313,7 +322,9 @@ def test_create_model_normalizes_model_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loader = Mock(return_value=loaded_model)
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
+    monkeypatch.setattr(
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained", loader
+    )
 
     result = create_model(" EMBEDDINGGEMMA_2 ")
 
@@ -325,7 +336,9 @@ def test_rejects_pretrained_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loader = Mock()
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
+    monkeypatch.setattr(
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained", loader
+    )
 
     with pytest.raises(ValueError, match="pretrained=None"):
         create_model(pretrained=None)
@@ -353,7 +366,9 @@ def test_rejects_unavailable_cuda(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     loader = Mock()
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
+    monkeypatch.setattr(
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained", loader
+    )
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
     with pytest.raises(RuntimeError, match="CUDA is unavailable"):
@@ -367,7 +382,9 @@ def test_model_load_failure_is_chained(
 ) -> None:
     cause = OSError("checkpoint unavailable")
     loader = Mock(side_effect=cause)
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
+    monkeypatch.setattr(
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained", loader
+    )
 
     with pytest.raises(RuntimeError, match="Failed to load") as error:
         create_model()
@@ -444,10 +461,11 @@ def test_list_apis_do_not_load_model_or_processor(
     model_loader = Mock(side_effect=AssertionError("model weights must not load"))
     processor_loader = Mock(side_effect=AssertionError("processor must not load"))
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained",
+        model_loader,
     )
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        "openclip_gemma.backends.embeddinggemma2.AutoProcessor.from_pretrained",
         processor_loader,
     )
 
@@ -470,7 +488,9 @@ def test_create_model_accepts_official_alias_and_existing_model_id(
     pretrained: str,
 ) -> None:
     loader = Mock(return_value=loaded_model)
-    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
+    monkeypatch.setattr(
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained", loader
+    )
 
     model = create_model(
         pretrained=pretrained, output_dict=True, logit_scale_mode="cosine"
@@ -490,10 +510,11 @@ def test_create_model_from_pretrained_returns_model_and_one_transform(
     processor = SimpleNamespace(image_processor=FakeImageProcessor())
     processor_loader = Mock(return_value=processor)
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained",
+        model_loader,
     )
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoProcessor.from_pretrained",
+        "openclip_gemma.backends.embeddinggemma2.AutoProcessor.from_pretrained",
         processor_loader,
     )
 
@@ -534,7 +555,8 @@ def test_factory_rejects_unsupported_or_invalid_options_before_loading(
 ) -> None:
     model_loader = Mock()
     monkeypatch.setattr(
-        "openclip_gemma.factory.AutoModel.from_pretrained", model_loader
+        "openclip_gemma.backends.embeddinggemma2.AutoModel.from_pretrained",
+        model_loader,
     )
 
     with pytest.raises(exception, match=message):

@@ -4,3 +4,6 @@ MODEL_NAME = "embeddinggemma-2"
 MODEL_ID = "google/embeddinggemma-2"
 MODEL_REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 MODEL_CARD_MAX_CONTEXT_LENGTH = 8192
+BACKEND_ID = "transformers-embeddinggemma-2"
+IMAGE_PREPROCESSING_ID = "embeddinggemma-2-official-image-preprocess-v1"
+EMBEDDING_NORMALIZATION = "native-l2-v1"

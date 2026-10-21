@@ -13,8 +13,8 @@ from PIL import Image
 
 from openclip_gemma._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
-    validate_embedding_dimension,
 )
+from openclip_gemma.backends.base import validate_model_embedding_dimension
 
 type ImagePath = str | PathLike[str]
 type ImageEmbedding = tuple[Path, torch.Tensor]
@@ -54,7 +54,8 @@ def iter_image_embeddings(
         raise TypeError("batch_size must be a positive integer.")
     if batch_size <= 0:
         raise ValueError("batch_size must be greater than zero.")
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_model_embedding_dimension(
+        model,
         embedding_dim,
         name="embedding_dim",
     )
@@ -128,7 +129,8 @@ def _iter_preprocessed_embeddings[EmbeddingKey](
         raise TypeError("batch_size must be a positive integer.")
     if batch_size <= 0:
         raise ValueError("batch_size must be greater than zero.")
-    embedding_dim = validate_embedding_dimension(
+    embedding_dim = validate_model_embedding_dimension(
+        model,
         embedding_dim,
         name="embedding_dim",
     )
