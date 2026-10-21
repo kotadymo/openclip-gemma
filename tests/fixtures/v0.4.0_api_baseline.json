@@ -1,0 +1,34 @@
+{
+  "release": "openclip-gemma==0.4.0",
+  "source_commit": "2dea1f1ba4572e5ae9e469d8f4bd071246565dd4",
+  "model_name": "embeddinggemma-2",
+  "pretrained": "official",
+  "model_id": "google/embeddinggemma-2",
+  "model_revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
+  "precision": "fp32",
+  "device": "cpu",
+  "image": {
+    "size": [256, 192],
+    "background": [30, 80, 180],
+    "ellipse": [72, 40, 184, 152],
+    "fill": [220, 35, 45]
+  },
+  "text": {
+    "prompt_name": "SearchQuery",
+    "items": [
+      "A small red circle on a blue background.",
+      "猫は青い背景にある赤い円を見ています。",
+      ""
+    ]
+  },
+  "embedding_dimensions": [768, 512, 256, 128],
+  "tolerance": {
+    "max_abs_error": 0.0001,
+    "min_cosine_similarity": 0.9999
+  },
+  "fixture_sha256": "3e8bcd73c9c9d1396c7c85de413950cb283dc30ced913b9c1daae1997fdf05d7",
+  "npz_keys": {
+    "image": "image_embedding",
+    "text": "text_embeddings"
+  }
+}

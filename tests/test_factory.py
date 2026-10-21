@@ -102,7 +102,13 @@ def test_create_model_returns_eval_module_and_loads_pinned_fp32(
 
 @pytest.mark.parametrize(
     ("precision", "expected_dtype"),
-    [("fp32", torch.float32), ("bf16", torch.bfloat16), ("BF16", torch.bfloat16)],
+    [
+        ("fp32", torch.float32),
+        ("float32", torch.float32),
+        ("bf16", torch.bfloat16),
+        ("bfloat16", torch.bfloat16),
+        ("BF16", torch.bfloat16),
+    ],
 )
 def test_create_model_applies_precision(
     loaded_model: torch.nn.Module,
@@ -300,6 +306,19 @@ def test_rejects_unknown_model_name(
         create_model("unknown-model")
 
     loader.assert_not_called()
+
+
+def test_create_model_normalizes_model_name(
+    loaded_model: torch.nn.Module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loader = Mock(return_value=loaded_model)
+    monkeypatch.setattr("openclip_gemma.factory.AutoModel.from_pretrained", loader)
+
+    result = create_model(" EMBEDDINGGEMMA_2 ")
+
+    assert result.backend is loaded_model
+    loader.assert_called_once()
 
 
 def test_rejects_pretrained_none(
