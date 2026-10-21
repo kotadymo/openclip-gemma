@@ -8,10 +8,10 @@ from functools import lru_cache
 from types import MappingProxyType
 from typing import Any
 
-from openclip_gemma.backends.base import Backend
-from openclip_gemma.capabilities import freeze_capabilities
-from openclip_gemma.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
-from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
+from openvlclip.backends.base import Backend
+from openvlclip.capabilities import freeze_capabilities
+from openvlclip.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
+from openvlclip.embedding_space import EmbeddingSpaceMetadata
 
 
 def normalize_model_name(model_name: str) -> str:
@@ -203,7 +203,7 @@ class ModelRegistry:
 @lru_cache(maxsize=1)
 def get_default_registry() -> ModelRegistry:
     """Return the built-in registry; imports and listing do not load model weights."""
-    from openclip_gemma.backends.embeddinggemma2 import EmbeddingGemma2Backend
+    from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
 
     backend = EmbeddingGemma2Backend()
     return ModelRegistry(

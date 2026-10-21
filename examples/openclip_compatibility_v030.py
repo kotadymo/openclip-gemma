@@ -9,8 +9,8 @@ from pathlib import Path
 import torch
 from PIL import Image, ImageDraw
 
-import openclip_gemma as open_clip
-from openclip_gemma.constants import MODEL_NAME
+import openvlclip as open_clip
+from openvlclip.constants import MODEL_NAME
 
 DEFAULT_TEXTS = [
     "a red circle on a blue background",

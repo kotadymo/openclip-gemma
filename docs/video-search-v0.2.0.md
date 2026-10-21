@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-The APIs index sampled video frames and search them with Japanese or English text from `openclip_gemma.video_search`. They are not re-exported from the package root. They reuse the image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers. The default is 768 dimensions; v0.4.0 also supports 512, 256, and 128 dimensions through MRL truncation and re-normalization.
+The APIs index sampled video frames and search them with Japanese or English text from `openvlclip.video_search`. They are not re-exported from the package root. They reuse the image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers. The default is 768 dimensions; v0.4.0 also supports 512, 256, and 128 dimensions through MRL truncation and re-normalization.
 
 The prototype indexes frames independently. It does not recognize motion, event order, or temporal relationships across frames. Search scores are cosine similarities, not probabilities or calibrated confidence.
 
@@ -21,7 +21,7 @@ The wheel metadata comparison is not a substitute for install or decode tests on
 
 MP4 is the primary target. The scanner accepts `.mp4`, `.m4v`, `.mov`, `.mkv`, `.webm`, and `.avi` filename suffixes, but a suffix does not guarantee that the bundled FFmpeg build can decode every container/codec combination. Unsupported, corrupt, or empty videos fail with an error; the indexer does not silently omit them. Missing PTS, unusable time bases, and non-monotonic presentation timestamps are also explicit errors. There is no estimated-FPS fallback.
 
-Install the optional video dependencies with `pip install "openclip-gemma[video]"`. To run the CLI examples, use a source checkout:
+Install the optional video dependencies with `pip install "openvlclip[video]"`. To run the CLI examples, use a source checkout:
 
 ```bash
 uv sync --locked --group dev --extra video
@@ -102,7 +102,7 @@ Output includes the rank, video path, timestamp (`HH:MM:SS.mmm`), and raw cosine
 
 ## Validation
 
-The APIs are `build_or_update_video_index()` and `search_video()` in `openclip_gemma.video_search`. Model-independent tests mock PyAV and the image encoder to cover PTS/VFR sampling, zero and nonzero start times, interval validation, corrupt and empty inputs, archive round trips, incremental changes, compatibility checks, stable ranking, and safe errors.
+The APIs are `build_or_update_video_index()` and `search_video()` in `openvlclip.video_search`. Model-independent tests mock PyAV and the image encoder to cover PTS/VFR sampling, zero and nonzero start times, interval validation, corrupt and empty inputs, archive round trips, incremental changes, compatibility checks, stable ranking, and safe errors.
 
 Opt-in integration tests create a small synthetic MP4 and use the pinned real model to exercise CPU indexing and Japanese text search, plus CUDA/CPU FP32 comparison when CUDA is available:
 

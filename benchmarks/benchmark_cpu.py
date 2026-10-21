@@ -16,8 +16,8 @@ from typing import Any, Self
 import torch
 from PIL import Image, ImageDraw
 
-from openclip_gemma import create_model_and_transforms, get_tokenizer
-from openclip_gemma.constants import MODEL_ID, MODEL_REVISION
+from openvlclip import create_model_and_transforms, get_tokenizer
+from openvlclip.constants import MODEL_ID, MODEL_REVISION
 
 
 class PeakRssSampler:

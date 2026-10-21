@@ -1,7 +1,7 @@
 [project]
-name = "openclip-gemma"
-version = "0.4.0"
-description = "OpenCLIP-style image and text inference with EmbeddingGemma 2"
+name = "openvlclip"
+version = "0.5.0"
+description = "OpenCLIP-inspired image and text inference with EmbeddingGemma 2"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -10,8 +10,10 @@ authors = [
 ]
 requires-python = ">=3.12,<3.15,!=3.14.1"
 keywords = [
+    "openvlclip",
     "embeddinggemma",
     "openclip",
+    "vision-language",
     "image-embeddings",
     "text-embeddings",
 ]
@@ -51,10 +53,10 @@ benchmark = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/kotadymo/openclip-gemma"
-Repository = "https://github.com/kotadymo/openclip-gemma"
-Issues = "https://github.com/kotadymo/openclip-gemma/issues"
-"Compatibility Report" = "https://github.com/kotadymo/openclip-gemma/blob/main/docs/openclip-compatibility-report-v0.3.0.md"
+Homepage = "https://github.com/kotadymo/openvlclip"
+Repository = "https://github.com/kotadymo/openvlclip"
+Issues = "https://github.com/kotadymo/openvlclip/issues"
+"Compatibility Report" = "https://github.com/kotadymo/openvlclip/blob/main/docs/openclip-compatibility-report-v0.3.0.md"
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]

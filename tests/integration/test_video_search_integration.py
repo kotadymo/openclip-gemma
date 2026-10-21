@@ -14,8 +14,8 @@ import pytest
 import torch
 from PIL import Image, ImageDraw
 
-from openclip_gemma import create_model_and_transforms
-from openclip_gemma.video_search import (
+from openvlclip import create_model_and_transforms
+from openvlclip.video_search import (
     _load_video_index,
     build_or_update_video_index,
     search_video,

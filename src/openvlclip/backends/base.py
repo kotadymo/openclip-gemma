@@ -7,8 +7,8 @@ from typing import Protocol, TypeVar
 
 import torch
 
-from openclip_gemma._dimensions import validate_positive_embedding_dimension
-from openclip_gemma.embedding_space import EmbeddingSpaceMetadata
+from openvlclip._dimensions import validate_positive_embedding_dimension
+from openvlclip.embedding_space import EmbeddingSpaceMetadata
 
 ModelT = TypeVar("ModelT", bound=torch.nn.Module)
 TokenizerT = TypeVar("TokenizerT")

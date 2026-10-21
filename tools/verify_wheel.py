@@ -14,23 +14,29 @@ from readme_validation import (
 )
 
 REQUIRED_MODULES = {
-    "openclip_gemma/__init__.py",
-    "openclip_gemma/_dimensions.py",
-    "openclip_gemma/batching.py",
-    "openclip_gemma/constants.py",
-    "openclip_gemma/factory.py",
-    "openclip_gemma/image_search.py",
-    "openclip_gemma/index_storage.py",
-    "openclip_gemma/model.py",
-    "openclip_gemma/tokenizer.py",
-    "openclip_gemma/transforms.py",
-    "openclip_gemma/video_search.py",
+    "openvlclip/__init__.py",
+    "openvlclip/_dimensions.py",
+    "openvlclip/backends/__init__.py",
+    "openvlclip/backends/base.py",
+    "openvlclip/backends/embeddinggemma2.py",
+    "openvlclip/batching.py",
+    "openvlclip/capabilities.py",
+    "openvlclip/constants.py",
+    "openvlclip/embedding_space.py",
+    "openvlclip/factory.py",
+    "openvlclip/image_search.py",
+    "openvlclip/index_storage.py",
+    "openvlclip/model.py",
+    "openvlclip/registry.py",
+    "openvlclip/tokenizer.py",
+    "openvlclip/transforms.py",
+    "openvlclip/video_search.py",
 }
 WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_WHEEL_FILE_SIZE = 50_000_000
 
 
-def verify_wheel(wheel_path: Path, expected_version: str = "0.4.0") -> None:
+def verify_wheel(wheel_path: Path, expected_version: str = "0.5.0") -> None:
     if not wheel_path.is_file() or wheel_path.suffix != ".whl":
         raise ValueError(f"Not a wheel file: {wheel_path}")
 
@@ -52,7 +58,7 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.4.0") -> None:
         package_entries = {
             name
             for name in names
-            if name.startswith("openclip_gemma/") or ".dist-info/" in name
+            if name.startswith("openvlclip/") or ".dist-info/" in name
         }
         unexpected = names.difference(package_entries)
         if unexpected:
@@ -102,7 +108,7 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.4.0") -> None:
             "wheel",
             readme_path,
         )
-        if "Name: openclip-gemma\n" not in metadata:
+        if "Name: openvlclip\n" not in metadata:
             raise ValueError("Wheel metadata has an unexpected distribution name.")
         if f"Version: {expected_version}\n" not in metadata:
             raise ValueError("Wheel metadata has an unexpected version.")
@@ -127,7 +133,7 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.4.0") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
-    parser.add_argument("--expected-version", default="0.4.0")
+    parser.add_argument("--expected-version", default="0.5.0")
     args = parser.parse_args()
     try:
         verify_wheel(args.wheel, expected_version=args.expected_version)

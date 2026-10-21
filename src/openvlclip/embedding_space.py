@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from openclip_gemma._dimensions import validate_positive_embedding_dimension
+from openvlclip._dimensions import validate_positive_embedding_dimension
 
 _SIGNATURE_FIELDS = (
     "backend_id",

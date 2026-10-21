@@ -13,33 +13,33 @@ import torch
 from numpy.typing import NDArray
 from PIL import Image
 
-from openclip_gemma._dimensions import (
+from openvlclip._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
     validate_positive_embedding_dimension,
 )
-from openclip_gemma.backends.base import validate_model_embedding_dimension
-from openclip_gemma.batching import ImagePath, iter_image_embeddings
-from openclip_gemma.constants import (
+from openvlclip.backends.base import validate_model_embedding_dimension
+from openvlclip.batching import ImagePath, iter_image_embeddings
+from openvlclip.constants import (
     BACKEND_ID,
     EMBEDDING_NORMALIZATION,
     IMAGE_PREPROCESSING_ID,
     MODEL_ID,
     MODEL_REVISION,
 )
-from openclip_gemma.embedding_space import (
+from openvlclip.embedding_space import (
     EmbeddingSpace,
     EmbeddingSpaceMetadata,
     has_embedding_space_metadata,
 )
-from openclip_gemma.index_storage import (
+from openvlclip.index_storage import (
     IndexArchiveError,
     _array_sha256,
     _open_numpy_archive,
     _save_numpy_archive_atomic,
 )
-from openclip_gemma.registry import get_default_registry
-from openclip_gemma.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
+from openvlclip.registry import get_default_registry
+from openvlclip.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 _INDEX_FILENAME = "index.npz"
 _INDEX_FORMAT_VERSION = 2

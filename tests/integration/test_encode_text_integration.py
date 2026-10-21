@@ -11,8 +11,8 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoConfig, AutoTokenizer
 
-from openclip_gemma import create_model, get_tokenizer
-from openclip_gemma.factory import MODEL_ID, MODEL_REVISION
+from openvlclip import create_model, get_tokenizer
+from openvlclip.factory import MODEL_ID, MODEL_REVISION
 
 pytestmark = [
     pytest.mark.integration,

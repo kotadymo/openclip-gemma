@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from openclip_gemma.embedding_space import EmbeddingSpace, EmbeddingSpaceMetadata
+from openvlclip.embedding_space import EmbeddingSpace, EmbeddingSpaceMetadata
 
 
 def _space(embedding_dimension: int = 384) -> EmbeddingSpace:

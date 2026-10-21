@@ -14,8 +14,8 @@ import torch.nn.functional as F
 from PIL import Image
 from torch import nn
 
-from openclip_gemma import image_search
-from openclip_gemma.backends.embeddinggemma2 import EmbeddingGemma2Backend
+from openvlclip import image_search
+from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
 
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _BENCHMARK_NAMESPACE: dict[str, Any] = runpy.run_path(

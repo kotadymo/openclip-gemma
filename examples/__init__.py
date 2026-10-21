@@ -1,1 +1,1 @@
-"""Runnable examples for openclip-gemma."""
+"""Runnable examples for OpenVLCLIP."""

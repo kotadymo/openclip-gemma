@@ -2,19 +2,19 @@
 
 ## Status
 
-Version 0.2.0 provides a module-level streaming API for embedding image files. The API is available from `openclip_gemma.batching` and is not re-exported from the package root. Image indexing/search and video-frame search are documented separately.
+Version 0.2.0 provides a module-level streaming API for embedding image files. The API is available from `openvlclip.batching` and is not re-exported from the package root. Image indexing/search and video-frame search are documented separately.
 
 ## Internal contract
 
-The module-level API is `openclip_gemma.batching.iter_image_embeddings(model, preprocess, image_paths, *, batch_size=8)`. It accepts an iterable of string or path-like paths readable by Pillow and lazily yields `(Path, embedding)` pairs in input order. Each embedding is a CPU tensor with shape `[768]` and the model's output dtype. Keeping results on CPU and yielding one at a time avoids retaining all output vectors or GPU tensors for a large collection.
+The module-level API is `openvlclip.batching.iter_image_embeddings(model, preprocess, image_paths, *, batch_size=8)`. It accepts an iterable of string or path-like paths readable by Pillow and lazily yields `(Path, embedding)` pairs in input order. Each embedding is a CPU tensor with shape `[768]` and the model's output dtype. Keeping results on CPU and yielding one at a time avoids retaining all output vectors or GPU tensors for a large collection.
 
 Example from a v0.2.0 source checkout:
 
 ```python
 from pathlib import Path
 
-from openclip_gemma import create_model_and_transforms
-from openclip_gemma.batching import iter_image_embeddings
+from openvlclip import create_model_and_transforms
+from openvlclip.batching import iter_image_embeddings
 
 model, _, preprocess = create_model_and_transforms(
     "embeddinggemma-2",

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.5.0
+
+### Added
+
+- Introduce the `openvlclip` distribution and import namespace while retaining
+  the existing EmbeddingGemma 2 inference API.
+- Add a model Registry, generic Backend interface, model capabilities, and
+  backend-aware embedding-space compatibility checks.
+- Add migration guidance for users moving from `openclip-gemma` v0.4.0.
+
+### Compatibility
+
+- Keep EmbeddingGemma 2 as the only supported real model; no model weights,
+  prompts, preprocessing, pooling, MRL behavior, or selective-loading behavior
+  are changed.
+- Preserve existing image and video index formats and v0.4.0 index loading.
+- Keep `openclip-gemma` as a separate distribution; installing `openvlclip`
+  does not replace or uninstall it.
+
 ## v0.4.0
 
 ### Added

@@ -17,17 +17,23 @@ REQUIRED_PATHS = {
     "LICENSE",
     "README.md",
     "pyproject.toml",
-    "src/openclip_gemma/__init__.py",
-    "src/openclip_gemma/_dimensions.py",
-    "src/openclip_gemma/batching.py",
-    "src/openclip_gemma/constants.py",
-    "src/openclip_gemma/factory.py",
-    "src/openclip_gemma/image_search.py",
-    "src/openclip_gemma/index_storage.py",
-    "src/openclip_gemma/model.py",
-    "src/openclip_gemma/tokenizer.py",
-    "src/openclip_gemma/transforms.py",
-    "src/openclip_gemma/video_search.py",
+    "src/openvlclip/__init__.py",
+    "src/openvlclip/_dimensions.py",
+    "src/openvlclip/backends/__init__.py",
+    "src/openvlclip/backends/base.py",
+    "src/openvlclip/backends/embeddinggemma2.py",
+    "src/openvlclip/batching.py",
+    "src/openvlclip/capabilities.py",
+    "src/openvlclip/constants.py",
+    "src/openvlclip/embedding_space.py",
+    "src/openvlclip/factory.py",
+    "src/openvlclip/image_search.py",
+    "src/openvlclip/index_storage.py",
+    "src/openvlclip/model.py",
+    "src/openvlclip/registry.py",
+    "src/openvlclip/tokenizer.py",
+    "src/openvlclip/transforms.py",
+    "src/openvlclip/video_search.py",
 }
 EXCLUDED_TOP_LEVEL = {
     "benchmarks",
@@ -40,7 +46,7 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_ARCHIVE_FILE_SIZE = 50_000_000
 
 
-def verify_sdist(archive_path: Path, expected_version: str = "0.4.0") -> None:
+def verify_sdist(archive_path: Path, expected_version: str = "0.5.0") -> None:
     if not archive_path.is_file() or not archive_path.name.endswith(".tar.gz"):
         raise ValueError(f"Not a source distribution archive: {archive_path}")
 
@@ -48,6 +54,16 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.4.0") -> None:
         members = [member for member in archive.getmembers() if member.isfile()]
         paths = {PurePosixPath(member.name).parts[1:] for member in members}
         normalized_paths = {"/".join(parts) for parts in paths}
+        legacy_package_paths = sorted(
+            path
+            for path in normalized_paths
+            if path.startswith("src/openclip_gemma/")
+        )
+        if legacy_package_paths:
+            raise ValueError(
+                "Source distribution must not include the legacy import package: "
+                f"{legacy_package_paths}"
+            )
         missing = REQUIRED_PATHS.difference(normalized_paths)
         if missing:
             raise ValueError(f"Source distribution is missing files: {sorted(missing)}")
@@ -110,7 +126,7 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.4.0") -> None:
         )
         if f"Version: {expected_version}\n" not in metadata:
             raise ValueError("Source distribution metadata has an unexpected version.")
-        if "Name: openclip-gemma\n" not in metadata:
+        if "Name: openvlclip\n" not in metadata:
             raise ValueError("Source distribution metadata has an unexpected name.")
         if "Author: kotadymo\n" not in metadata:
             raise ValueError("Source distribution metadata has an unexpected author.")
@@ -180,7 +196,7 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.4.0") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
-    parser.add_argument("--expected-version", default="0.4.0")
+    parser.add_argument("--expected-version", default="0.5.0")
     args = parser.parse_args()
     try:
         verify_sdist(args.archive, expected_version=args.expected_version)

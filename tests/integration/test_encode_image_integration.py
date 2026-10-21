@@ -11,8 +11,8 @@ import torch
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageOps
 
-from openclip_gemma import create_model_and_transforms
-from openclip_gemma.factory import MODEL_ID, MODEL_REVISION
+from openvlclip import create_model_and_transforms
+from openvlclip.factory import MODEL_ID, MODEL_REVISION
 
 pytestmark = [
     pytest.mark.integration,

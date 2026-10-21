@@ -9,7 +9,7 @@ import torch
 from PIL import Image
 from torch.nn import functional as F
 
-from openclip_gemma import create_model, create_model_and_transforms, get_tokenizer
+from openvlclip import create_model, create_model_and_transforms, get_tokenizer
 
 pytestmark = [
     pytest.mark.integration,

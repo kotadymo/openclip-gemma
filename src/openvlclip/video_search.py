@@ -15,25 +15,25 @@ import torch
 from numpy.typing import NDArray
 from PIL import Image
 
-from openclip_gemma._dimensions import (
+from openvlclip._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
     validate_positive_embedding_dimension,
 )
-from openclip_gemma.backends.base import validate_model_embedding_dimension
-from openclip_gemma.batching import _iter_preprocessed_embeddings
-from openclip_gemma.constants import (
+from openvlclip.backends.base import validate_model_embedding_dimension
+from openvlclip.batching import _iter_preprocessed_embeddings
+from openvlclip.constants import (
     BACKEND_ID,
     EMBEDDING_NORMALIZATION,
     IMAGE_PREPROCESSING_ID,
     MODEL_ID,
     MODEL_REVISION,
 )
-from openclip_gemma.embedding_space import (
+from openvlclip.embedding_space import (
     EmbeddingSpace,
     has_embedding_space_metadata,
 )
-from openclip_gemma.image_search import (
+from openvlclip.image_search import (
     _PREPROCESSING_ID,
     ImageIndexCompatibilityError,
     _get_search_tokenizer,
@@ -43,14 +43,14 @@ from openclip_gemma.image_search import (
     _path_key,
     _validate_batch_size,
 )
-from openclip_gemma.index_storage import (
+from openvlclip.index_storage import (
     IndexArchiveError,
     _array_sha256,
     _open_numpy_archive,
     _save_numpy_archive_atomic,
 )
-from openclip_gemma.registry import get_default_registry
-from openclip_gemma.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
+from openvlclip.registry import get_default_registry
+from openvlclip.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 _VIDEO_INDEX_FILENAME = "video-index.npz"
 _VIDEO_INDEX_KIND = "openclip-gemma.video-index"
@@ -145,7 +145,7 @@ def _load_av() -> Any:
     except ImportError as error:
         raise VideoSearchError(
             "Video indexing requires the optional PyAV dependency. "
-            "Install it with `pip install openclip-gemma[video]`."
+            "Install it with `pip install openvlclip[video]`."
         ) from error
     return av
 
@@ -639,7 +639,7 @@ def _validate_video_metadata(
 ]:
     if metadata.get("kind") != _VIDEO_INDEX_KIND:
         raise VideoIndexCompatibilityError(
-            "The archive is not an openclip-gemma video index."
+            "The archive is not an OpenVLCLIP video index."
         )
     version = metadata.get("format_version")
     if type(version) is not int or version not in {

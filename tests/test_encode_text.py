@@ -7,7 +7,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from openclip_gemma.model import EmbeddingGemmaCLIP
+from openvlclip.model import EmbeddingGemmaCLIP
 
 
 class FakeTokenizer:

@@ -6,7 +6,7 @@ import pytest
 import torch
 from torch import nn
 
-from openclip_gemma.model import EmbeddingGemmaCLIP
+from openvlclip.model import EmbeddingGemmaCLIP
 
 
 class FakeProcessor:

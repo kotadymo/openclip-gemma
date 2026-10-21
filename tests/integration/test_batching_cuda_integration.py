@@ -9,8 +9,8 @@ import pytest
 import torch
 from PIL import Image, ImageDraw
 
-from openclip_gemma import create_model_and_transforms
-from openclip_gemma.batching import iter_image_embeddings
+from openvlclip import create_model_and_transforms
+from openvlclip.batching import iter_image_embeddings
 
 pytestmark = [
     pytest.mark.integration,

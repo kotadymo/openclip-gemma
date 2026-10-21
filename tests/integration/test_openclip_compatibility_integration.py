@@ -9,7 +9,7 @@ import pytest
 import torch
 from PIL import Image, ImageDraw
 
-from openclip_gemma import (
+from openvlclip import (
     create_model_from_pretrained,
     get_tokenizer,
     list_models,
