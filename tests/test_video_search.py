@@ -265,6 +265,76 @@ def test_sampling_uses_actual_vfr_pts_and_preserves_frame_images(
         frame.image.close()
 
 
+def test_sampling_preserves_exact_cfr_interval_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _write_video(tmp_path / "cfr.mp4")
+    frames = [FakeFrame(pts, (255, 0, 0)) for pts in range(7)]
+    container = FakeContainer(frames)
+    monkeypatch.setattr(video_search, "_load_av", lambda: FakeAV({path: container}))
+
+    sampled = list(_iter_sampled_frames(path, Fraction(1, 15)))
+
+    assert [frame.record.pts for frame in sampled] == [0, 2, 4, 6]
+    assert [frame.record.timestamp_seconds for frame in sampled] == pytest.approx(
+        [0.0, 2 / 30, 4 / 30, 6 / 30]
+    )
+    assert container.closed
+    for frame in sampled:
+        frame.image.close()
+
+
+def test_sampling_jumps_over_large_pts_gaps_with_exact_fraction_steps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class GuardedFraction(Fraction):
+        additions = 0
+
+        def __add__(self, other: object):
+            type(self).additions += 1
+            if type(self).additions > 4:
+                raise AssertionError(
+                    "sampling advanced one interval at a time across a PTS gap"
+                )
+            return type(self)(super().__add__(other))
+
+    path = _write_video(tmp_path / "large-gap.mp4")
+    frames = [
+        FakeFrame(90, (255, 0, 0)),
+        FakeFrame(105, (0, 255, 0)),
+        FakeFrame(120, (0, 0, 255)),
+        FakeFrame(30_000_090, (255, 255, 0)),
+    ]
+    container = FakeContainer(frames, start_time=3_000_000)
+    monkeypatch.setattr(video_search, "Fraction", GuardedFraction)
+    monkeypatch.setattr(video_search, "_load_av", lambda: FakeAV({path: container}))
+
+    sampled = list(_iter_sampled_frames(path, Fraction(1, 1_000_000_000)))
+
+    assert [frame.record.pts for frame in sampled] == [
+        90,
+        105,
+        120,
+        30_000_090,
+    ]
+    assert [frame.record.timestamp_seconds for frame in sampled] == pytest.approx(
+        [0.0, 0.5, 1.0, 1_000_000.0]
+    )
+    assert {
+        (
+            frame.record.timestamp_origin_numerator,
+            frame.record.timestamp_origin_denominator,
+        )
+        for frame in sampled
+    } == {(3, 1)}
+    assert GuardedFraction.additions == len(frames)
+    assert container.closed
+    for frame in sampled:
+        frame.image.close()
+
+
 def test_sampling_timestamps_are_relative_to_container_playback_start(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

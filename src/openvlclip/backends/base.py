@@ -8,7 +8,10 @@ from typing import Any, Protocol, Self, TypeVar
 import torch
 from PIL import Image
 
-from openvlclip._dimensions import validate_positive_embedding_dimension
+from openvlclip._dimensions import (
+    DEFAULT_EMBEDDING_DIMENSION,
+    validate_positive_embedding_dimension,
+)
 from openvlclip.embedding_space import EmbeddingSpaceMetadata
 
 ModelT = TypeVar("ModelT", bound=torch.nn.Module)
@@ -170,6 +173,9 @@ def validate_model_embedding_dimension(
     if callable(validator):
         dimension = validator(value, name=name)
     else:
-        dimension = validate_positive_embedding_dimension(value, name=name)
+        dimension = validate_positive_embedding_dimension(
+            DEFAULT_EMBEDDING_DIMENSION if value is None else value,
+            name=name,
+        )
 
     return validate_positive_embedding_dimension(dimension, name=name)

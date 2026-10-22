@@ -338,8 +338,9 @@ def _iter_sampled_frames(
                     image,
                 )
                 sampled_count += 1
-                while next_target <= timestamp:
-                    next_target += interval
+                if next_target <= timestamp:
+                    steps = (timestamp - next_target) // interval + 1
+                    next_target += steps * interval
         except VideoSearchError:
             raise
         except (OSError, ValueError, av.error.FFmpegError) as error:
