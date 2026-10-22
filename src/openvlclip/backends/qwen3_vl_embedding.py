@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import Mapping, Sequence
+from importlib.metadata import PackageNotFoundError, version
 from math import isfinite
 from os import PathLike, fspath
 from pathlib import Path
@@ -104,6 +105,24 @@ class Qwen3VLCLIP(nn.Module):
     def embedding_space_metadata(self) -> EmbeddingSpaceMetadata:
         """Return the pinned checkpoint's embedding-space identity."""
         return self._inference_backend.embedding_space_metadata
+
+    @property
+    def native_video_processing_metadata(self) -> Mapping[str, object]:
+        """Return the exact processor version and file-video pixel budget."""
+        try:
+            processor_version = (
+                f"transformers=={version('transformers')};"
+                f"qwen-vl-utils=={version('qwen-vl-utils')}"
+            )
+        except PackageNotFoundError as error:
+            raise RuntimeError(
+                "Native video indexing requires the optional 'qwen3vl' extra; "
+                'install it with `pip install "openvlclip[qwen3vl]"`.'
+            ) from error
+        return {
+            "processor_version": processor_version,
+            "total_pixels": _default_file_video_total_pixels(),
+        }
 
     def validate_embedding_dimension(
         self,
@@ -814,6 +833,7 @@ def _normalize_video(
             "video": _local_file_uri(value, name=f"video at input index {index}"),
             "fps": _validate_fps(fps),
             "max_frames": resolved_max_frames,
+            "total_pixels": _default_file_video_total_pixels(),
         }
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         if fps is not None:
@@ -843,6 +863,42 @@ def _normalize_video(
         f"Video at input index {index} must be a local file path or a "
         "sequence of PIL frames/local frame paths."
     )
+
+
+def _default_file_video_total_pixels() -> float:
+    try:
+        from qwen_vl_utils import vision_process
+    except ImportError as error:
+        raise RuntimeError(
+            "Qwen video inference requires the optional 'qwen3vl' extra; "
+            'install it with `pip install "openvlclip[qwen3vl]"`.'
+        ) from error
+    try:
+        model_sequence_length = vision_process.MODEL_SEQ_LEN
+        spatial_merge_size = vision_process.SPATIAL_MERGE_SIZE
+    except AttributeError as error:
+        raise RuntimeError(
+            "The installed qwen-vl-utils package does not expose its video "
+            "pixel-budget settings."
+        ) from error
+    if (
+        type(model_sequence_length) is not int
+        or model_sequence_length <= 0
+        or type(spatial_merge_size) is not int
+        or spatial_merge_size <= 0
+    ):
+        raise RuntimeError(
+            "The installed qwen-vl-utils package exposes invalid video "
+            "pixel-budget settings."
+        )
+    image_factor = _IMAGE_PATCH_SIZE * spatial_merge_size
+    total_pixels = float(model_sequence_length * image_factor**2 * 0.9)
+    if not isfinite(total_pixels) or total_pixels <= 0:
+        raise RuntimeError(
+            "The installed qwen-vl-utils package exposes an invalid video "
+            "pixel budget."
+        )
+    return total_pixels
 
 
 def _validate_fps(value: object) -> float:
