@@ -20,6 +20,12 @@ from torch import nn
 from torch.nn import functional as F
 
 from openvlclip._dimensions import validate_positive_embedding_dimension
+from openvlclip.backends.base import (
+    MultimodalInput,
+    ProcessedImageBatch,
+    VideoInput,
+    require_tensor_image,
+)
 from openvlclip.backends.dinotxt_tokenizer import DinoTxtTokenizer
 from openvlclip.capabilities import capabilities_for_modalities, freeze_capabilities
 from openvlclip.embedding_space import EmbeddingSpaceMetadata
@@ -31,7 +37,9 @@ DINO_BACKEND_ID = "meta-dinov2-dinotxt"
 
 _BACKBONE_SHA256 = "36e4deffbaef061a2576705b0c36f93621e2ae20bf6274694821b0b492551b51"
 _VISION_HEAD_SHA256 = "706fba5bcb7019d80e127f0ff123872a75e0e6099527cf1911db85bd61c88ef5"
-_TEXT_ENCODER_SHA256 = "13378274c79f67af8b47b11dd57827d659e7b1ee01e4dde58d2266422ea7846a"
+_TEXT_ENCODER_SHA256 = (
+    "13378274c79f67af8b47b11dd57827d659e7b1ee01e4dde58d2266422ea7846a"
+)
 _BPE_VOCAB_SHA256 = "924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a"
 _DINO_MODEL_REVISION = (
     f"{DINO_SOURCE_REVISION}+backbone-{_BACKBONE_SHA256}"
@@ -264,7 +272,7 @@ class DinoTxtCLIP(nn.Module):
 
     def encode_image(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         normalize: bool = False,
         *,
         truncate_dim: int | None = None,
@@ -278,7 +286,7 @@ class DinoTxtCLIP(nn.Module):
 
     def encode_patches(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         normalize: bool = False,
     ) -> torch.Tensor:
         return self._inference_backend.encode_patches(
@@ -301,9 +309,55 @@ class DinoTxtCLIP(nn.Module):
             truncate_dim=truncate_dim,
         )
 
+    def encode_texts(
+        self,
+        texts: str | Sequence[str],
+        *,
+        instruction: str | None = None,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        if instruction is not None:
+            raise NotImplementedError(
+                "dino.txt does not support task instructions; pass plain text "
+                "to encode_texts()."
+            )
+        token_ids = self._create_tokenizer(prompt_name=None)(texts)
+        return self.encode_text(
+            token_ids,
+            normalize=normalize,
+            truncate_dim=truncate_dim,
+        )
+
+    def encode_multimodal(
+        self,
+        items: MultimodalInput,
+        *,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        del items, normalize, truncate_dim
+        raise NotImplementedError(
+            "encode_multimodal() is not supported by the dino.txt backend."
+        )
+
+    def encode_video(
+        self,
+        video: VideoInput,
+        *,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+        fps: float | None = None,
+        max_frames: int | None = None,
+    ) -> torch.Tensor:
+        del video, normalize, truncate_dim, fps, max_frames
+        raise NotImplementedError(
+            "encode_video() is not supported by the dino.txt backend."
+        )
+
     def similarity_map(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         text: str | Sequence[str],
         output_size: tuple[int, int] | None = None,
     ) -> torch.Tensor:
@@ -316,7 +370,7 @@ class DinoTxtCLIP(nn.Module):
 
     def forward(
         self,
-        image: torch.Tensor | None = None,
+        image: ProcessedImageBatch | None = None,
         text: torch.Tensor | None = None,
         *,
         truncate_dim: int | None = None,
@@ -333,7 +387,7 @@ class DinoTxtCLIP(nn.Module):
 
     def get_logits(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         text: torch.Tensor,
         *,
         truncate_dim: int | None = None,
@@ -369,6 +423,11 @@ class DinoV2DinoTxtBackend:
             "text_similarity_map": True,
             "mrl": False,
             "selective_loading": False,
+            "video_embedding": False,
+            "multimodal_embedding": False,
+            "instruction_aware": False,
+            "variable_resolution": False,
+            "sigmoid_logits": False,
         }
     )
     embedding_space_metadata = EmbeddingSpaceMetadata(
@@ -472,9 +531,7 @@ class DinoV2DinoTxtBackend:
                 "Only the registered official dino.txt tokenizer is supported."
             )
         if prompt_name is not None:
-            raise ValueError(
-                "dino.txt has no task prompts; prompt_name must be None."
-            )
+            raise ValueError("dino.txt has no task prompts; prompt_name must be None.")
         if cache_dir is not None and not isinstance(cache_dir, str):
             raise TypeError("cache_dir must be a string or None.")
         resolved_context_length = 77 if context_length is None else context_length
@@ -511,7 +568,7 @@ class DinoV2DinoTxtBackend:
     def forward(
         self,
         model: DinoTxtCLIP,
-        image: torch.Tensor | None,
+        image: ProcessedImageBatch | None,
         text: torch.Tensor | None,
         *,
         truncate_dim: int | None,
@@ -523,13 +580,18 @@ class DinoV2DinoTxtBackend:
             raise ValueError("At least one of image or text must be provided.")
         self.validate_embedding_dimension(truncate_dim, name="truncate_dim")
 
+        image_tensor = (
+            require_tensor_image(image, backend_name="dino.txt")
+            if image is not None
+            else None
+        )
         prepared_image: torch.Tensor | None = None
         prepared_text: torch.Tensor | None = None
         model_device, model_dtype = self._model_device_dtype(model)
-        if image is not None:
+        if image_tensor is not None:
             prepared_image, image_device, image_dtype = self._prepare_image_input(
                 model,
-                image,
+                image_tensor,
                 truncate_dim,
             )
             model_device, model_dtype = image_device, image_dtype
@@ -565,7 +627,7 @@ class DinoV2DinoTxtBackend:
         if image_features is not None:
             image_features = self._validate_features(
                 image_features,
-                batch_size=image.shape[0] if image is not None else 0,
+                batch_size=image_tensor.shape[0] if image_tensor is not None else 0,
                 device=model_device,
                 dtype=model_dtype,
                 normalize=False,
@@ -606,14 +668,15 @@ class DinoV2DinoTxtBackend:
     def get_logits(
         self,
         model: DinoTxtCLIP,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         text: torch.Tensor,
         *,
         truncate_dim: int | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        image_tensor = require_tensor_image(image, backend_name="dino.txt")
         prepared_image, device, dtype = self._prepare_image_input(
             model,
-            image,
+            image_tensor,
             truncate_dim,
         )
         prepared_text, _, _ = self._prepare_text_input(
@@ -641,7 +704,7 @@ class DinoV2DinoTxtBackend:
                 logits = image_logits, image_logits.T
         return self._validate_logits(
             logits,
-            image_count=image.shape[0],
+            image_count=image_tensor.shape[0],
             text_count=text.shape[0],
             device=device,
             dtype=dtype,
@@ -650,16 +713,17 @@ class DinoV2DinoTxtBackend:
     def encode_image(
         self,
         model: DinoTxtCLIP,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         *,
         normalize: bool,
         truncate_dim: int | None,
     ) -> torch.Tensor:
         if not isinstance(normalize, bool):
             raise TypeError("normalize must be a bool.")
+        image_tensor = require_tensor_image(image, backend_name="dino.txt")
         image_batch, model_device, model_dtype = self._prepare_image_input(
             model,
-            image,
+            image_tensor,
             truncate_dim,
         )
         with torch.inference_mode():
@@ -669,7 +733,7 @@ class DinoV2DinoTxtBackend:
             )
         return self._validate_features(
             features,
-            batch_size=image.shape[0],
+            batch_size=image_tensor.shape[0],
             device=model_device,
             dtype=model_dtype,
             normalize=normalize,
@@ -679,20 +743,21 @@ class DinoV2DinoTxtBackend:
     def encode_patches(
         self,
         model: DinoTxtCLIP,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         *,
         normalize: bool,
     ) -> torch.Tensor:
         if not isinstance(normalize, bool):
             raise TypeError("normalize must be a bool.")
+        image_tensor = require_tensor_image(image, backend_name="dino.txt")
         prepared_image, device, dtype = self._prepare_image_input(
             model,
-            image,
+            image_tensor,
             None,
         )
         grid_height, grid_width = self._patch_grid_size(
-            image.shape[2],
-            image.shape[3],
+            image_tensor.shape[2],
+            image_tensor.shape[3],
         )
         patch_features = self._get_patch_features(
             model,
@@ -704,33 +769,29 @@ class DinoV2DinoTxtBackend:
         )
         if normalize:
             norms = torch.linalg.vector_norm(patch_features.float(), dim=-1)
-            if (
-                not torch.isfinite(norms).all().item()
-                or (norms <= 0).any().item()
-            ):
-                raise ValueError(
-                    "patch features contain a zero or invalid L2 norm."
-                )
+            if not torch.isfinite(norms).all().item() or (norms <= 0).any().item():
+                raise ValueError("patch features contain a zero or invalid L2 norm.")
             patch_features = F.normalize(patch_features, p=2, dim=-1)
         return patch_features
 
     def similarity_map(
         self,
         model: DinoTxtCLIP,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         text: str | Sequence[str],
         *,
         output_size: tuple[int, int] | None,
     ) -> torch.Tensor:
         texts, single_text = self._coerce_similarity_texts(text)
+        image_tensor = require_tensor_image(image, backend_name="dino.txt")
         prepared_image, device, dtype = self._prepare_image_input(
             model,
-            image,
+            image_tensor,
             None,
         )
         grid_height, grid_width = self._patch_grid_size(
-            image.shape[2],
-            image.shape[3],
+            image_tensor.shape[2],
+            image_tensor.shape[3],
         )
         resolved_size = self._resolve_similarity_output_size(
             output_size,
@@ -738,7 +799,7 @@ class DinoV2DinoTxtBackend:
             grid_width=grid_width,
         )
         self._check_similarity_map_limits(
-            batch_size=image.shape[0],
+            batch_size=image_tensor.shape[0],
             text_count=len(texts),
             height=resolved_size[0],
             width=resolved_size[1],
@@ -781,9 +842,7 @@ class DinoV2DinoTxtBackend:
         )
 
         patch_map = (
-            patch_features.movedim(2, 1)
-            .unflatten(2, (grid_height, grid_width))
-            .float()
+            patch_features.movedim(2, 1).unflatten(2, (grid_height, grid_width)).float()
         )
         if output_size is not None:
             patch_map = F.interpolate(
@@ -885,9 +944,7 @@ class DinoV2DinoTxtBackend:
         height: int,
         width: int,
     ) -> None:
-        feature_elements = (
-            batch_size * _PATCH_EMBEDDING_DIMENSION * height * width
-        )
+        feature_elements = batch_size * _PATCH_EMBEDDING_DIMENSION * height * width
         score_elements = batch_size * text_count * height * width
         if feature_elements > _MAX_SIMILARITY_MAP_FEATURE_ELEMENTS:
             raise ValueError(
@@ -923,8 +980,7 @@ class DinoV2DinoTxtBackend:
             output = model.backend.get_visual_class_and_patch_tokens(prepared_image)
         if not isinstance(output, tuple) or len(output) != 2:
             raise RuntimeError(
-                "The official dino.txt Vision Tower must return class and patch "
-                "tokens."
+                "The official dino.txt Vision Tower must return class and patch tokens."
             )
         class_features, patch_features = output
         batch_size = prepared_image.shape[0]
@@ -1042,7 +1098,9 @@ class DinoV2DinoTxtBackend:
         if not isinstance(text, torch.Tensor):
             raise TypeError("text must be a torch.Tensor.")
         if text.ndim != 2:
-            raise ValueError(f"text must have shape [B,L]; received {tuple(text.shape)}.")
+            raise ValueError(
+                f"text must have shape [B,L]; received {tuple(text.shape)}."
+            )
         if text.shape[0] == 0:
             raise ValueError("text batch must contain at least one sequence.")
         if not 2 <= text.shape[1] <= 77:
@@ -1055,15 +1113,19 @@ class DinoV2DinoTxtBackend:
         if text.min().item() < 0 or text.max().item() >= _VOCAB_SIZE:
             raise ValueError(f"text token IDs must be in [0, {_VOCAB_SIZE - 1}].")
         if (text[:, 0] != _START_TOKEN_ID).any().item():
-            raise ValueError("Each dino.txt token sequence must start with SOT ID 49406.")
+            raise ValueError(
+                "Each dino.txt token sequence must start with SOT ID 49406."
+            )
         end_tokens = text.eq(_END_TOKEN_ID)
         if not end_tokens.any(dim=1).all().item():
             raise ValueError("Each dino.txt token sequence must contain EOT ID 49407.")
         positions = torch.arange(text.shape[1], device=text.device).expand_as(text)
         final_end_positions = positions.masked_fill(~end_tokens, -1).max(dim=1).values
         if (
-            text.masked_fill(positions <= final_end_positions[:, None], 0) != 0
-        ).any().item():
+            (text.masked_fill(positions <= final_end_positions[:, None], 0) != 0)
+            .any()
+            .item()
+        ):
             raise ValueError("Token IDs after the final EOT must be zero padding.")
 
         model_device, model_dtype = self._model_device_dtype(model)
@@ -1083,7 +1145,9 @@ class DinoV2DinoTxtBackend:
         dtype: torch.dtype,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if not isinstance(logits, tuple) or len(logits) != 2:
-            raise RuntimeError("The official dino.txt get_logits() must return two values.")
+            raise RuntimeError(
+                "The official dino.txt get_logits() must return two values."
+            )
         image_logits, text_logits = logits
         expected_image_shape = (image_count, text_count)
         expected_text_shape = (text_count, image_count)
@@ -1091,7 +1155,10 @@ class DinoV2DinoTxtBackend:
             (image_logits, expected_image_shape, "image"),
             (text_logits, expected_text_shape, "text"),
         ):
-            if not isinstance(values, torch.Tensor) or tuple(values.shape) != expected_shape:
+            if (
+                not isinstance(values, torch.Tensor)
+                or tuple(values.shape) != expected_shape
+            ):
                 actual_shape = (
                     tuple(values.shape)
                     if isinstance(values, torch.Tensor)
@@ -1138,7 +1205,9 @@ class DinoV2DinoTxtBackend:
         modality: str,
     ) -> torch.Tensor:
         if not isinstance(features, torch.Tensor):
-            raise TypeError(f"The official model returned non-Tensor {modality} features.")
+            raise TypeError(
+                f"The official model returned non-Tensor {modality} features."
+            )
         if features.shape != (batch_size, _EMBEDDING_DIMENSION):
             raise RuntimeError(
                 f"The official model returned {modality} features with shape "
@@ -1151,7 +1220,9 @@ class DinoV2DinoTxtBackend:
                 f"{features.device} with {features.dtype}; expected {device} with {dtype}."
             )
         if not torch.isfinite(features).all().item():
-            raise RuntimeError(f"The official model returned non-finite {modality} features.")
+            raise RuntimeError(
+                f"The official model returned non-finite {modality} features."
+            )
         if normalize:
             features = F.normalize(features, p=2, dim=-1)
         return features

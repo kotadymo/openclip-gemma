@@ -14,7 +14,10 @@ from PIL import Image
 from openvlclip._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
 )
-from openvlclip.backends.base import validate_model_embedding_dimension
+from openvlclip.backends.base import (
+    ProcessedImage,
+    validate_model_embedding_dimension,
+)
 
 type ImagePath = str | PathLike[str]
 type ImageEmbedding = tuple[Path, torch.Tensor]
@@ -38,7 +41,7 @@ class _ImageEncoder(Protocol):
 
 def iter_image_embeddings(
     model: torch.nn.Module,
-    preprocess: Callable[[Image.Image], torch.Tensor],
+    preprocess: Callable[[Image.Image], ProcessedImage],
     image_paths: Iterable[ImagePath],
     *,
     batch_size: int = _DEFAULT_BATCH_SIZE,
@@ -81,7 +84,7 @@ _iter_image_embeddings = iter_image_embeddings
 
 def _stream_image_embeddings(
     model: _ImageEncoder,
-    preprocess: Callable[[Image.Image], torch.Tensor],
+    preprocess: Callable[[Image.Image], ProcessedImage],
     image_paths: Iterator[ImagePath],
     batch_size: int,
     embedding_dim: int,
@@ -199,7 +202,7 @@ def _stream_preprocessed_embeddings[EmbeddingKey](
 
 def _load_preprocessed_image(
     path: Path,
-    preprocess: Callable[[Image.Image], torch.Tensor],
+    preprocess: Callable[[Image.Image], ProcessedImage],
     input_index: int,
 ) -> torch.Tensor:
     try:
@@ -220,7 +223,8 @@ def _load_preprocessed_image(
     if not isinstance(image_tensor, torch.Tensor):
         raise TypeError(
             f"Preprocessing image at input index {input_index} "
-            f"({path}) did not return a torch.Tensor."
+            f"({path}) did not return a torch.Tensor. Processor-aware mappings "
+            "are not supported by file-based batching."
         )
     if image_tensor.ndim != 3:
         raise ValueError(

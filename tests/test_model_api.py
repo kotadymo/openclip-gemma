@@ -49,6 +49,49 @@ def test_embeddinggemma_dense_methods_are_explicitly_unsupported() -> None:
         model.similarity_map(image, "a cat")
 
 
+def test_encode_texts_uses_backend_tokenizer_and_embedding() -> None:
+    model = _model()
+    token_ids = torch.ones((2, 4), dtype=torch.long)
+    features = torch.ones((2, 768))
+    tokenizer = Mock(return_value=token_ids)
+    create_tokenizer = Mock(return_value=tokenizer)
+    encoder = Mock(return_value=features)
+    model._create_tokenizer = create_tokenizer  # type: ignore[method-assign]
+    model.encode_text = encoder  # type: ignore[method-assign]
+    texts = ["first", "second"]
+
+    result = model.encode_texts(texts, normalize=True, truncate_dim=256)
+
+    assert result is features
+    create_tokenizer.assert_called_once_with(prompt_name=None)
+    tokenizer.assert_called_once_with(texts)
+    encoder.assert_called_once_with(
+        token_ids,
+        normalize=True,
+        truncate_dim=256,
+    )
+
+
+def test_encode_texts_rejects_unmapped_instructions() -> None:
+    model = _model()
+    create_tokenizer = Mock()
+    model._create_tokenizer = create_tokenizer  # type: ignore[method-assign]
+
+    with pytest.raises(NotImplementedError, match="registered task prompts"):
+        model.encode_texts("a photo", instruction="describe this image")
+
+    create_tokenizer.assert_not_called()
+
+
+def test_gemmamodel_rejects_unsupported_multimodal_and_video_encoding() -> None:
+    model = _model()
+
+    with pytest.raises(NotImplementedError, match="encode_multimodal"):
+        model.encode_multimodal({"text": "a photo"})
+    with pytest.raises(NotImplementedError, match="encode_video"):
+        model.encode_video("video.mp4")
+
+
 def test_forward_tuple_has_features_and_float32_scalar_scale() -> None:
     model = _model()
     image_features = F.normalize(torch.randn(2, 768), dim=-1)

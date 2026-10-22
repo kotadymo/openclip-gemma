@@ -112,7 +112,7 @@ class ModelDescriptor:
 
     def capabilities_for_full_model(self) -> Mapping[str, bool]:
         """Get the backend's full-modality capabilities for consistency checks."""
-        return self.backend.capabilities_for(("text", "image"))
+        return self.backend.capabilities_for(("text", "image", "video"))
 
     def checkpoint_for(self, pretrained: str) -> str:
         """Resolve a public pretrained tag or an accepted checkpoint alias."""

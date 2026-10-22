@@ -40,13 +40,19 @@ class FakeDinoTxt(nn.Module):
         self.anchor = nn.Parameter(torch.ones(()))
         self.logit_scale = nn.Parameter(torch.tensor([math.log(10.0)]))
 
-    def encode_image(self, image: torch.Tensor, normalize: bool = False) -> torch.Tensor:
+    def encode_image(
+        self, image: torch.Tensor, normalize: bool = False
+    ) -> torch.Tensor:
         features = self.anchor.expand(image.shape[0], 2048)
-        return torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        return (
+            torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        )
 
     def encode_text(self, text: torch.Tensor, normalize: bool = False) -> torch.Tensor:
         features = self.anchor.expand(text.shape[0], 2048)
-        return torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        return (
+            torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        )
 
     def get_visual_class_and_patch_tokens(
         self,
@@ -276,6 +282,51 @@ def test_dinotxt_encoders_preserve_official_raw_and_normalized_features() -> Non
         model.encode_image(image, truncate_dim=768)
 
 
+def test_dinotxt_encode_texts_uses_its_tokenizer_and_rejects_instructions() -> None:
+    model = DinoTxtCLIP(
+        FakeDinoTxt(),
+        DinoV2DinoTxtBackend(),
+        output_dict=False,
+        logit_scale_mode="strict",
+    )
+    token_ids = torch.tensor([[49406, 320, 49407]], dtype=torch.long)
+    tokenizer = Mock(return_value=token_ids)
+    create_tokenizer = Mock(return_value=tokenizer)
+    features = torch.ones((1, 2048))
+    encoder = Mock(return_value=features)
+    model._create_tokenizer = create_tokenizer  # type: ignore[method-assign]
+    model.encode_text = encoder  # type: ignore[method-assign]
+
+    result = model.encode_texts("a photo")
+
+    assert result is features
+    create_tokenizer.assert_called_once_with(prompt_name=None)
+    tokenizer.assert_called_once_with("a photo")
+    encoder.assert_called_once_with(
+        token_ids,
+        normalize=False,
+        truncate_dim=None,
+    )
+    with pytest.raises(NotImplementedError, match="does not support task instructions"):
+        model.encode_texts("a photo", instruction="describe this image")
+    with pytest.raises(NotImplementedError, match="encode_multimodal"):
+        model.encode_multimodal({"text": "a photo"})
+    with pytest.raises(NotImplementedError, match="encode_video"):
+        model.encode_video("video.mp4")
+
+
+def test_dinotxt_rejects_processor_mapping_image_inputs() -> None:
+    model = DinoTxtCLIP(
+        FakeDinoTxt(),
+        DinoV2DinoTxtBackend(),
+        output_dict=False,
+        logit_scale_mode="strict",
+    )
+
+    with pytest.raises(TypeError, match="processor-aware image mappings"):
+        model.encode_image({"pixel_values": torch.zeros((1, 3, 224, 224))})
+
+
 def test_dinotxt_forward_and_logits_distinguish_official_scale_from_cosine() -> None:
     backend = DinoV2DinoTxtBackend()
     official_model = FakeDinoTxt()
@@ -362,7 +413,9 @@ def test_dinotxt_encoders_reject_invalid_image_and_token_inputs() -> None:
         model.encode_text(torch.tensor([[49406, 49407, 123]], dtype=torch.long))
 
 
-def test_dinotxt_encode_patches_uses_head_tokens_and_handles_non_square_inputs() -> None:
+def test_dinotxt_encode_patches_uses_head_tokens_and_handles_non_square_inputs() -> (
+    None
+):
     official_model = FakeDinoTxt()
     model = DinoTxtCLIP(
         official_model,
@@ -400,10 +453,14 @@ def _notebook_similarity_map(
     _, patches = model.get_visual_class_and_patch_tokens(image)
     grid_height = image.shape[2] // backend_module._PATCH_SIZE
     grid_width = image.shape[3] // backend_module._PATCH_SIZE
-    patch_map = patches.movedim(2, 1).unflatten(
-        2,
-        (grid_height, grid_width),
-    ).float()
+    patch_map = (
+        patches.movedim(2, 1)
+        .unflatten(
+            2,
+            (grid_height, grid_width),
+        )
+        .float()
+    )
     if output_size is not None:
         patch_map = F.interpolate(
             patch_map,

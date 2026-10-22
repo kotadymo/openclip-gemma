@@ -226,10 +226,13 @@ loads its full vision/text model.
 
 `model.capabilities` is a read-only mapping with `image_embedding`,
 `text_embedding`, `image_text_similarity`, `patch_embedding`,
-`text_similarity_map`, `mrl`, and `selective_loading` flags. Values depend on
-the selected backend and loaded modalities: dino.txt supports patch features
-and text similarity maps, while EmbeddingGemma does not; EmbeddingGemma alone
-supports MRL and selective loading.
+`text_similarity_map`, `mrl`, `selective_loading`, `video_embedding`,
+`multimodal_embedding`, `instruction_aware`, `variable_resolution`, and
+`sigmoid_logits` flags. Values depend on the backend and loaded modalities.
+EmbeddingGemma reports instruction-aware text and variable-resolution image
+support and supports MRL/selective loading; dino.txt supports patch features
+and text similarity maps. Neither current backend supports native video or
+joint multimodal embeddings.
 
 ## Zero-shot image classification
 
@@ -406,13 +409,13 @@ separate, smaller-dimensional index without model inference.
 | Area | `openvlclip` behavior |
 | --- | --- |
 | Embeddings | EmbeddingGemma 2 produces 768 dimensions with MRL outputs of 512, 256, or 128. dino.txt produces 2048-dimensional global embeddings and 1024-dimensional patch features; truncation is rejected. |
-| Images | Use the selected model's returned preprocessing transform. `encode_image()` accepts preprocessed float32 `[B, 3, H, W]` tensors; do not apply preprocessing twice. |
-| Text | `get_tokenizer()` returns model-specific token IDs. CLIP, Gemma, and dino.txt token IDs are not interchangeable. |
+| Images | Use the selected model's returned preprocessing transform. Both current backends accept preprocessed float32 `[B, 3, H, W]` tensors; do not apply preprocessing twice. Processor-aware mappings are not yet supported by these backends or file-based batching. |
+| Text | `get_tokenizer()` returns model-specific token IDs; `encode_texts()` accepts plain strings without a task instruction. CLIP, Gemma, and dino.txt token IDs are not interchangeable. |
 | Similarity | EmbeddingGemma cosine mode returns scale-1 similarities. dino.txt strict mode preserves the official scaled logits; cosine mode is distinct. Neither is a calibrated probability. |
 | Factory discovery | `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()` resolve the registered backends and their checkpoints. |
 | Selective loading | Selective loading is supported by EmbeddingGemma 2; dino.txt requires its complete vision/text model. |
 | Capabilities | `model.capabilities` is immutable and model-specific. dino.txt exposes patch embeddings and text similarity maps; EmbeddingGemma reports these as unsupported. |
-| Model methods | Both backends support global image/text encoding, `eval()`, and `to()`. `forward()`/`get_logits()` semantics and defaults are backend-specific; consult the model reference before choosing strict or cosine mode. |
+| Model methods | Both backends support global image/text encoding, `encode_texts()`, `eval()`, and `to()`. `encode_video()` and `encode_multimodal()` explicitly raise `NotImplementedError` for both current models. `forward()`/`get_logits()` semantics and defaults are backend-specific; consult the model reference before choosing strict or cosine mode. |
 | Scope | The core model API does not support training, fine-tuning, audio, or arbitrary architectures. Video-frame search is a separate v0.2.0 API, not a core OpenCLIP-compatible model feature. |
 
 `list_pretrained()` reports the registered checkpoints for the selected

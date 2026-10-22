@@ -14,6 +14,7 @@ from openvlclip._dimensions import (
     EMBEDDING_STRATEGY,
     validate_positive_embedding_dimension,
 )
+from openvlclip.backends.base import ProcessedImageBatch, require_tensor_image
 from openvlclip.capabilities import capabilities_for_modalities, freeze_capabilities
 from openvlclip.constants import (
     BACKEND_ID,
@@ -113,6 +114,11 @@ class EmbeddingGemma2Backend:
             "text_similarity_map": False,
             "mrl": True,
             "selective_loading": True,
+            "video_embedding": False,
+            "multimodal_embedding": False,
+            "instruction_aware": True,
+            "variable_resolution": True,
+            "sigmoid_logits": False,
         }
     )
     embedding_space_metadata = EmbeddingSpaceMetadata(
@@ -302,14 +308,13 @@ class EmbeddingGemma2Backend:
     def encode_image(
         self,
         model: EmbeddingGemmaCLIP,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         *,
         normalize: bool,
         truncate_dim: int | None,
     ) -> torch.Tensor:
         """Encode preprocessed images through the official model and pooling path."""
-        if not isinstance(image, torch.Tensor):
-            raise TypeError("image must be a torch.Tensor.")
+        image = require_tensor_image(image, backend_name="EmbeddingGemma 2")
         if image.ndim != 4:
             raise ValueError(
                 f"image must have shape [B,3,H,W]; received {tuple(image.shape)}."
