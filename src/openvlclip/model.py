@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import torch
@@ -292,6 +292,29 @@ class EmbeddingGemmaCLIP(nn.Module):
             text,
             normalize=normalize,
             truncate_dim=truncate_dim,
+        )
+
+    def encode_patches(
+        self,
+        image: torch.Tensor,
+        normalize: bool = False,
+    ) -> torch.Tensor:
+        """Raise because EmbeddingGemma 2 does not expose aligned patch features."""
+        del image, normalize
+        raise NotImplementedError(
+            "encode_patches() is not supported by the EmbeddingGemma 2 backend."
+        )
+
+    def similarity_map(
+        self,
+        image: torch.Tensor,
+        text: str | Sequence[str],
+        output_size: tuple[int, int] | None = None,
+    ) -> torch.Tensor:
+        """Raise because EmbeddingGemma 2 has no text-aligned patch features."""
+        del image, text, output_size
+        raise NotImplementedError(
+            "similarity_map() is not supported by the EmbeddingGemma 2 backend."
         )
 
     def encode(self, *args: Any, **kwargs: Any) -> NoReturn:

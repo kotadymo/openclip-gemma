@@ -8,7 +8,7 @@ import tempfile
 import threading
 import urllib.error
 import urllib.request
-from collections.abc import Generator, Mapping
+from collections.abc import Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,9 +45,12 @@ _HUB_MODEL = "dinov2_vitl14_reg4_dinotxt_tet1280d20h24l"
 _IMAGE_SIZE = 224
 _PATCH_SIZE = 14
 _EMBEDDING_DIMENSION = 2048
+_PATCH_EMBEDDING_DIMENSION = 1024
 _START_TOKEN_ID = 49406
 _END_TOKEN_ID = 49407
 _VOCAB_SIZE = 49408
+_MAX_SIMILARITY_MAP_FEATURE_ELEMENTS = 512 * 1024 * 1024
+_MAX_SIMILARITY_MAP_SCORE_ELEMENTS = 64 * 1024 * 1024
 _TORCH_HUB_LOCK = threading.RLock()
 
 
@@ -273,6 +276,17 @@ class DinoTxtCLIP(nn.Module):
             truncate_dim=truncate_dim,
         )
 
+    def encode_patches(
+        self,
+        image: torch.Tensor,
+        normalize: bool = False,
+    ) -> torch.Tensor:
+        return self._inference_backend.encode_patches(
+            self,
+            image,
+            normalize=normalize,
+        )
+
     def encode_text(
         self,
         text: torch.Tensor,
@@ -285,6 +299,19 @@ class DinoTxtCLIP(nn.Module):
             text,
             normalize=normalize,
             truncate_dim=truncate_dim,
+        )
+
+    def similarity_map(
+        self,
+        image: torch.Tensor,
+        text: str | Sequence[str],
+        output_size: tuple[int, int] | None = None,
+    ) -> torch.Tensor:
+        return self._inference_backend.similarity_map(
+            self,
+            image,
+            text,
+            output_size=output_size,
         )
 
     def forward(
@@ -338,8 +365,8 @@ class DinoV2DinoTxtBackend:
             "image_embedding": True,
             "text_embedding": True,
             "image_text_similarity": True,
-            "patch_embedding": False,
-            "text_similarity_map": False,
+            "patch_embedding": True,
+            "text_similarity_map": True,
             "mrl": False,
             "selective_loading": False,
         }
@@ -648,6 +675,300 @@ class DinoV2DinoTxtBackend:
             normalize=normalize,
             modality="image",
         )
+
+    def encode_patches(
+        self,
+        model: DinoTxtCLIP,
+        image: torch.Tensor,
+        *,
+        normalize: bool,
+    ) -> torch.Tensor:
+        if not isinstance(normalize, bool):
+            raise TypeError("normalize must be a bool.")
+        prepared_image, device, dtype = self._prepare_image_input(
+            model,
+            image,
+            None,
+        )
+        grid_height, grid_width = self._patch_grid_size(
+            image.shape[2],
+            image.shape[3],
+        )
+        patch_features = self._get_patch_features(
+            model,
+            prepared_image,
+            grid_height=grid_height,
+            grid_width=grid_width,
+            device=device,
+            dtype=dtype,
+        )
+        if normalize:
+            norms = torch.linalg.vector_norm(patch_features.float(), dim=-1)
+            if (
+                not torch.isfinite(norms).all().item()
+                or (norms <= 0).any().item()
+            ):
+                raise ValueError(
+                    "patch features contain a zero or invalid L2 norm."
+                )
+            patch_features = F.normalize(patch_features, p=2, dim=-1)
+        return patch_features
+
+    def similarity_map(
+        self,
+        model: DinoTxtCLIP,
+        image: torch.Tensor,
+        text: str | Sequence[str],
+        *,
+        output_size: tuple[int, int] | None,
+    ) -> torch.Tensor:
+        texts, single_text = self._coerce_similarity_texts(text)
+        prepared_image, device, dtype = self._prepare_image_input(
+            model,
+            image,
+            None,
+        )
+        grid_height, grid_width = self._patch_grid_size(
+            image.shape[2],
+            image.shape[3],
+        )
+        resolved_size = self._resolve_similarity_output_size(
+            output_size,
+            grid_height=grid_height,
+            grid_width=grid_width,
+        )
+        self._check_similarity_map_limits(
+            batch_size=image.shape[0],
+            text_count=len(texts),
+            height=resolved_size[0],
+            width=resolved_size[1],
+        )
+
+        tokenizer = model._create_tokenizer(prompt_name=None)
+        token_ids = tokenizer(texts)
+        if not isinstance(token_ids, torch.Tensor):
+            raise TypeError("The dino.txt tokenizer must return a Tensor.")
+        prepared_text, text_device, text_dtype = self._prepare_text_input(
+            model,
+            token_ids.to(device=device),
+            None,
+        )
+        if text_device != device or text_dtype != dtype:
+            raise RuntimeError(
+                "Image and text inputs resolved to inconsistent model settings."
+            )
+
+        patch_features = self._get_patch_features(
+            model,
+            prepared_image,
+            grid_height=grid_height,
+            grid_width=grid_width,
+            device=device,
+            dtype=dtype,
+        )
+        with torch.inference_mode():
+            text_features = model.backend.encode_text(
+                prepared_text,
+                normalize=False,
+            )
+        text_features = self._validate_features(
+            text_features,
+            batch_size=len(texts),
+            device=device,
+            dtype=dtype,
+            normalize=False,
+            modality="text",
+        )
+
+        patch_map = (
+            patch_features.movedim(2, 1)
+            .unflatten(2, (grid_height, grid_width))
+            .float()
+        )
+        if output_size is not None:
+            patch_map = F.interpolate(
+                patch_map,
+                size=resolved_size,
+                mode="bicubic",
+                align_corners=False,
+            )
+        patch_norms = torch.linalg.vector_norm(
+            patch_map,
+            ord=2,
+            dim=1,
+            keepdim=True,
+        )
+        if (
+            not torch.isfinite(patch_map).all().item()
+            or not torch.isfinite(patch_norms).all().item()
+            or (patch_norms <= 0).any().item()
+        ):
+            raise ValueError(
+                "interpolated patch features contain a zero or invalid L2 norm."
+            )
+        normalized_patches = F.normalize(patch_map, p=2, dim=1)
+
+        text_patch_features = text_features[:, _PATCH_EMBEDDING_DIMENSION:].float()
+        text_norms = torch.linalg.vector_norm(
+            text_patch_features,
+            ord=2,
+            dim=1,
+            keepdim=True,
+        )
+        if (
+            not torch.isfinite(text_patch_features).all().item()
+            or not torch.isfinite(text_norms).all().item()
+            or (text_norms <= 0).any().item()
+        ):
+            raise ValueError(
+                "text patch-aligned features contain a zero or invalid L2 norm."
+            )
+        normalized_text = F.normalize(text_patch_features, p=2, dim=1)
+        scores = torch.einsum(
+            "bdhw,kd->bkhw",
+            normalized_patches,
+            normalized_text,
+        )
+        if not torch.isfinite(scores).all().item():
+            raise RuntimeError("similarity_map() produced non-finite scores.")
+        return scores[:, 0] if single_text else scores
+
+    @staticmethod
+    def _coerce_similarity_texts(
+        text: str | Sequence[str],
+    ) -> tuple[list[str], bool]:
+        if isinstance(text, str):
+            texts = [text]
+            single_text = True
+        elif isinstance(text, Sequence):
+            texts = list(text)
+            single_text = False
+        else:
+            raise TypeError("text must be a string or a sequence of strings.")
+        if not texts:
+            raise ValueError("text must contain at least one non-empty string.")
+        for index, candidate in enumerate(texts):
+            if not isinstance(candidate, str):
+                raise TypeError(f"text[{index}] must be a string.")
+            if not candidate.strip():
+                raise ValueError(f"text[{index}] must not be empty.")
+        return texts, single_text
+
+    @staticmethod
+    def _resolve_similarity_output_size(
+        output_size: tuple[int, int] | None,
+        *,
+        grid_height: int,
+        grid_width: int,
+    ) -> tuple[int, int]:
+        if output_size is None:
+            return grid_height, grid_width
+        if not isinstance(output_size, tuple) or len(output_size) != 2:
+            raise TypeError("output_size must be a (height, width) tuple or None.")
+        height, width = output_size
+        if (
+            isinstance(height, bool)
+            or not isinstance(height, int)
+            or isinstance(width, bool)
+            or not isinstance(width, int)
+        ):
+            raise TypeError("output_size height and width must be integers.")
+        if height <= 0 or width <= 0:
+            raise ValueError("output_size height and width must be positive.")
+        return height, width
+
+    @staticmethod
+    def _check_similarity_map_limits(
+        *,
+        batch_size: int,
+        text_count: int,
+        height: int,
+        width: int,
+    ) -> None:
+        feature_elements = (
+            batch_size * _PATCH_EMBEDDING_DIMENSION * height * width
+        )
+        score_elements = batch_size * text_count * height * width
+        if feature_elements > _MAX_SIMILARITY_MAP_FEATURE_ELEMENTS:
+            raise ValueError(
+                "requested similarity_map() exceeds the configured interpolated "
+                "feature memory limit."
+            )
+        if score_elements > _MAX_SIMILARITY_MAP_SCORE_ELEMENTS:
+            raise ValueError(
+                "requested similarity_map() exceeds the configured score-map "
+                "memory limit."
+            )
+
+    @staticmethod
+    def _patch_grid_size(height: int, width: int) -> tuple[int, int]:
+        if height <= 0 or width <= 0 or height % _PATCH_SIZE or width % _PATCH_SIZE:
+            raise ValueError(
+                "preprocessed image height and width must be positive multiples of "
+                f"patch_size={_PATCH_SIZE}; received {(height, width)}."
+            )
+        return height // _PATCH_SIZE, width // _PATCH_SIZE
+
+    @staticmethod
+    def _get_patch_features(
+        model: DinoTxtCLIP,
+        prepared_image: torch.Tensor,
+        *,
+        grid_height: int,
+        grid_width: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        with torch.inference_mode():
+            output = model.backend.get_visual_class_and_patch_tokens(prepared_image)
+        if not isinstance(output, tuple) or len(output) != 2:
+            raise RuntimeError(
+                "The official dino.txt Vision Tower must return class and patch "
+                "tokens."
+            )
+        class_features, patch_features = output
+        batch_size = prepared_image.shape[0]
+        expected_class_shape = (batch_size, _PATCH_EMBEDDING_DIMENSION)
+        expected_patch_shape = (
+            batch_size,
+            grid_height * grid_width,
+            _PATCH_EMBEDDING_DIMENSION,
+        )
+        if (
+            not isinstance(class_features, torch.Tensor)
+            or tuple(class_features.shape) != expected_class_shape
+        ):
+            raise RuntimeError(
+                "The official dino.txt class tokens must have shape "
+                f"{expected_class_shape}."
+            )
+        if (
+            not isinstance(patch_features, torch.Tensor)
+            or tuple(patch_features.shape) != expected_patch_shape
+        ):
+            actual_shape = (
+                tuple(patch_features.shape)
+                if isinstance(patch_features, torch.Tensor)
+                else type(patch_features).__name__
+            )
+            raise RuntimeError(
+                "The official dino.txt patch tokens must have shape "
+                f"{expected_patch_shape}; received {actual_shape}."
+            )
+        for name, features in (
+            ("class", class_features),
+            ("patch", patch_features),
+        ):
+            if features.device != device or features.dtype != dtype:
+                raise RuntimeError(
+                    f"The official dino.txt {name} tokens have an unexpected "
+                    "device or dtype."
+                )
+            if not torch.isfinite(features).all().item():
+                raise RuntimeError(
+                    f"The official dino.txt {name} tokens contain NaN or Inf."
+                )
+        return patch_features
 
     def _prepare_image_input(
         self,

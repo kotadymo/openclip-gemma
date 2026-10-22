@@ -384,3 +384,25 @@ def test_model_capabilities_are_immutable_and_respect_selective_loading(
     assert isinstance(full_model, FakeModel)
     with pytest.raises(ValueError, match="must be 384"):
         full_model.validate_embedding_dimension(768, name="embedding_dim")
+
+
+def test_dense_capabilities_require_the_relevant_modalities() -> None:
+    capabilities = freeze_capabilities(
+        {
+            "image_embedding": True,
+            "text_embedding": True,
+            "image_text_similarity": True,
+            "patch_embedding": True,
+            "text_similarity_map": True,
+            "mrl": False,
+            "selective_loading": True,
+        }
+    )
+
+    text_only = capabilities_for_modalities(capabilities, ("text",))
+    image_only = capabilities_for_modalities(capabilities, ("image",))
+
+    assert text_only["patch_embedding"] is False
+    assert text_only["text_similarity_map"] is False
+    assert image_only["patch_embedding"] is True
+    assert image_only["text_similarity_map"] is False

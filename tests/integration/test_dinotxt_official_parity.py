@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import torch
 from PIL import Image
+from torch.nn import functional as F
 
 from openvlclip import create_model_and_transforms, get_tokenizer
 from openvlclip.backends.dinov2_dinotxt import (
@@ -206,6 +207,95 @@ def test_dinotxt_wrapper_matches_pinned_official_model(tmp_path: Path) -> None:
                     (cosine_logits[0] - expected_cosine_logits).abs().max().item()
                 ),
             }
+            if device == "cpu":
+                dense_images = image_batch[:1]
+                dense_model_images = dense_images.to(dtype=dtype)
+                dense_texts = ["a red car", "a blue car"]
+                dense_tokens = tokenizer(dense_texts).to(device)
+                with torch.inference_mode():
+                    _, official_patches = model.backend.get_visual_class_and_patch_tokens(
+                        dense_model_images
+                    )
+                    official_patch_text = model.backend.encode_text(
+                        dense_tokens,
+                        normalize=False,
+                    )[:, 1024:]
+                    actual_patches = model.encode_patches(dense_images)
+                    actual_normalized_patches = model.encode_patches(
+                        dense_images,
+                        normalize=True,
+                    )
+                    actual_similarity = model.similarity_map(
+                        dense_images,
+                        dense_texts,
+                        output_size=(32, 40),
+                    )
+
+                grid_height = dense_images.shape[-2] // 14
+                grid_width = dense_images.shape[-1] // 14
+                expected_patch_map = (
+                    official_patches.movedim(2, 1)
+                    .unflatten(2, (grid_height, grid_width))
+                    .float()
+                )
+                expected_patch_map = F.interpolate(
+                    expected_patch_map,
+                    size=(32, 40),
+                    mode="bicubic",
+                    align_corners=False,
+                )
+                expected_patch_map = F.normalize(
+                    expected_patch_map,
+                    p=2,
+                    dim=1,
+                )
+                expected_patch_text = F.normalize(
+                    official_patch_text.float(),
+                    p=2,
+                    dim=1,
+                )
+                expected_normalized_patches = F.normalize(
+                    official_patches,
+                    p=2,
+                    dim=-1,
+                )
+                expected_similarity = torch.einsum(
+                    "bdhw,kd->bkhw",
+                    expected_patch_map,
+                    expected_patch_text,
+                )
+                torch.testing.assert_close(
+                    actual_patches,
+                    official_patches,
+                    rtol=0,
+                    atol=0,
+                )
+                torch.testing.assert_close(
+                    actual_normalized_patches,
+                    expected_normalized_patches,
+                    rtol=0,
+                    atol=0,
+                )
+                torch.testing.assert_close(
+                    actual_similarity,
+                    expected_similarity,
+                    rtol=0,
+                    atol=0,
+                )
+                comparisons[f"{device}-{str(dtype).removeprefix('torch.')}"][
+                    "patch_max_abs_error"
+                ] = float((actual_patches - official_patches).abs().max().item())
+                comparisons[f"{device}-{str(dtype).removeprefix('torch.')}"][
+                    "normalized_patch_max_abs_error"
+                ] = float(
+                    (actual_normalized_patches - expected_normalized_patches)
+                    .abs()
+                    .max()
+                    .item()
+                )
+                comparisons[f"{device}-{str(dtype).removeprefix('torch.')}"][
+                    "similarity_map_max_abs_error"
+                ] = float((actual_similarity - expected_similarity).abs().max().item())
 
     image_root = tmp_path / "search-images"
     image_root.mkdir()
