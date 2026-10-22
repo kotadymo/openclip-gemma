@@ -207,6 +207,7 @@ def test_dinotxt_wrapper_matches_pinned_official_model(tmp_path: Path) -> None:
                     (cosine_logits[0] - expected_cosine_logits).abs().max().item()
                 ),
             }
+
             if device == "cpu":
                 dense_images = image_batch[:1]
                 dense_model_images = dense_images.to(dtype=dtype)
@@ -297,6 +298,7 @@ def test_dinotxt_wrapper_matches_pinned_official_model(tmp_path: Path) -> None:
                     "similarity_map_max_abs_error"
                 ] = float((actual_similarity - expected_similarity).abs().max().item())
 
+    model.to(device="cpu", dtype=torch.float32)
     image_root = tmp_path / "search-images"
     image_root.mkdir()
     image_path = image_root / "sample.png"

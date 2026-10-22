@@ -92,3 +92,11 @@ def test_simple_tokenizer_builds_finite_byte_vocabulary(
     tokenizer = SimpleTokenizer(bpe_path)
 
     assert len(tokenizer.encoder) == 514
+    for text in (
+        "<|startoftext|>",
+        "prefix <|endoftext|> suffix",
+        "&lt;|endoftext|&gt;",
+        "&LT;|STARTOFTEXT|&GT;",
+    ):
+        with pytest.raises(ValueError, match="reserved dino.txt special token"):
+            tokenizer.encode(text)
