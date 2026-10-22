@@ -1,11 +1,11 @@
 # Model provenance for OpenVLCLIP v0.7.0
 
-- **Status:** Phase 0 source audit; runtime parity is not complete.
+- **Status:** Phase 0 source audit and partial runtime validation; OpenVLCLIP parity is not complete.
 - **Audit date:** 2026-10-22
-- **OpenVLCLIP baseline:** `main` at `4d6aba4e3dd7c152c48422a5e7e8b2d9672d2cfa`
+- **OpenVLCLIP baseline:** `main` at `2979d770349312b6ef2d00e569ad25bbd0da221d`
 - **Distribution:** `openvlclip`
 
-This document records fixed upstream revisions, provenance, and static API findings for the four proposed v0.7.0 models. It is not evidence that OpenVLCLIP supports them, and it is not release approval. No model weights were downloaded or executed during this audit. The local runtime blockers and unverified contracts are listed at the end.
+This document records fixed upstream revisions, provenance, static API findings, and isolated runtime measurements for the four proposed v0.7.0 models. It is not evidence that OpenVLCLIP supports them, and it is not release approval. SigLIP 2 FixRes/NaFlex and Qwen 2B weights were downloaded to a temporary cache, hashed, and executed; no model files were added to the repository. Qwen 8B weights were not downloaded or executed. The remaining blockers and unresolved contracts are listed at the end.
 
 ## Fixed model revisions
 
@@ -18,11 +18,11 @@ The revision values below are immutable Hugging Face repository commits observed
 | `qwen3-vl-embedding-2b` | [`Qwen/Qwen3-VL-Embedding-2B`](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B/tree/9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda) | `9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda` | Apache-2.0 | `model_type=qwen3_vl`, checkpoint config declares `Qwen3VLForConditionalGeneration`; the embedding head is supplied by the pinned Qwen implementation | 2048 |
 | `qwen3-vl-embedding-8b` | [`Qwen/Qwen3-VL-Embedding-8B`](https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B/tree/2c4565515e0f265c6511776e7193b22c0968ddc7) | `2c4565515e0f265c6511776e7193b22c0968ddc7` | Apache-2.0 | `model_type=qwen3_vl`, checkpoint config declares `Qwen3VLForConditionalGeneration`; the embedding head is supplied by the pinned Qwen implementation | 4096 |
 
-SigLIP 2's dimensions are the locked Transformers 5.20.1 config defaults: text and vision hidden size 768, with projection size defaulting to the hidden size. These are config/source-derived expected shapes, not measured model outputs. Qwen dimensions and parameter dtypes come from the pinned model-card/API metadata; the embedding outputs have not yet been executed.
+SigLIP 2 text/image dimensions of 768 were measured using the pinned model revisions. Qwen 2B's 2048-dimensional output was measured with the pinned Qwen wrapper. Qwen 8B's 4096-dimensional output remains config/model-card-derived because the weight checkpoint was not run.
 
 ## Hugging Face file hashes
 
-The small config, processor, and tokenizer files in these tables were downloaded from the exact pinned `resolve/<revision>/...` URLs and SHA-256 hashed locally. Weight-file SHA-256 values are the Hugging Face LFS metadata for those same revisions; the large weights themselves were not downloaded or independently rehashed.
+The config, processor, tokenizer, chat-template, and Sentence Transformers module files in these tables were downloaded from the exact pinned revisions and SHA-256 hashed locally. The SigLIP FixRes, SigLIP NaFlex, and Qwen 2B weight files were also downloaded and independently hashed; their local hashes matched the HF LFS metadata. Qwen 8B's four large weight shards were not downloaded; their recorded digests are HF LFS metadata only.
 
 ### SigLIP 2 FixRes Base
 
@@ -56,9 +56,22 @@ HF metadata reports 375,234,050 F32 parameters and a 1,500,985,224-byte `model.s
 
 The config identifies `Siglip2Model`. The processor config identifies `Siglip2Processor` / `Siglip2ImageProcessorFast`, patch size 16, and `max_num_patches=256`; it has no fixed 224x224 image size. The Transformers 5.20.1 `AutoImageProcessor` compatibility path removes the legacy `Fast` suffix and resolves the exported `Siglip2ImageProcessor` (a `TorchvisionBackend` implementation). That processor emits `pixel_values`, `pixel_attention_mask`, and `spatial_shapes`; all fields must be carried through batching and search. It resizes while preserving aspect ratio and pads the patch sequence, rather than substituting a fixed crop.
 
+### Measured CUDA runtime results
+
+Validation used Windows/Python 3.12.10, Torch `2.14.1+cu130`, Transformers `5.20.1`, CUDA 13.0, and an NVIDIA GeForce RTX 4070 Ti SUPER with BF16 support. A single synthetic 320x192 RGB image and one text were used only as a precision probe, not as a benchmark.
+
+| Checkpoint | Precision | Processor image input | Image/text output | Logits | `exp(logit_scale)` | `logit_bias` | FP32-recomputed formula vs output, max abs |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| SigLIP 2 FixRes | FP32 | `(1, 3, 224, 224)` | `(1, 768)` / `(1, 768)`; both L2 norms 1.0 | `(1, 1)` | 112.6688995 | -16.7717247 | `9.54e-7` |
+| SigLIP 2 FixRes | BF16 | `(1, 3, 224, 224)` | `(1, 768)` / `(1, 768)`; norms 0.999065 / 0.999631 | `(1, 1)` | 112.0281372 | -16.75 | `0.010433` |
+| SigLIP 2 NaFlex | FP32 | `(1, 256, 768)` with mask `(1, 256)` and spatial shape `(1, 2)` | `(1, 768)` / `(1, 768)`; both L2 norms 1.0 | `(1, 1)` | 115.3019485 | -16.7769890 | `0.0` |
+| SigLIP 2 NaFlex | BF16 | `(1, 256, 768)` with mask `(1, 256)` and spatial shape `(1, 2)` | `(1, 768)` / `(1, 768)`; norms 1.002046 / 1.003297 | `(1, 1)` | 115.5842896 | -16.75 | `0.047818` |
+
+The tokenizer output was `(1, 64)` for both checkpoints. BF16 formula comparisons recomputed logits in FP32 from BF16-rounded embeddings and learned parameters; they reflect low-precision forward arithmetic and are not pass/fail thresholds. BF16-vs-FP32 maximum/mean absolute feature differences were: FixRes image `0.001540 / 0.000301`, text `0.001447 / 0.000369`; NaFlex image `0.003662 / 0.000577`, text `0.003468 / 0.000309`. The absolute logit differences were `0.028610` (FixRes) and `0.026999` (NaFlex). These are measured results, not a claim that any project-defined BF16 tolerance has been satisfied. No OpenVLCLIP implementation existed yet for direct parity comparison.
+
 ### Qwen3-VL-Embedding-2B
 
-HF metadata reports 2,127,532,032 BF16 parameters and a 4,255,140,312-byte `model.safetensors`.
+HF metadata reports 2,127,532,032 BF16 parameters and a 4,255,140,312-byte `model.safetensors`. The downloaded local file SHA-256 matched the LFS digest.
 
 | File | Size (bytes) | SHA-256 |
 | --- | ---: | --- |
@@ -68,6 +81,11 @@ HF metadata reports 2,127,532,032 BF16 parameters and a 4,255,140,312-byte `mode
 | `tokenizer.json` | 11,423,705 | `def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a` |
 | `tokenizer_config.json` | 5,404 | `355f2b4e5bad7b01f11ef6cb68ebc176f61b95c3276092ea225b1bea0e01e95c` |
 | `video_preprocessor_config.json` | 817 | `59c5c9eb52182eb14c06ffb10ca9effd29adce5f238a95de23ca14a38dbd2cb1` |
+| `chat_template.jinja` | 5,519 | `a47e6afb389f86f45be7810f17d2686fd42b2bec7ba6e6958abf85845af258c5` |
+| `modules.json` | 429 | `fa7d796a215e1b2416773062891923b191fc5a4849bc44e322997433c90f459c` |
+| `config_sentence_transformers.json` | 238 | `ab0d95430e4a88750bf613c7bea69cf878818a77c4047150599e1b586a7e8ab0` |
+| `sentence_bert_config.json` | 770 | `2c9dac0bf11e4282254502891eb84082debd7a68a775564c75303392f63787f8` |
+| `1_Pooling/config.json` | 96 | `de764e01a063fc5f2e96100099bf745695edaaf904107fb3d24fbf4b106f488b` |
 
 The checkpoint config reports text hidden size 2048, vision hidden size 1024, `Qwen3VLProcessor`, `Qwen2Tokenizer`, and `Qwen2VLImageProcessorFast`. The tokenizer config's `model_max_length=262144` is not the official embedder's default context length.
 
@@ -86,6 +104,11 @@ HF metadata reports 8,144,793,840 BF16 parameters. The four checkpoint shards to
 | `tokenizer.json` | 11,423,705 | `def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a` |
 | `tokenizer_config.json` | 5,404 | `355f2b4e5bad7b01f11ef6cb68ebc176f61b95c3276092ea225b1bea0e01e95c` |
 | `video_preprocessor_config.json` | 817 | `59c5c9eb52182eb14c06ffb10ca9effd29adce5f238a95de23ca14a38dbd2cb1` |
+| `chat_template.jinja` | 5,519 | `a47e6afb389f86f45be7810f17d2686fd42b2bec7ba6e6958abf85845af258c5` |
+| `modules.json` | 430 | `e8a7a1593c7bf0f34022abf341a434f7e6cc32f99bad7a031f36b20cdddf1576` |
+| `config_sentence_transformers.json` | 238 | `ab0d95430e4a88750bf613c7bea69cf878818a77c4047150599e1b586a7e8ab0` |
+| `sentence_bert_config.json` | 771 | `34fa8b72309d23362db7c6a619f63987daa41143c4092ad91e4bcfc247d45666` |
+| `1_Pooling/config.json` | 97 | `90f99f1cb9607637007f20d035d3b69ac9860123557d6bdedd297fdf6dd88495` |
 
 The checkpoint config reports text hidden size 4096, vision hidden size 1152, `Qwen3VLProcessor`, and `Qwen2Tokenizer`.
 
@@ -127,7 +150,25 @@ Static inspection of that source and the pinned model cards confirms:
 - The wrapper's image defaults are `min_pixels=4096`, `max_pixels=1,843,200`; its video defaults include `total_pixels=7,864,320`. The pinned HF `preprocessor_config.json` has `max_pixels=1,310,720`, so the official embedder's explicit content-level override must be preserved and tested.
 - `Qwen3VLForEmbedding` returns the last hidden state and attention mask. `_pooling_last` selects the last non-padding token. `process(normalize=True)` L2-normalizes after pooling.
 - The upstream wrapper uses `trust_remote_code=True`; it also catches vision-processing exceptions and replaces the failed media input with `"NULL"`. OpenVLCLIP must not use unpinned remote code or silently produce a NULL embedding. A reviewed, pinned, locally controlled implementation and explicit media errors are required.
-- The model cards advertise MRL ranges of 64-2048 and 64-4096. The audited `Qwen3VLEmbedder.process` source has no `truncate_dim` argument or truncation implementation. Exact slicing, accepted dimensions, and truncate-then-normalize parity therefore remain an open Phase 0 contract; they must be resolved against an independent official/reference path before implementation.
+- The model cards advertise MRL ranges of 64-2048 and 64-4096. The audited `Qwen3VLEmbedder.process` source has no `truncate_dim` argument or truncation implementation.
+
+### Qwen 2B MRL and official-path discrepancy
+
+The pinned model repository includes Sentence Transformers 5.4.0 module configuration with last-token pooling followed by a `Normalize` module. Its documented `SentenceTransformer.encode` route was exercised on the 2B checkpoint with BF16: `truncate_dim` returned shapes 64, 257, 1024, and 2048. Source inspection confirms truncation occurs after the model's modules; `normalize_embeddings=True` then applies L2 normalization to the truncated vector. For a single synthetic text, the BF16 truncated-but-not-renormalized norms were 0.2364, 0.3810, 0.7133, and 0.9984; with `normalize_embeddings=True`, norms were approximately 1.0. The maximum absolute difference from float32-normalizing the already-truncated BF16 vector was at most `5.51e-4`. This validates that library path's mechanics, not the Qwen wrapper's MRL contract.
+
+The two official paths do not currently produce the same input sequence for the same text:
+
+- The model card says its default instruction is applied as a system prompt. In the pinned Sentence Transformers 5.4.0 runtime, the loaded Transformer module advertised only the `text` modality and encoded `"A small red square."` as the raw prefixed text `Represent the user's input.A small red square.<|endoftext|>` (11 tokens).
+- The pinned Qwen `Qwen3VLEmbedder.format_model_input`/`process` path encoded the same text as a system/user conversation followed by an assistant generation prompt (25 tokens).
+- On the same pinned 2B checkpoint and BF16 precision, the full-dimensional normalized embeddings differed by maximum absolute error `0.0567017`. The 64/257/1024 truncated-and-normalized outputs differed from the Qwen-wrapper raw-prefix-and-renormalize result by `0.17403` / `0.11472` / `0.07769`.
+
+The v0.7.0 specification explicitly names `Qwen3VLEmbedder.process` as the reference, so it is the recommended canonical path unless the specification is deliberately revised. Do not treat Sentence Transformers embeddings as compatible with that path or mix their indexes. The exact Qwen MRL contract for the canonical wrapper remains open because the wrapper does not implement truncation; the model card's range and the generic Sentence Transformers truncation API are not by themselves evidence of numerical parity with the wrapper.
+
+### Qwen 2B runtime outputs
+
+The fixed 2B weights and audited Qwen source were loaded in the isolated CUDA environment described above. For a synthetic text, a synthetic 224x224 image, and their mixed input, the official wrapper returned finite `(3, 2048)` outputs in both FP32 and BF16. FP32 normalized-vector norms were `[1.0, 1.0, 1.0]`; BF16 norms were `[0.998703, 1.000875, 0.998047]`. BF16-vs-FP32 maximum and mean absolute differences were `0.004177` and `0.000526` (per-input maxima: `0.002578`, `0.004177`, `0.003013`). PyTorch peak allocated memory after loading was 8,210 MiB for FP32 and 4,110 MiB for BF16.
+
+The official BF16 wrapper also processed a two-frame video-only item and a text-plus-two-frame-video item, returning finite `(2, 2048)` outputs with norms `[0.997946, 1.000390]`. These are load/shape/precision observations only; there is no OpenVLCLIP implementation yet for direct parity comparison. Qwen 8B video, image, text, and mixed inputs remain untested.
 
 The official Qwen repository's `LICENSE` is Apache-2.0, SHA-256 `f08c07d73a60444803f8902b00f7b14c839647a48cc07fba59b3c1bda656ec3c`. At the pinned source commit, `pyproject.toml` has SHA-256 `12c3726efcb3028dd9055c68f33bcbda6d6b9d379deeb920b0467b206675ffe3`; the source README has SHA-256 `c57c3c6c15d15b16a7a281fe5454a88bfe43f57b014d7398e59d37f8db3f36a9`.
 
@@ -139,18 +180,19 @@ The official Qwen repository's `LICENSE` is Apache-2.0, SHA-256 `f08c07d73a60444
 - The current OpenVLCLIP lock resolves Torch `2.14.1`, Torchvision `0.29.1`, and Transformers `5.20.1`. The pinned Qwen source project's manifest requests Torch `2.8.*`, Torchvision `>=0.23.0`, and Transformers `>=4.57.3`, and lists additional development/data packages. Do not copy its Torch pin or install all of its development dependencies; compatibility with the existing locked versions has not yet been tested. Its manifest also configures an HTTP package mirror; that index must not be used.
 - The upstream Qwen code imports `qwen-vl-utils`; OpenVLCLIP currently does not lock it. The project already has optional `video` extra with PyAV. Windows/Linux and Python 3.12-3.14 resolution and inference compatibility still require CI testing; the metadata minimum version alone does not establish that compatibility.
 - The SigLIP tokenizer config names `GemmaTokenizer`; the verified model repositories include tokenizer JSON files. Whether a `sentencepiece` extra is needed for the chosen Transformers loading path must be settled with an actual clean-environment test.
+- Runtime validation used `qwen-vl-utils==0.0.14` and an isolated Sentence Transformers `5.4.0` install without changing the project manifest or lockfile. Only Windows/Python 3.12 CUDA execution is verified so far.
 
 No code, model weights, or license files have been copied into OpenVLCLIP as part of this audit. If future implementation vendors Qwen code, preserve its Apache license and required attribution/NOTICE information.
 
 ## Runtime validation status and blockers
 
-No official model was loaded. No output shapes were measured, no numerical parity or error tolerance was established, and no BF16/CUDA behavior is claimed by this document.
+The tested references were the pinned official Transformers models for both SigLIP checkpoints and the pinned Qwen source wrapper for Qwen 2B. These are not OpenVLCLIP parity tests because the new OpenVLCLIP backends do not exist yet. The BF16 error values above are measurements, not acceptance thresholds; the project must define and test explicit tolerances without widening them to fit results.
 
-The local environment inspected on 2026-10-22 is Windows with Python 3.12.10 and Torch `2.14.0+cpu`; `torch.cuda.is_available()` is false, and Transformers and Torchvision are not installed in that interpreter. The repository lock instead requires Torch `2.14.1`, Torchvision `0.29.1`, and Transformers `5.20.1`.
+The project/system interpreter remains Windows Python 3.12.10 with Torch `2.14.0+cpu`; `torch.cuda.is_available()` is false there. The isolated temporary validation environment used Torch `2.14.1+cu130`, Torchvision `0.29.1+cu130`, Transformers `5.20.1`, CUDA 13.0, `qwen-vl-utils==0.0.14`, and an NVIDIA GeForce RTX 4070 Ti SUPER. CUDA FP32/BF16 validation is limited to the two SigLIP checkpoints and Qwen 2B. CPU model execution and the Windows/Linux/Python 3.12-3.14 matrix have not been run.
 
-`nvidia-smi` reports a 16,376 MiB GPU with 1,641 MiB currently used and 14,735 MiB free. The Qwen 8B BF16 checkpoint shards total 15.17 GiB, exceeding currently free device memory before model activations and runtime buffers. Even an idle 16 GiB device would leave less than 1 GiB after the checkpoint weights alone. The repository has zero configured self-hosted Actions runners. This environment cannot perform the mandatory Qwen 8B GPU parity test.
+At the latest check, `nvidia-smi` reported 16,376 MiB total and 14,363 MiB free. The Qwen 8B BF16 checkpoint shards total 15.17 GiB, exceeding free VRAM before model activations and runtime buffers. The Qwen 8B weight files were not downloaded or loaded. The repository has zero configured self-hosted Actions runners. This environment cannot perform the mandatory Qwen 8B GPU parity test.
 
-**Stop gate:** do not start Phase 1 or declare any new model supported until a CUDA-enabled, higher-memory GPU environment is available and the unresolved Qwen MRL contract is independently verified. A 24 GiB-or-larger GPU is a practical environment to try, not a measured minimum; record actual peak memory before accepting it. The 8B test must use the fixed checkpoint, a recorded precision, and the pinned official reference implementation. Do not use quantization or unverified CPU offload to bypass the requirement.
+**Stop gate:** do not start Phase 1 or declare any new model supported until (1) a CUDA-enabled, higher-memory GPU environment is available for the fixed Qwen 8B checkpoint and (2) the official Qwen input-format/MRL discrepancy is resolved and recorded. A 24 GiB-or-larger GPU is a practical environment to try, not a measured minimum; record actual peak memory before accepting it. The 8B test must use the fixed checkpoint, a recorded precision, and the pinned official reference implementation. Do not use quantization or unverified CPU offload to bypass the requirement.
 
 Official references:
 
@@ -163,3 +205,5 @@ Official references:
 - [Pinned Qwen3-VL-Embedding source](https://github.com/QwenLM/Qwen3-VL-Embedding/tree/393e2978d27852b0d0230d6994f37f9c15bed73c)
 - [Qwen3-VL-Embedding official implementation file](https://github.com/QwenLM/Qwen3-VL-Embedding/blob/393e2978d27852b0d0230d6994f37f9c15bed73c/src/models/qwen3_vl_embedding.py)
 - [qwen-vl-utils on PyPI](https://pypi.org/project/qwen-vl-utils/)
+- [Pinned Qwen 2B model README](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B/blob/9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda/README.md)
+- [Sentence Transformers 5.4.0](https://pypi.org/project/sentence-transformers/5.4.0/)
