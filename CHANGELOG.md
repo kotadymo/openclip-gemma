@@ -1,9 +1,16 @@
 # Changelog
 
-## v0.6.1
+## v0.6.1 — 2026-10-22
 
-Backward-compatible patch release; no model weights, model outputs, or
-EmbeddingGemma 2 MRL behavior are changed.
+Released on [PyPI](https://pypi.org/project/openvlclip/0.6.1/) and as a
+[GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.1).
+
+Install the base package with `pip install openvlclip==0.6.1`, or include the
+optional dino.txt dependencies with
+`pip install "openvlclip[dinotxt]==0.6.1"`.
+
+This backward-compatible patch release changes no model weights, embedding
+outputs, or EmbeddingGemma 2 MRL behavior.
 
 ### Fixed
 
