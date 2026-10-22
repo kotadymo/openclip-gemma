@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from os import PathLike
 from pathlib import Path
 from typing import Protocol
@@ -230,10 +230,12 @@ def _load_preprocessed_image(
                 f"received {tuple(image_tensor.shape)}."
             )
         return image_tensor
+    if isinstance(image_tensor, Image.Image):
+        return image_tensor.copy()
     if not isinstance(image_tensor, Mapping):
         raise TypeError(
             f"Preprocessing image at input index {input_index} "
-            f"({path}) did not return a Tensor or processor mapping."
+            f"({path}) did not return a Tensor, processor mapping, or PIL image."
         )
     if not image_tensor or any(
         not isinstance(key, str)
@@ -253,6 +255,8 @@ def _processed_image_shape_key(
 ) -> tuple[object, ...]:
     if isinstance(image, torch.Tensor):
         return ("tensor", tuple(image.shape))
+    if isinstance(image, Image.Image):
+        return ("pil",)
     return (
         "mapping",
         tuple(
@@ -293,17 +297,28 @@ def _encode_image_chunk[EmbeddingKey](
     for group in groups.values():
         positions = [position for position, _ in group]
         input_indices = [item[0] for _, item in group]
-        image_batch = stack_processed_images(
-            [item[2] for _, item in group],
-            backend_name="image",
-        )
+        processed_images = [item[2] for _, item in group]
+        if all(isinstance(image, Image.Image) for image in processed_images):
+            image_batch = processed_images
+        else:
+            image_batch = stack_processed_images(
+                processed_images,
+                backend_name="image",
+            )
         try:
             if isinstance(image_batch, torch.Tensor):
                 image_batch = image_batch.to(model_device)
-            else:
+            elif isinstance(image_batch, Mapping):
                 image_batch = {
                     key: value.to(model_device) for key, value in image_batch.items()
                 }
+            elif not (
+                isinstance(image_batch, Sequence)
+                and all(isinstance(image, Image.Image) for image in image_batch)
+            ):
+                raise TypeError(
+                    "Image batching requires Tensor, processor mapping, or PIL inputs."
+                )
             with torch.inference_mode():
                 if embedding_dim == DEFAULT_EMBEDDING_DIMENSION:
                     features = model.encode_image(image_batch)

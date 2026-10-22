@@ -132,18 +132,24 @@ def test_registry_and_listing_are_side_effect_free(
         DINO_MODEL_NAME,
         "siglip2-base",
         "siglip2-naflex-base",
+        "qwen3-vl-embedding-2b",
+        "qwen3-vl-embedding-8b",
     ]
     assert list_pretrained() == [
         ("embeddinggemma-2", "official"),
         (DINO_MODEL_NAME, "official"),
         ("siglip2-base", "official"),
         ("siglip2-naflex-base", "official"),
+        ("qwen3-vl-embedding-2b", "official"),
+        ("qwen3-vl-embedding-8b", "official"),
     ]
     assert list_pretrained(as_str=True) == [
         "embeddinggemma-2:official",
         f"{DINO_MODEL_NAME}:official",
         "siglip2-base:official",
         "siglip2-naflex-base:official",
+        "qwen3-vl-embedding-2b:official",
+        "qwen3-vl-embedding-8b:official",
     ]
     hub_loader.assert_not_called()
 

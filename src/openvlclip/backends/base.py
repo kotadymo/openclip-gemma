@@ -19,7 +19,7 @@ ModelT = TypeVar("ModelT", bound=torch.nn.Module)
 TokenizerT = TypeVar("TokenizerT")
 PreprocessT = TypeVar("PreprocessT")
 
-type ProcessedImage = torch.Tensor | Mapping[str, object]
+type ProcessedImage = torch.Tensor | Mapping[str, object] | Image.Image
 type ProcessedImageBatch = ProcessedImage | Sequence[ProcessedImage]
 type MultimodalInput = Mapping[str, object] | Sequence[Mapping[str, object]]
 type VideoInput = str | PathLike[str] | Sequence[Image.Image | str | PathLike[str]]
