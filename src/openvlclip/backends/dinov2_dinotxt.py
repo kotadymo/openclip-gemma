@@ -57,8 +57,7 @@ _PATCH_EMBEDDING_DIMENSION = 1024
 _START_TOKEN_ID = 49406
 _END_TOKEN_ID = 49407
 _VOCAB_SIZE = 49408
-_MAX_SIMILARITY_MAP_FEATURE_ELEMENTS = 512 * 1024 * 1024
-_MAX_SIMILARITY_MAP_SCORE_ELEMENTS = 64 * 1024 * 1024
+_MAX_SIMILARITY_MAP_PEAK_BYTES = 512 * 1024 * 1024
 _TORCH_HUB_LOCK = threading.RLock()
 
 
@@ -801,8 +800,12 @@ class DinoV2DinoTxtBackend:
         self._check_similarity_map_limits(
             batch_size=image_tensor.shape[0],
             text_count=len(texts),
+            grid_height=grid_height,
+            grid_width=grid_width,
             height=resolved_size[0],
             width=resolved_size[1],
+            dtype=dtype,
+            device=device,
         )
 
         tokenizer = model._create_tokenizer(prompt_name=None)
@@ -941,21 +944,72 @@ class DinoV2DinoTxtBackend:
         *,
         batch_size: int,
         text_count: int,
+        grid_height: int,
+        grid_width: int,
         height: int,
         width: int,
+        dtype: torch.dtype,
+        device: torch.device,
     ) -> None:
-        feature_elements = batch_size * _PATCH_EMBEDDING_DIMENSION * height * width
-        score_elements = batch_size * text_count * height * width
-        if feature_elements > _MAX_SIMILARITY_MAP_FEATURE_ELEMENTS:
-            raise ValueError(
-                "requested similarity_map() exceeds the configured interpolated "
-                "feature memory limit."
+        estimated_peak_bytes = DinoV2DinoTxtBackend._estimate_similarity_map_peak_bytes(
+            batch_size=batch_size,
+            text_count=text_count,
+            grid_height=grid_height,
+            grid_width=grid_width,
+            height=height,
+            width=width,
+            dtype=dtype,
+        )
+        if device.type == "cuda":
+            available_bytes, _ = torch.cuda.mem_get_info(device)
+            memory_limit_bytes = min(
+                _MAX_SIMILARITY_MAP_PEAK_BYTES,
+                available_bytes // 2,
             )
-        if score_elements > _MAX_SIMILARITY_MAP_SCORE_ELEMENTS:
+            limit_description = f"available CUDA memory on {device}"
+        else:
+            memory_limit_bytes = _MAX_SIMILARITY_MAP_PEAK_BYTES
+            limit_description = "configured memory"
+        if estimated_peak_bytes > memory_limit_bytes:
             raise ValueError(
-                "requested similarity_map() exceeds the configured score-map "
-                "memory limit."
+                "requested similarity_map() estimated peak memory of "
+                f"{estimated_peak_bytes} bytes exceeds the {limit_description} "
+                f"limit of {memory_limit_bytes} bytes."
             )
+
+    @staticmethod
+    def _estimate_similarity_map_peak_bytes(
+        *,
+        batch_size: int,
+        text_count: int,
+        grid_height: int,
+        grid_width: int,
+        height: int,
+        width: int,
+        dtype: torch.dtype,
+    ) -> int:
+        """Estimate coexisting patch, interpolation, normalization, and score tensors."""
+        input_element_bytes = torch.empty((), dtype=dtype).element_size()
+        base_cells = batch_size * grid_height * grid_width
+        output_cells = batch_size * height * width
+        base_features_bytes = (
+            base_cells * _PATCH_EMBEDDING_DIMENSION * (input_element_bytes + 4)
+        )
+        output_features_bytes = output_cells * _PATCH_EMBEDDING_DIMENSION * 4
+        score_bytes = output_cells * text_count * 4
+        norm_bytes = output_cells * 4
+        text_bytes = text_count * (
+            _EMBEDDING_DIMENSION * input_element_bytes
+            + _PATCH_EMBEDDING_DIMENSION * 8
+            + 8
+        )
+        return (
+            base_features_bytes
+            + 3 * output_features_bytes
+            + score_bytes
+            + norm_bytes
+            + text_bytes
+        )
 
     @staticmethod
     def _patch_grid_size(height: int, width: int) -> tuple[int, int]:
@@ -1119,6 +1173,10 @@ class DinoV2DinoTxtBackend:
         end_tokens = text.eq(_END_TOKEN_ID)
         if not end_tokens.any(dim=1).all().item():
             raise ValueError("Each dino.txt token sequence must contain EOT ID 49407.")
+        if (end_tokens.sum(dim=1) != 1).any().item():
+            raise ValueError(
+                "Each dino.txt token sequence must contain exactly one EOT ID 49407."
+            )
         positions = torch.arange(text.shape[1], device=text.device).expand_as(text)
         final_end_positions = positions.masked_fill(~end_tokens, -1).max(dim=1).values
         if (

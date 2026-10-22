@@ -137,6 +137,42 @@ def test_image_search_cli_uses_dino_native_dimension(
     assert builder.call_args.kwargs["embedding_dim"] == 2048
 
 
+def test_image_search_cli_verify_contents_is_opt_in_and_forwarded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_cli("image_search")
+    parser = module["_build_parser"]()  # type: ignore[operator]
+    default_args = parser.parse_args(
+        ["index", "--images", "photos", "--output", "image-index"]
+    )
+    assert default_args.verify_contents is False
+
+    arguments = [
+        "index",
+        "--images",
+        "photos",
+        "--output",
+        "image-index",
+        "--verify-contents",
+    ]
+    index_update = SimpleNamespace(
+        index_path=Path("index.npz"),
+        added=0,
+        updated=0,
+        removed=0,
+        unchanged=0,
+    )
+    loader = Mock(return_value=(object(), object(), object()))
+    builder = Mock(return_value=index_update)
+    namespace = module["main"].__globals__  # type: ignore[union-attr]
+    monkeypatch.setitem(namespace, "create_model_and_transforms", loader)
+    monkeypatch.setitem(namespace, "build_or_update_image_index", builder)
+
+    assert module["main"](arguments) == 0  # type: ignore[operator]
+
+    assert builder.call_args.kwargs["verify_contents"] is True
+
+
 @pytest.mark.parametrize(
     ("script_name", "arguments"),
     [
