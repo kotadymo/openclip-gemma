@@ -39,6 +39,16 @@ def _install_fake_encoders(
     return image_encoder, text_encoder
 
 
+def test_embeddinggemma_dense_methods_are_explicitly_unsupported() -> None:
+    model = _model()
+    image = torch.empty((1, 3, 224, 224))
+
+    with pytest.raises(NotImplementedError, match="encode_patches"):
+        model.encode_patches(image)
+    with pytest.raises(NotImplementedError, match="similarity_map"):
+        model.similarity_map(image, "a cat")
+
+
 def test_forward_tuple_has_features_and_float32_scalar_scale() -> None:
     model = _model()
     image_features = F.normalize(torch.randn(2, 768), dim=-1)

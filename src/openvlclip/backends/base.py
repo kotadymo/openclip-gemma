@@ -50,6 +50,19 @@ class InferenceModelAPI(Protocol):
         truncate_dim: int | None = None,
     ) -> torch.Tensor: ...
 
+    def encode_patches(
+        self,
+        image: torch.Tensor,
+        normalize: bool = False,
+    ) -> torch.Tensor: ...
+
+    def similarity_map(
+        self,
+        image: torch.Tensor,
+        text: str | Sequence[str],
+        output_size: tuple[int, int] | None = None,
+    ) -> torch.Tensor: ...
+
     def forward(
         self,
         image: torch.Tensor | None = None,

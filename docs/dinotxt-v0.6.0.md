@@ -2,7 +2,7 @@
 
 ## Scope and pinned source
 
-This document records the Phase 0 source, artifact, and licensing investigation and the Phase 1 backend and Phase 2 scoring/search implementations and parity checks. Phase 3 dense features and Phase 4 release validation remain out of scope until completed.
+This document records the Phase 0 source, artifact, and licensing investigation and the Phase 1 backend, Phase 2 scoring/search, and Phase 3 dense feature implementations and parity checks. Phase 4 release validation remains out of scope until completed.
 
 The official source was pinned to commit `7764ea0f912e53c92e82eb78a2a1631e92725fc8` in `facebookresearch/dinov2` (commit date: 2026-06-03). The pinned commit, rather than a moving `main` branch, is the reference for implementation and regression tests.
 
@@ -133,14 +133,29 @@ The same real-model integration test built and searched a native 2048-dimensiona
 
 Phase 2 local checks: `pytest -m "not integration"` completed with 295 passed, 4 skipped, and 27 deselected; the pinned official dino.txt parity and real-model search integration test passed; Ruff and `uv lock --check` passed. `uv build` produced `openvlclip-0.5.0` wheel and sdist artifacts; metadata and package contents were inspected, and the user-provided specification was not included. A clean installation remains part of Phase 4. CUDA was unavailable in the current environment: `torch.cuda.is_available()` was `False`, `torch.version.cuda` was `None`, and `torch.cuda.device_count()` was `0`. Therefore Phase 2 CUDA FP32/BF16 was not tested; this does not change the separate Phase 1 CUDA result above.
 
+## Phase 3 dense inference
+
+The public model API now exposes:
+
+- `model.encode_patches(images, normalize=False)` returning `[B, N, 1024]` Vision Head outputs. The official Vision Tower removes the class token and four register tokens before returning these patch features. `normalize=True` applies L2 normalization independently to every patch.
+- `model.similarity_map(images, text, output_size=None)`, where `text` is a non-empty string or sequence of non-empty strings. A single string returns `[B, H, W]`; a sequence returns `[B, K, H, W]`. Text is encoded with the official tokenizer and no EmbeddingGemma task prompt.
+
+Patch-grid dimensions are derived independently from input height and width, requiring both to be positive multiples of patch size 14. `output_size=None` returns scores on that patch grid. A requested output size interpolates the FP32 patch feature map with bicubic interpolation and `align_corners=False` before L2 normalization, then compares it with the normalized text suffix `encode_text(... )[:, 1024:]`. This follows the pinned notebook and does not treat the first 1024 text dimensions as patch-aligned.
+
+Similarity-map values are cosine scores, not probabilities, object detections, or pixel-accurate segmentation masks. Output sizes refer to the preprocessed tensor; they do not restore regions removed by resize or center crop. To avoid unbounded intermediate allocations, a request is rejected when it would exceed 512 Mi interpolated feature elements or 64 Mi score-map elements.
+
+For dino.txt, `model.capabilities["patch_embedding"]` and `model.capabilities["text_similarity_map"]` are true. EmbeddingGemma 2 reports both as false and raises `NotImplementedError` if either dense method is called. The tokenizer follows the official fixed 77-token context and truncation behavior.
+
+The pinned official model and OpenVLCLIP were compared on CPU FP32 and BF16 using identical preprocessed images and token IDs. In both precisions, raw and normalized `encode_patches()` outputs matched `get_visual_class_and_patch_tokens()` and per-patch L2 normalization exactly; `similarity_map()` matched the notebook's bicubic-interpolation, normalization, and text-suffix calculation exactly (`rtol=0`, `atol=0`) for a 32-by-40 output. The measured maximum absolute errors for raw patches, normalized patches, and similarity maps were all `0.0` in CPU FP32 and CPU BF16. The combined focused unit and real-model test run completed with 51 passed and 4 CUDA-dependent skips; global image/text embeddings, forward outputs, and logits also matched exactly on CPU FP32 and BF16. CUDA dense parity was not tested because CUDA was unavailable (`torch.cuda.is_available() == False`, `torch.version.cuda is None`, device count `0`).
+
 ## Remaining validation before release
 
-Phases 0-2 verified the pinned backend, tokenizer, preprocessing, global embeddings, scoring, and CPU image search. The following remain required in later phases and must not be reported as verified until actually run:
+Phases 0-3 verified the pinned backend, tokenizer, preprocessing, global embeddings, scoring, CPU image search, and dense APIs. The following remain required in Phase 4 and must not be reported as verified until actually run:
 
-- Patch-feature and similarity-map parity, including interpolation/normalization order.
+- Dense-feature and similarity-map checks on CUDA, when supported hardware is available.
 - Linux and Python 3.13/3.14 compatibility, including the project's Python 3.14.1 exclusion.
 - Gemma actual-model regression, v0.4.0 fixed-embedding/API regressions, and real-model image/video index compatibility.
 - CUDA FP32/BF16 scoring and search integration, when a CUDA-capable environment is available.
 - Clean installation of built distributions with `[dinotxt]` and compatibility with `[video]`.
-- Dataset-based accuracy and performance benchmarks. No dataset benchmark has been run in Phases 0-2; those metrics are `not evaluated`.
+- Dataset-based accuracy and performance benchmarks. No dataset benchmark has been run in Phases 0-3; those metrics are `not evaluated`.
 - Explicit licensing confirmation for the externally hosted dino.txt Vision Head and Text Encoder weights. Until this gate is resolved, the v0.6.0 release must not be declared ready.

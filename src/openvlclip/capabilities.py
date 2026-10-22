@@ -44,9 +44,13 @@ def capabilities_for_modalities(
     has_text = "text" in modalities
     if not has_image:
         resolved["image_embedding"] = False
+        resolved["patch_embedding"] = False
     if not has_text:
         resolved["text_embedding"] = False
     resolved["image_text_similarity"] = (
         resolved["image_text_similarity"] and has_image and has_text
+    )
+    resolved["text_similarity_map"] = (
+        resolved["text_similarity_map"] and has_image and has_text
     )
     return freeze_capabilities(resolved)
