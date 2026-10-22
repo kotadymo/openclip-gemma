@@ -14,6 +14,11 @@ from typing import Any
 
 import torch
 
+_RESERVED_SPECIAL_TOKEN_PATTERN = re.compile(
+    r"<\|(?:startoftext|endoftext)\|>",
+    re.IGNORECASE,
+)
+
 
 @lru_cache(maxsize=1)
 def _bytes_to_unicode() -> dict[int, str]:
@@ -141,8 +146,11 @@ class SimpleTokenizer:
         return result
 
     def encode(self, text: str) -> list[int]:
+        cleaned_text = self._clean_text(text)
+        if _RESERVED_SPECIAL_TOKEN_PATTERN.search(cleaned_text):
+            raise ValueError("text must not contain a reserved dino.txt special token.")
         tokens: list[int] = []
-        for token in self._regex_findall(self.pattern, self._clean_text(text)):
+        for token in self._regex_findall(self.pattern, cleaned_text):
             encoded = "".join(self.byte_encoder[value] for value in token.encode("utf-8"))
             tokens.extend(
                 self.encoder[part] for part in self._bpe(encoded).split(" ")

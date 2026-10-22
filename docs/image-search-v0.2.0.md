@@ -17,7 +17,7 @@ Running the index command again against the same output directory updates the ex
 - Deleted files are removed.
 - Unchanged files reuse their saved vectors.
 
-The update detector deliberately avoids hashing every source image. A file rewritten with the same size and modification time can therefore be missed. Conversely, touching a file or rewriting identical image content with a different size or timestamp triggers an unnecessary re-embedding. Use a fresh index directory or remove its `index.npz` file to force a full rebuild. A directory that has no supported images cannot create a new index; if all previously indexed images are removed, the existing index is updated to an empty index and search reports that it has no entries.
+By default, the update detector avoids hashing source files and compares path, size, and `mtime_ns`. A file rewritten with the same size and modification time can therefore be missed; touching identical content can trigger an unnecessary re-embedding. Pass `verify_contents=True` to `build_or_update_image_index()` or `--verify-contents` to the CLI to compare SHA-256 file digests. Strict mode reads each source image to hash it during scanning, then rechecks files before saving a changed index, so it adds disk I/O. Strictly updated records store their content digest. An older index without digests is safely re-embedded once when strict verification is enabled. A directory that has no supported images cannot create a new index; if all previously indexed images are removed, the existing index is updated to an empty index and search reports that it has no entries.
 
 The index operation fails on unreadable or corrupt images. It does not silently omit them. Because the new archive is written only after all changed images have been embedded and checked, a failed update leaves the previous archive intact.
 
@@ -74,6 +74,13 @@ uv run python examples/image_search.py search \
 ```
 
 Omit `--recursive` to index only files directly inside the directory. `--device` accepts `cpu` or `cuda`; CPU is the default. Reduce `--batch-size` if GPU memory is insufficient. Re-running the index command reconciles additions, changes, and deletions.
+
+For strict content verification during indexing, add `--verify-contents`:
+
+```bash
+uv run python examples/image_search.py index \
+  --images ./photos --output ./image-index --verify-contents
+```
 
 ## Embedding dimensions and migration
 

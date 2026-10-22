@@ -426,6 +426,10 @@ def test_dinotxt_encoders_reject_invalid_image_and_token_inputs() -> None:
         model.encode_text(torch.tensor([[49406, 123]], dtype=torch.long))
     with pytest.raises(ValueError, match="after the final EOT"):
         model.encode_text(torch.tensor([[49406, 49407, 123]], dtype=torch.long))
+    with pytest.raises(ValueError, match="exactly one EOT"):
+        model.encode_text(
+            torch.tensor([[49406, 49407, 123, 49407, 0]], dtype=torch.long)
+        )
 
 
 def test_dinotxt_encode_patches_uses_head_tokens_and_handles_non_square_inputs() -> (
@@ -581,6 +585,55 @@ def test_dinotxt_similarity_map_rejects_empty_text_invalid_size_and_large_alloca
     with pytest.raises(ValueError, match="memory limit"):
         model.similarity_map(image, ["cat", "dog"], output_size=(10_000, 10_000))
     create_tokenizer.assert_not_called()
+
+
+def test_dinotxt_similarity_map_preflights_peak_bytes_before_tokenization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = DinoTxtCLIP(
+        FakeDinoTxt(),
+        DinoV2DinoTxtBackend(),
+        output_dict=False,
+        logit_scale_mode="strict",
+    )
+    image = torch.zeros((1, 3, 224, 224), dtype=torch.float32)
+    tokenizer = Mock(return_value=torch.tensor([[49406, 49407]], dtype=torch.long))
+    create_tokenizer = Mock(return_value=tokenizer)
+    monkeypatch.setattr(model._inference_backend, "create_tokenizer", create_tokenizer)
+    monkeypatch.setattr(
+        backend_module.F,
+        "interpolate",
+        lambda *args, **kwargs: pytest.fail(
+            "similarity-map memory must be checked before interpolation"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="estimated peak memory"):
+        model.similarity_map(image, "cat", output_size=(400, 400))
+
+    create_tokenizer.assert_not_called()
+
+
+def test_dinotxt_similarity_map_cuda_budget_uses_free_device_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        torch.cuda,
+        "mem_get_info",
+        lambda device: (128 * 1024 * 1024, 8 * 1024 * 1024 * 1024),
+    )
+
+    with pytest.raises(ValueError, match="available CUDA memory"):
+        DinoV2DinoTxtBackend._check_similarity_map_limits(
+            batch_size=1,
+            text_count=1,
+            grid_height=14,
+            grid_width=14,
+            height=200,
+            width=200,
+            dtype=torch.float32,
+            device=torch.device("cuda:0"),
+        )
 
 
 def test_dinotxt_patch_normalization_rejects_zero_norms(

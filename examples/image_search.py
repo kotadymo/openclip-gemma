@@ -58,6 +58,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include images in subdirectories.",
     )
+    index_parser.add_argument(
+        "--verify-contents",
+        action="store_true",
+        help="Hash file contents to detect changes with unchanged size and mtime.",
+    )
 
     search_parser = commands.add_parser("search", help="Search a saved image index.")
     search_parser.add_argument(
@@ -106,6 +111,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 batch_size=args.batch_size,
                 recursive=args.recursive,
                 embedding_dim=embedding_dim,
+                verify_contents=args.verify_contents,
             )
             print(
                 "Image index updated: "
