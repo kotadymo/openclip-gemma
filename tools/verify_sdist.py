@@ -21,6 +21,8 @@ REQUIRED_PATHS = {
     "src/openvlclip/_dimensions.py",
     "src/openvlclip/backends/__init__.py",
     "src/openvlclip/backends/base.py",
+    "src/openvlclip/backends/dinov2_dinotxt.py",
+    "src/openvlclip/backends/dinotxt_tokenizer.py",
     "src/openvlclip/backends/embeddinggemma2.py",
     "src/openvlclip/batching.py",
     "src/openvlclip/capabilities.py",
@@ -46,7 +48,7 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_ARCHIVE_FILE_SIZE = 50_000_000
 
 
-def verify_sdist(archive_path: Path, expected_version: str = "0.5.0") -> None:
+def verify_sdist(archive_path: Path, expected_version: str = "0.6.0") -> None:
     if not archive_path.is_file() or not archive_path.name.endswith(".tar.gz"):
         raise ValueError(f"Not a source distribution archive: {archive_path}")
 
@@ -196,7 +198,7 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.5.0") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
-    parser.add_argument("--expected-version", default="0.5.0")
+    parser.add_argument("--expected-version", default="0.6.0")
     args = parser.parse_args()
     try:
         verify_sdist(args.archive, expected_version=args.expected_version)

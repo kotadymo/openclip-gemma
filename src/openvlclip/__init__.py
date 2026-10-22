@@ -1,4 +1,4 @@
-"""OpenCLIP-inspired inference API for EmbeddingGemma 2."""
+"""OpenCLIP-inspired inference API for registered vision-language models."""
 
 from openvlclip.factory import (
     create_model,

@@ -1,7 +1,7 @@
 [project]
 name = "openvlclip"
-version = "0.5.0"
-description = "OpenCLIP-inspired image and text inference with EmbeddingGemma 2"
+version = "0.6.0"
+description = "OpenCLIP-inspired image and text inference with EmbeddingGemma 2 and dino.txt"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "LICENSE-CLIP.txt"]
@@ -12,6 +12,8 @@ requires-python = ">=3.12,<3.15,!=3.14.1"
 keywords = [
     "openvlclip",
     "embeddinggemma",
+    "dinov2",
+    "dino.txt",
     "openclip",
     "vision-language",
     "image-embeddings",

@@ -1,27 +1,28 @@
 # OpenVLCLIP
 
-An independent Python library that provides an OpenCLIP-inspired inference API for Google's EmbeddingGemma 2 model. It lets Python applications use familiar image and text encoding calls while retaining EmbeddingGemma's own tokenizer, image processing, task prompts, and embedding behavior.
+An independent Python library that provides an OpenCLIP-inspired inference API for Google's EmbeddingGemma 2 and Meta's DINOv2 + dino.txt models. It lets Python applications use familiar image and text encoding calls while retaining each model's own tokenizer, image processing, prompts, and embedding behavior.
 
 > [!IMPORTANT]
 > **Unofficial project**
 >
 > `openvlclip` is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or officially maintained by Google, Google DeepMind, or the OpenCLIP project.
 >
-> This library provides an OpenCLIP-inspired interface for Google's EmbeddingGemma 2 model. It is not a drop-in replacement for OpenCLIP and does not claim full API compatibility.
+> This library provides an OpenCLIP-inspired interface for EmbeddingGemma 2 and DINOv2 + dino.txt. It is not a drop-in replacement for OpenCLIP and does not claim full API compatibility.
 
 ## Features
 
 - OpenCLIP-style `create_model`, `create_model_and_transforms`, and `get_tokenizer` entry points.
 - Factory discovery with `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()`.
-- Only EmbeddingGemma 2 is supported; this is not a complete drop-in replacement for OpenCLIP.
-- Image and text inference use the official Transformers model and processor; Sentence Transformers is the pinned numerical reference.
+- The registry supports `embeddinggemma-2` and `dinov2-dinotxt`; this is not a complete drop-in replacement for OpenCLIP.
+- EmbeddingGemma uses the official Transformers model/processor and Sentence Transformers numerical reference; dino.txt follows the pinned Meta Hub implementation and checkpoints.
 - Model API includes `forward()`, `get_logits()`, and factory option `output_dict=True`.
-- `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"` (default: `"strict"`).
-- `forward()` returns normalized features and scale `1.0`; `get_logits()` returns unscaled cosine similarities, not trained CLIP logits or probabilities.
-- Native 768-dimensional embeddings plus MRL truncation to 512, 256, or 128 dimensions, with CPU or CUDA device selection.
+- EmbeddingGemma `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"`; dino.txt strict mode preserves its official scaled-logit path.
+- Cosine mode returns normalized features with scale `1.0`; these scores are not trained OpenCLIP logits or calibrated probabilities.
+- EmbeddingGemma 2's native 768-dimensional output and MRL dimensions 512, 256, and 128; dino.txt's native 2048-dimensional global and 1024-dimensional patch features.
 - Optional text-only or text-and-image model loading; the default factory load remains unchanged.
-- A pinned EmbeddingGemma 2 model revision; model weights are downloaded from Hugging Face on first use and are not bundled with this package.
+- Pinned model revisions; model weights are downloaded at runtime and are not bundled with this package.
 - Bounded-batch image embedding and incremental Japanese/English text-to-image search.
+- dino.txt zero-shot image scoring, image search, patch embeddings, and text similarity maps.
 - Optional PyAV-based video-frame indexing and text search.
 
 ## Installation
@@ -40,18 +41,30 @@ Install the optional video dependency for video-frame indexing and search:
 pip install "openvlclip[video]"
 ```
 
-To pin the exact version for reproducible environments:
+For a source checkout that includes the v0.6.0 dino.txt integration, install
+its optional dependencies with:
 
 ```bash
-pip install openvlclip==0.5.0
+uv sync --locked --group dev --extra dinotxt
 ```
 
-The first model or tokenizer load downloads the required files from Hugging Face unless they are already cached. The package pins the model revision `914f7f89142e33e77833254d9c9b90c3cef7303b`.
+The PyPI `0.5.0` distribution remains EmbeddingGemma-only. The DINOv2 +
+dino.txt support described below is in the `0.6.0` source tree and is not
+included in that published distribution.
+
+The first model or tokenizer load downloads the required files unless they
+are already cached. EmbeddingGemma 2 is pinned to revision
+`914f7f89142e33e77833254d9c9b90c3cef7303b`; dino.txt code and weight hashes
+are recorded in the [dino.txt reference](docs/dinotxt-v0.6.0.md).
 
 For migration from the v0.4.0 distribution and import namespace, see the
 [v0.5.0 migration guide](docs/migration-v0.5.0.md). `openvlclip` is a separate
 distribution; installing it does not uninstall `openclip-gemma` or provide an
 `openclip_gemma` import alias.
+
+For v0.6.0 model-specific behavior and index compatibility, see the
+[v0.6.0 migration guide](docs/migration-v0.6.0.md). For benchmark method and
+results, see [the v0.6.0 evaluation report](docs/benchmark-v0.6.0.md).
 
 Batch image embedding, image search, and video-frame search are documented in
 the [batch embedding guide](docs/batch-embeddings-v0.2.0.md),
@@ -101,6 +114,36 @@ The in-memory graphic only demonstrates how to call the API; it is not evidence 
 
 The examples use CPU by default. To request CUDA, set `device="cuda"` when creating the model and move input tensors to the same device. CUDA inference was tested on the specific GPU listed below; this result does not guarantee support for every NVIDIA GPU or driver combination.
 
+## DINOv2 + dino.txt
+
+The `dinov2-dinotxt` backend uses the pinned DINOv2 ViT-L/14 register-token
+backbone and its trained dino.txt heads. Install the `[dinotxt]` extra when
+using a source checkout. Unlike EmbeddingGemma 2, dino.txt uses no task prompt,
+does not support selective loading or MRL truncation, and produces native
+2048-dimensional global image/text embeddings:
+
+```python
+from openvlclip import create_model_and_transforms, get_tokenizer
+
+model, _, preprocess = create_model_and_transforms(
+    "dinov2-dinotxt",
+    device="cpu",
+)
+tokenizer = get_tokenizer("dinov2-dinotxt")
+```
+
+`model.encode_patches()` returns 1024-dimensional patch features;
+`model.similarity_map()` compares those features with the text encoder's
+patch-aligned 1024-dimensional suffix. Its outputs are cosine scores, not
+probabilities or pixel-accurate segmentation masks. See the
+[dino.txt reference](docs/dinotxt-v0.6.0.md) and runnable
+[similarity-map example](examples/dinotxt_similarity_map.py).
+
+The dino.txt Vision Head and Text Encoder checkpoints are fetched at runtime
+and are not included in package distributions. Their redistribution/use
+licensing is not conclusively established by the pinned upstream repository;
+the release checklist treats this as a blocking item.
+
 ## Japanese text
 
 EmbeddingGemma 2 supports multilingual text, including Japanese. Use the returned Gemma token IDs rather than CLIP token IDs or raw strings when calling `encode_text()`:
@@ -116,7 +159,7 @@ print(japanese_features.shape)  # torch.Size([1, 768])
 
 ## Image and text similarity
 
-The model returns normalized sentence embeddings. You can also request normalization explicitly with `normalize=True`; normalized image and text features can be compared with a matrix product, as in the Quick Start. A larger cosine similarity indicates a closer match among the supplied candidates, but is not a calibrated probability.
+Both backends can return normalized image and text embeddings with `normalize=True`; compare them with a matrix product as in the Quick Start. A larger cosine similarity indicates a closer match among the supplied candidates, but is not a calibrated probability.
 
 ## Matryoshka Representation Learning (MRL)
 
@@ -127,6 +170,10 @@ the leading dimensions of the native embedding and L2-normalize the truncated
 vector. Use the same dimension for image and text features before comparing
 them:
 
+MRL applies only to EmbeddingGemma 2. The dino.txt backend rejects truncation:
+its global embedding space is 2048-dimensional and is not interchangeable with
+EmbeddingGemma MRL vectors or 1024-dimensional patch features.
+
 ```python
 with torch.inference_mode():
     image_features = model.encode_image(image_tensor, truncate_dim=256)
@@ -134,11 +181,13 @@ with torch.inference_mode():
     cosine_similarities = image_features @ text_features.T
 ```
 
-`forward()` and `get_logits()` accept the same `truncate_dim` when explicitly
-constructed with `logit_scale_mode="cosine"`. The strict default and the
-untrained cosine scale behavior are unchanged.
+For EmbeddingGemma 2, `forward()` and `get_logits()` accept the same
+`truncate_dim` when explicitly constructed with
+`logit_scale_mode="cosine"`. dino.txt rejects `truncate_dim`; its official
+strict-logit path and scale-1 cosine path remain distinct.
 
-Model loading can omit unused towers with `create_model(modalities=...)`:
+EmbeddingGemma model loading can omit unused towers with
+`create_model(modalities=...)`:
 
 ```python
 from openvlclip import create_model
@@ -148,20 +197,25 @@ image_text_model = create_model(modalities=("text", "image"))
 ```
 
 `modalities=None` remains the default and preserves the previous full
-checkpoint load. Text is required because the text transformer is shared;
-image-only and audio inference are not supported. A text-only model raises an
-explicit error from `encode_image()`. Factories that return image transforms
-require the image modality.
+EmbeddingGemma checkpoint load. Text is required because the text transformer
+is shared; image-only and audio inference are not supported. A text-only model
+raises an explicit error from `encode_image()`. Factories that return image
+transforms require the image modality. dino.txt rejects selective loading and
+loads its full vision/text model.
 
 `model.capabilities` is a read-only mapping with `image_embedding`,
 `text_embedding`, `image_text_similarity`, `patch_embedding`,
-`text_similarity_map`, `mrl`, and `selective_loading` flags. Its values reflect
-the loaded modalities: a text-only model reports image embedding and
-image/text similarity as unavailable.
+`text_similarity_map`, `mrl`, and `selective_loading` flags. Values depend on
+the selected backend and loaded modalities: dino.txt supports patch features
+and text similarity maps, while EmbeddingGemma does not; EmbeddingGemma alone
+supports MRL and selective loading.
 
 ## Zero-shot image classification
 
-For a set of candidate labels, encode images and candidate descriptions, then rank each image's candidate scores:
+For EmbeddingGemma, use its `Classification` prompt with candidate labels,
+encode images and descriptions, then rank each image's candidate scores. The
+dino.txt counterpart uses its own tokenizer without Gemma prompts; see
+[`examples/dinotxt_zero_shot_classification.py`](examples/dinotxt_zero_shot_classification.py).
 
 ```python
 from PIL import Image, ImageDraw
@@ -197,7 +251,9 @@ This example illustrates scoring only; its synthetic images do not establish rec
 
 ## Task-specific prompts
 
-Task prompts are part of EmbeddingGemma's text encoding behavior. The tokenizer accepts `prompt_name`; the default is no task prompt. For example:
+Task prompts are part of EmbeddingGemma's text encoding behavior. The
+tokenizer accepts `prompt_name`; the default is no task prompt. dino.txt uses
+its own official tokenizer without EmbeddingGemma task prompts. For EmbeddingGemma:
 
 ```python
 search_tokenizer = get_tokenizer("embeddinggemma-2", prompt_name="SearchQuery")
@@ -225,7 +281,24 @@ uv run python examples/image_search.py search \
   --index ./image-index-256 --query "富士山と青空" --top-k 5 --device cpu
 ```
 
-Indexing again updates added, changed, and deleted files. Change `--device cpu` to `--device cuda` to request CUDA inference. Lower `--batch-size` if GPU memory is limited. Search uses EmbeddingGemma's `SearchQuery` task prompt and reports unscaled cosine similarity scores, not probabilities. Results with equal scores are ordered by relative image path.
+Indexing again updates added, changed, and deleted files. Change `--device cpu` to `--device cuda` to request CUDA inference. Lower `--batch-size` if GPU memory is limited. EmbeddingGemma search uses its `SearchQuery` task prompt; dino.txt uses no such prompt. Both report unscaled cosine scores, not probabilities. Results with equal scores are ordered by relative image path.
+
+To index with dino.txt from the source tree, select the registered model and
+its native dimension:
+
+```bash
+uv run python examples/image_search.py index \
+  --model dinov2-dinotxt --images ./photos --output ./dino-index \
+  --batch-size 1 --embedding-dim 2048 --device cpu
+uv run python examples/image_search.py search \
+  --model dinov2-dinotxt --index ./dino-index \
+  --query "a red car" --top-k 5 --device cpu
+```
+
+Image indexes record model, revision, preprocessing, prompt, normalization,
+and embedding-strategy identity. A search or conversion across incompatible
+embedding spaces is rejected; dino.txt, EmbeddingGemma MRL, and patch-feature
+vectors cannot be mixed.
 
 The local index is a versioned NumPy `.npz` archive containing JSON metadata and float32 embeddings; it is read with pickle loading disabled and replaced atomically after a successful update. Image and video index archives are limited to 512 MiB each; split larger collections into multiple indexes. File changes are detected using relative path, size, and modification time in nanoseconds. Touching or rewriting an unchanged image can trigger an unnecessary re-embedding; rewriting a file while preserving both size and timestamp can evade detection. Remove the index and rebuild it if a full refresh is needed. A damaged image or incompatible/corrupt index stops the operation with an error rather than silently skipping data. See the [image search design and storage notes](docs/image-search-v0.2.0.md).
 
@@ -295,41 +368,41 @@ for match in search_video(model, "video-index", "人がドリルで穴を開け�
     print(match.video_path, match.timestamp_seconds, match.score)
 ```
 
-Video search ranks individual sampled frames. It does not understand motion,
+The documented video workflow uses the EmbeddingGemma backend; dino.txt video
+support is not claimed. Video search ranks individual sampled frames. It does not understand motion,
 event order, or temporal relationships, and scenes between sampled timestamps
 can be missed. Search loads the full index into RAM and uses brute-force cosine
 scoring, so memory and latency grow with collection size.
-Video indexes use format v3 and support the same MRL dimensions. Existing
+Video indexes use format v3 and support EmbeddingGemma's MRL dimensions. Existing
 version-2 indexes remain readable at 768 dimensions; version-1 timestamp
 indexes are still unsupported. Use `convert_video_index()` to create a
 separate, smaller-dimensional index without model inference.
 
 ## OpenCLIP differences and compatibility
 
-`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. Only the `embeddinggemma-2` model is supported.
+`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. The registry currently contains `embeddinggemma-2` and `dinov2-dinotxt`, with model-specific capabilities and embedding spaces.
 
 | Area | `openvlclip` behavior |
 | --- | --- |
-| Embeddings | The default is the native 768-dimensional EmbeddingGemma 2 output. `truncate_dim` optionally returns 512, 256, or 128 leading dimensions, re-normalized for cosine comparison. |
-| Images | Use the returned official processor transform. `encode_image()` accepts preprocessed float32 `[B, 3, H, W]` tensors; do not feed arbitrary OpenCLIP-normalized tensors or apply preprocessing twice. All images in a dense batch must have the same shape. |
-| Text | `get_tokenizer()` returns Gemma token IDs with dynamically right-padded batches. CLIP token IDs and OpenCLIP's tokenizer are not interchangeable. |
-| Similarity | Normalize embeddings and compute cosine similarity. The model does not provide an OpenCLIP-trained `logit_scale`. |
-| Factory discovery | `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()` expose only the supported EmbeddingGemma 2 checkpoint. |
-| Selective loading | `create_model(modalities=("text",))` omits vision and audio configs; `("text", "image")` omits audio. The default `None` loads the existing full configuration. |
-| Capabilities | `model.capabilities` is immutable and reflects the loaded modalities; unsupported patch embeddings and similarity maps are reported as false. |
-| Model methods | `encode_image()`, `encode_text()`, `eval()`, and `to()` are supported. `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"`; the default strict mode rejects them. |
+| Embeddings | EmbeddingGemma 2 produces 768 dimensions with MRL outputs of 512, 256, or 128. dino.txt produces 2048-dimensional global embeddings and 1024-dimensional patch features; truncation is rejected. |
+| Images | Use the selected model's returned preprocessing transform. `encode_image()` accepts preprocessed float32 `[B, 3, H, W]` tensors; do not apply preprocessing twice. |
+| Text | `get_tokenizer()` returns model-specific token IDs. CLIP, Gemma, and dino.txt token IDs are not interchangeable. |
+| Similarity | EmbeddingGemma cosine mode returns scale-1 similarities. dino.txt strict mode preserves the official scaled logits; cosine mode is distinct. Neither is a calibrated probability. |
+| Factory discovery | `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()` resolve the registered backends and their checkpoints. |
+| Selective loading | Selective loading is supported by EmbeddingGemma 2; dino.txt requires its complete vision/text model. |
+| Capabilities | `model.capabilities` is immutable and model-specific. dino.txt exposes patch embeddings and text similarity maps; EmbeddingGemma reports these as unsupported. |
+| Model methods | Both backends support global image/text encoding, `eval()`, and `to()`. `forward()`/`get_logits()` semantics and defaults are backend-specific; consult the model reference before choosing strict or cosine mode. |
 | Scope | The core model API does not support training, fine-tuning, audio, or arbitrary architectures. Video-frame search is a separate v0.2.0 API, not a core OpenCLIP-compatible model feature. |
 
-`list_pretrained()` reports `("embeddinggemma-2", "official")`; `official` is
-this package's alias for its pinned Google checkpoint, not an OpenCLIP
-pretrained tag. `forward()` in cosine mode returns normalized features and
-scalar `1.0`, not CLIP logits. `get_logits()` returns unscaled cosine
-similarities. Neither API reproduces a trained OpenCLIP `logit_scale`.
+`list_pretrained()` reports the registered checkpoints for the selected
+backend; `official` is a package alias, not an OpenCLIP pretrained tag.
+EmbeddingGemma cosine mode returns normalized features and scale `1.0`.
+dino.txt strict mode uses the Hub-initialized official logit scale; cosine
+mode uses scale `1.0`. Neither reproduces a trained OpenCLIP `logit_scale`.
 
 For scenario-by-scenario results and migration examples, see the
 [OpenCLIP compatibility report](docs/openclip-compatibility-report-v0.3.0.md)
-and [v0.3.0 migration guide](docs/migration-v0.3.0.md). For MRL index and
-factory changes, see the [v0.4.0 migration guide](docs/migration-v0.4.0.md)
+and [v0.3.0 migration guide](docs/migration-v0.3.0.md). For MRL index and factory changes, see the [v0.4.0 migration guide](docs/migration-v0.4.0.md)
 and [MRL benchmark guide](docs/benchmark-mrl-v0.4.0.md).
 
 ### Migration example
@@ -435,8 +508,8 @@ The library license does not replace or alter the separate terms that apply to d
 
 ## About the name
 
-The name OpenVLCLIP reflects the goal of providing familiar interfaces across vision and vision-language foundation models. Version 0.5.0 supports EmbeddingGemma 2 only; it does not claim OpenCLIP affiliation or full OpenCLIP compatibility.
+The name OpenVLCLIP reflects the goal of providing familiar interfaces across vision and vision-language foundation models. The v0.5.0 PyPI distribution supports EmbeddingGemma 2 only; the v0.6.0 source adds the dino.txt backend. The project does not claim OpenCLIP affiliation or full OpenCLIP compatibility.
 
-This is an independently developed library, not an official extension of OpenCLIP or a Google-maintained package.
+This is an independently developed library, not an official extension of OpenCLIP, Google, or Meta.
 
 The names OpenCLIP and Gemma refer to their respective projects and technologies. No affiliation or endorsement is implied.

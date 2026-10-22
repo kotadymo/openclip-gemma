@@ -2,7 +2,7 @@
 
 ## Scope and pinned source
 
-This document records the Phase 0 source, artifact, and licensing investigation and the Phase 1 backend, Phase 2 scoring/search, and Phase 3 dense feature implementations and parity checks. Phase 4 release validation remains out of scope until completed.
+This document records the Phase 0 source, artifact, and licensing investigation and the Phase 1 backend, Phase 2 scoring/search, Phase 3 dense feature implementation, and Phase 4 validation. The final Phase 4 test, distribution, and benchmark results are recorded after execution; unresolved licensing remains a release blocker.
 
 The official source was pinned to commit `7764ea0f912e53c92e82eb78a2a1631e92725fc8` in `facebookresearch/dinov2` (commit date: 2026-06-03). The pinned commit, rather than a moving `main` branch, is the reference for implementation and regression tests.
 
@@ -148,14 +148,52 @@ For dino.txt, `model.capabilities["patch_embedding"]` and `model.capabilities["t
 
 The pinned official model and OpenVLCLIP were compared on CPU FP32 and BF16 using identical preprocessed images and token IDs. In both precisions, raw and normalized `encode_patches()` outputs matched `get_visual_class_and_patch_tokens()` and per-patch L2 normalization exactly; `similarity_map()` matched the notebook's bicubic-interpolation, normalization, and text-suffix calculation exactly (`rtol=0`, `atol=0`) for a 32-by-40 output. The measured maximum absolute errors for raw patches, normalized patches, and similarity maps were all `0.0` in CPU FP32 and CPU BF16. The combined focused unit and real-model test run completed with 51 passed and 4 CUDA-dependent skips; global image/text embeddings, forward outputs, and logits also matched exactly on CPU FP32 and BF16. CUDA dense parity was not tested because CUDA was unavailable (`torch.cuda.is_available() == False`, `torch.version.cuda is None`, device count `0`).
 
-## Remaining validation before release
+## Phase 4 validation
 
-Phases 0-3 verified the pinned backend, tokenizer, preprocessing, global embeddings, scoring, CPU image search, and dense APIs. The following remain required in Phase 4 and must not be reported as verified until actually run:
+Validation used a clean Python 3.12.10 virtual environment with the locally
+built `openvlclip-0.6.0-py3-none-any.whl`, plus the `dinotxt` and `video`
+extras. `openvlclip.__file__` resolved inside that environment's
+`site-packages`; `openvlclip` metadata reported version `0.6.0`. The
+integration-test dependencies were aligned with the lockfile.
 
-- Dense-feature and similarity-map checks on CUDA, when supported hardware is available.
-- Linux and Python 3.13/3.14 compatibility, including the project's Python 3.14.1 exclusion.
-- Gemma actual-model regression, v0.4.0 fixed-embedding/API regressions, and real-model image/video index compatibility.
-- CUDA FP32/BF16 scoring and search integration, when a CUDA-capable environment is available.
-- Clean installation of built distributions with `[dinotxt]` and compatibility with `[video]`.
-- Dataset-based accuracy and performance benchmarks. No dataset benchmark has been run in Phases 0-3; those metrics are `not evaluated`.
-- Explicit licensing confirmation for the externally hosted dino.txt Vision Head and Text Encoder weights. Until this gate is resolved, the v0.6.0 release must not be declared ready.
+- `uv lock --check`, Ruff, and `git diff --check` passed.
+- The normal `pytest -q` suite passed in both the project and clean-wheel
+  environments: 304 passed, 30 skipped, and 3 warnings.
+- The full real-model integration suite passed from the clean wheel:
+  16 passed and 11 skipped. All 11 skips were CUDA-only cases; the environment
+  reported PyTorch `2.14.1+cpu`, `torch.cuda.is_available() == False`,
+  `torch.version.cuda is None`, and zero CUDA devices.
+- CPU FP32/BF16 EmbeddingGemma image/text encoding, image search, video search,
+  zero-shot scoring, selective loading, and compatibility checks passed. The
+  v0.4.0 fixed-baseline test passed for image and text embeddings at 768/512/256/
+  128 dimensions.
+- CPU FP32/BF16 dino.txt official-parity tests passed from the clean wheel,
+  including global embeddings, normalized features, official scaled logits,
+  cosine logits, patch features, and similarity maps. The measured maximum
+  absolute error was `0.0` for each compared output in both precisions.
+- The built wheel and sdist passed their content verifiers. The wheel is
+  `openvlclip-0.6.0-py3-none-any.whl` (73,375 bytes, SHA-256
+  `a6fc193bd988df697b595ee10daaefcadabb8238d128023139bbb64bce5722aa`) and
+  the sdist is `openvlclip-0.6.0.tar.gz` (73,883 bytes, SHA-256
+  `9162351f8a133dd029385c658d6304f9bb1447b05ae80fa15255d0f8adc37a3d`).
+- The v0.4.0 baseline archive remains 11,919 bytes with SHA-256
+  `3e8bcd73c9c9d1396c7c85de413950cb283dc30ced913b9c1daae1997fdf05d7`;
+  it was not regenerated or modified.
+
+The v0.4.0 CPU FP32 comparison reported the following maximum absolute errors
+and minimum cosine similarities for each native MRL dimension:
+
+| Dimension | Image max absolute error | Text max absolute error | Minimum cosine similarity |
+| ---: | ---: | ---: | ---: |
+| 768 | `8.5682e-08` | `7.4913e-08` | `1.0` |
+| 512 | `9.6858e-08` | `8.6540e-08` | `1.0` |
+| 256 | `1.1548e-07` | `1.1921e-07` | `1.0` |
+| 128 | `1.2666e-07` | `1.1921e-07` | `0.99999994` |
+
+CUDA, Linux, and Python 3.13/3.14 were not validated in this Phase 4
+environment; GitHub Actions is still required to establish the supported
+platform matrix. Dataset-based accuracy, retrieval quality, and comparative
+GPU performance remain `not evaluated`. Explicit licensing/redistribution
+rights for the externally hosted dino.txt Vision Head and Text Encoder
+checkpoints are still unresolved. Until that release gate is resolved,
+v0.6.0 must not be declared ready or published.

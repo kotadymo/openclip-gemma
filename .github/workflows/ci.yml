@@ -69,13 +69,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $wheelPython = if ($IsWindows) { ".venv-wheel-check/Scripts/python.exe" } else { ".venv-wheel-check/bin/python" }
           $wheelPython = (Resolve-Path $wheelPython).Path
-          uv pip install --python $wheelPython $wheel
+          $wheelUri = [System.Uri]::new($wheel).AbsoluteUri
+          $wheelRequirement = "openvlclip[dinotxt,video] @ $wheelUri"
+          uv pip install --python $wheelPython $wheelRequirement
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $wheelPython -c "import importlib.metadata as m, openvlclip; assert m.version('openvlclip') == '$expectedVersion'; assert set(openvlclip.__all__) == {'EmbeddingGemmaCLIP', 'create_model', 'create_model_and_transforms', 'create_model_from_pretrained', 'get_tokenizer', 'list_models', 'list_pretrained'}; assert 'site-packages' in openvlclip.__file__; print(openvlclip.__file__)"
+          & $wheelPython -c "import av, ftfy, importlib.metadata as m, openvlclip, regex; assert m.version('openvlclip') == '$expectedVersion'; assert set(openvlclip.__all__) == {'EmbeddingGemmaCLIP', 'create_model', 'create_model_and_transforms', 'create_model_from_pretrained', 'get_tokenizer', 'list_models', 'list_pretrained'}; assert 'site-packages' in openvlclip.__file__; print(openvlclip.__file__)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   video-dependencies:
-    name: Video extra tests (Python ${{ matrix.python-version }}, ${{ matrix.os }})
+    name: Video and DINO extras tests (Python ${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -94,10 +96,10 @@ jobs:
           version: "0.13.1"
           enable-cache: true
 
-      - name: Install video extra and development dependencies
-        run: uv sync --locked --group dev --extra video
+      - name: Install video and DINO extras with development dependencies
+        run: uv sync --locked --group dev --extra video --extra dinotxt
 
-      - name: Run unit tests with PyAV installed
+      - name: Run unit tests with both optional extras installed
         run: uv run --locked pytest -m "not integration"
 
   model-integration:
@@ -117,7 +119,7 @@ jobs:
           enable-cache: true
 
       - name: Install integration dependencies
-        run: uv sync --locked --group dev --extra integration --extra video
+        run: uv sync --locked --group dev --extra integration --extra video --extra dinotxt
 
       - name: Run pinned-model integration tests
         shell: pwsh

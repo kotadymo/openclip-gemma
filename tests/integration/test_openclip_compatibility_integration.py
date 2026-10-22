@@ -65,9 +65,15 @@ def test_openclip_compatibility_scenarios(
     precision: str,
     dtype: torch.dtype,
 ) -> None:
-    assert list_models() == ["embeddinggemma-2"]
-    assert list_pretrained() == [("embeddinggemma-2", "official")]
-    assert list_pretrained(as_str=True) == ["embeddinggemma-2:official"]
+    assert set(list_models()) == {"embeddinggemma-2", "dinov2-dinotxt"}
+    assert set(list_pretrained()) == {
+        ("embeddinggemma-2", "official"),
+        ("dinov2-dinotxt", "official"),
+    }
+    assert set(list_pretrained(as_str=True)) == {
+        "embeddinggemma-2:official",
+        "dinov2-dinotxt:official",
+    }
 
     model, preprocess = create_model_from_pretrained(
         "embeddinggemma-2",
