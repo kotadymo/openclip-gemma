@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Protocol, TypeVar
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol, Self, TypeVar
 
 import torch
+from PIL import Image
 
 from openvlclip._dimensions import validate_positive_embedding_dimension
 from openvlclip.embedding_space import EmbeddingSpaceMetadata
@@ -13,6 +14,55 @@ from openvlclip.embedding_space import EmbeddingSpaceMetadata
 ModelT = TypeVar("ModelT", bound=torch.nn.Module)
 TokenizerT = TypeVar("TokenizerT")
 PreprocessT = TypeVar("PreprocessT")
+
+
+class InferenceModelAPI(Protocol):
+    """Model-independent operations returned by the public Factory."""
+
+    @property
+    def capabilities(self) -> Mapping[str, bool]: ...
+
+    @property
+    def embedding_space_metadata(self) -> EmbeddingSpaceMetadata: ...
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int: ...
+
+    def encode_image(
+        self,
+        image: torch.Tensor,
+        normalize: bool = False,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor: ...
+
+    def encode_text(
+        self,
+        text: torch.Tensor,
+        normalize: bool = False,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor: ...
+
+    def eval(self) -> Self: ...
+
+    def to(self, *args: Any, **kwargs: Any) -> Self: ...
+
+
+class TokenizerAPI(Protocol):
+    """Callable tokenizer contract shared by registered model backends."""
+
+    def __call__(self, texts: str | Sequence[str]) -> torch.Tensor: ...
+
+
+class ImagePreprocessAPI(Protocol):
+    """Callable PIL-image preprocessing contract shared by model backends."""
+
+    def __call__(self, image: Image.Image) -> torch.Tensor: ...
 
 
 class Backend(Protocol[ModelT, TokenizerT, PreprocessT]):

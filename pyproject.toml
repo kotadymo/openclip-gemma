@@ -4,7 +4,7 @@ version = "0.5.0"
 description = "OpenCLIP-inspired image and text inference with EmbeddingGemma 2"
 readme = "README.md"
 license = "Apache-2.0"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "LICENSE-CLIP.txt"]
 authors = [
     { name = "kotadymo" }
 ]
@@ -47,6 +47,10 @@ integration = [
 ]
 video = [
     "av>=19.0.1,<20",
+]
+dinotxt = [
+    "ftfy>=6.3.1,<7",
+    "regex>=2024.11.6",
 ]
 benchmark = [
     "psutil>=7.1.0,<8",

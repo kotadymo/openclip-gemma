@@ -203,22 +203,42 @@ class ModelRegistry:
 @lru_cache(maxsize=1)
 def get_default_registry() -> ModelRegistry:
     """Return the built-in registry; imports and listing do not load model weights."""
+    from openvlclip.backends.dinov2_dinotxt import (
+        DINO_BACKEND_ID,
+        DINO_HUB_MODEL_ID,
+        DINO_MODEL_NAME,
+        DINO_MODEL_REVISION,
+        DinoV2DinoTxtBackend,
+    )
     from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
 
-    backend = EmbeddingGemma2Backend()
+    gemma_backend = EmbeddingGemma2Backend()
+    dinotxt_backend = DinoV2DinoTxtBackend()
     return ModelRegistry(
         (
             ModelDescriptor(
                 model_name=MODEL_NAME,
                 aliases=(),
-                backend_id=backend.backend_id,
+                backend_id=gemma_backend.backend_id,
                 model_id=MODEL_ID,
                 revision=MODEL_REVISION,
                 pretrained_tags={"official": MODEL_ID},
                 pretrained_aliases={MODEL_ID: "official"},
-                capabilities=backend.capabilities,
-                embedding_space_metadata=backend.embedding_space_metadata,
-                backend=backend,
+                capabilities=gemma_backend.capabilities,
+                embedding_space_metadata=gemma_backend.embedding_space_metadata,
+                backend=gemma_backend,
+            ),
+            ModelDescriptor(
+                model_name=DINO_MODEL_NAME,
+                aliases=(),
+                backend_id=DINO_BACKEND_ID,
+                model_id=DINO_HUB_MODEL_ID,
+                revision=DINO_MODEL_REVISION,
+                pretrained_tags={"official": DINO_HUB_MODEL_ID},
+                pretrained_aliases={},
+                capabilities=dinotxt_backend.capabilities,
+                embedding_space_metadata=dinotxt_backend.embedding_space_metadata,
+                backend=dinotxt_backend,
             ),
         )
     )

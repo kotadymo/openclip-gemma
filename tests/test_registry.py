@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -10,6 +11,12 @@ from torch import nn
 
 import openvlclip.factory as factory_module
 import openvlclip.tokenizer as tokenizer_module
+from openvlclip.backends.dinov2_dinotxt import (
+    DINO_BACKEND_ID,
+    DINO_HUB_MODEL_ID,
+    DINO_MODEL_NAME,
+    DINO_MODEL_REVISION,
+)
 from openvlclip.capabilities import (
     CAPABILITY_KEYS,
     capabilities_for_modalities,
@@ -56,6 +63,34 @@ class FakeModel(nn.Module):
         name: str,
     ) -> int:
         return self.backend.validate_embedding_dimension(value, name=name)
+
+    def encode_image(
+        self,
+        image: torch.Tensor,
+        normalize: bool = False,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        return self.backend.encode_image(
+            self,
+            image,
+            normalize=normalize,
+            truncate_dim=truncate_dim,
+        )
+
+    def encode_text(
+        self,
+        text: torch.Tensor,
+        normalize: bool = False,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        return self.backend.encode_text(
+            self,
+            text,
+            normalize=normalize,
+            truncate_dim=truncate_dim,
+        )
 
 
 class FakeBackend:
@@ -208,14 +243,26 @@ def _fake_registry(backend: FakeBackend) -> ModelRegistry:
     return ModelRegistry((descriptor,))
 
 
-def test_default_registry_lists_only_pinned_model_without_loading_weights() -> None:
+def test_default_registry_lists_models_without_loading_weights(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_loader = Mock(side_effect=AssertionError("model weights must not load"))
+    monkeypatch.setattr(torch.hub, "load", model_loader)
     registry = get_default_registry()
 
-    assert registry.list_models() == [MODEL_NAME]
-    assert registry.list_pretrained() == [(MODEL_NAME, "official")]
+    assert registry.list_models() == [MODEL_NAME, DINO_MODEL_NAME]
+    assert registry.list_pretrained() == [
+        (MODEL_NAME, "official"),
+        (DINO_MODEL_NAME, "official"),
+    ]
     assert registry.resolve(" EMBEDDINGGEMMA_2 ") is registry.descriptors[0]
     assert registry.descriptors[0].model_id == MODEL_ID
     assert registry.descriptors[0].revision == MODEL_REVISION
+    dinotxt = registry.resolve(DINO_MODEL_NAME)
+    assert dinotxt.backend_id == DINO_BACKEND_ID
+    assert dinotxt.model_id == DINO_HUB_MODEL_ID
+    assert dinotxt.revision == DINO_MODEL_REVISION
+    model_loader.assert_not_called()
 
 
 def test_registry_rejects_duplicate_names_and_invalid_descriptors() -> None:

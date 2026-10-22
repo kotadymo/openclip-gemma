@@ -8,6 +8,7 @@ from typing import Any
 
 import torch
 
+from openvlclip.backends.base import ImagePreprocessAPI, InferenceModelAPI
 from openvlclip.constants import MODEL_ID, MODEL_NAME, MODEL_REVISION
 from openvlclip.model import EmbeddingGemmaCLIP
 from openvlclip.registry import ModelDescriptor, get_default_registry
@@ -87,7 +88,8 @@ def _validate_factory_options(
 
     if pretrained is None:
         raise ValueError(
-            "pretrained=None is not supported; specify 'google/embeddinggemma-2'."
+            "pretrained=None is not supported; specify a registered tag such as "
+            "'official'."
         )
     if not isinstance(pretrained, str):
         raise TypeError("pretrained must be a string.")
@@ -154,9 +156,9 @@ def _load_model(
     cache_dir: str | None,
     output_dict: bool,
     logit_scale_mode: str,
-) -> EmbeddingGemmaCLIP:
+) -> InferenceModelAPI:
     """Delegate model loading to the Registry-selected backend."""
-    return options.descriptor.backend.load_model(
+    model = options.descriptor.backend.load_model(
         model_id=options.checkpoint_id,
         revision=options.descriptor.revision,
         cache_dir=cache_dir,
@@ -166,11 +168,20 @@ def _load_model(
         logit_scale_mode=logit_scale_mode,
         modalities=options.modalities,
     )
+    if not isinstance(model, torch.nn.Module):
+        raise TypeError("The registered backend must return a torch.nn.Module.")
+    if not callable(getattr(model, "encode_image", None)) or not callable(
+        getattr(model, "encode_text", None)
+    ):
+        raise TypeError(
+            "The registered model must implement encode_image() and encode_text()."
+        )
+    return model
 
 
 def create_model(
     model_name: str = MODEL_NAME,
-    pretrained: str | None = MODEL_ID,
+    pretrained: str | None = PRETRAINED_OFFICIAL,
     precision: str = "fp32",
     device: str | torch.device = "cpu",
     cache_dir: str | None = None,
@@ -179,8 +190,8 @@ def create_model(
     logit_scale_mode: str = "strict",
     modalities: Sequence[str] | None = None,
     **kwargs: Any,
-) -> EmbeddingGemmaCLIP:
-    """Load the pinned EmbeddingGemma 2 checkpoint as an OpenCLIP-style module."""
+) -> InferenceModelAPI:
+    """Load a registered model checkpoint as an OpenCLIP-style module."""
     options = _validate_factory_options(
         model_name,
         pretrained,
@@ -202,7 +213,7 @@ def create_model(
 
 def create_model_and_transforms(
     model_name: str = MODEL_NAME,
-    pretrained: str | None = MODEL_ID,
+    pretrained: str | None = PRETRAINED_OFFICIAL,
     precision: str = "fp32",
     device: str | torch.device = "cpu",
     cache_dir: str | None = None,
@@ -211,7 +222,7 @@ def create_model_and_transforms(
     logit_scale_mode: str = "strict",
     modalities: Sequence[str] | None = None,
     **kwargs: Any,
-) -> tuple[EmbeddingGemmaCLIP, EmbeddingGemmaPreprocess, EmbeddingGemmaPreprocess]:
+) -> tuple[InferenceModelAPI, ImagePreprocessAPI, ImagePreprocessAPI]:
     """Load the model and return deterministic train and validation transforms."""
     validated_modalities = _validate_modalities(modalities)
     if validated_modalities is not None and "image" not in validated_modalities:
@@ -244,7 +255,7 @@ def create_model_from_pretrained(
     logit_scale_mode: str = "strict",
     modalities: Sequence[str] | None = None,
     **kwargs: Any,
-) -> tuple[EmbeddingGemmaCLIP, EmbeddingGemmaPreprocess] | EmbeddingGemmaCLIP:
+) -> tuple[InferenceModelAPI, ImagePreprocessAPI] | InferenceModelAPI:
     """Load the supported checkpoint and optionally return its image transform."""
     if not isinstance(return_transform, bool):
         raise TypeError("return_transform must be a bool.")
