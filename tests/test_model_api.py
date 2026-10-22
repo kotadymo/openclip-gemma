@@ -7,7 +7,10 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from openvlclip.backends.embeddinggemma2 import _truncate_and_normalize
+from openvlclip.backends.embeddinggemma2 import (
+    EmbeddingGemma2Backend,
+    _truncate_and_normalize,
+)
 from openvlclip.model import EmbeddingGemmaCLIP
 
 
@@ -47,6 +50,72 @@ def test_embeddinggemma_dense_methods_are_explicitly_unsupported() -> None:
         model.encode_patches(image)
     with pytest.raises(NotImplementedError, match="similarity_map"):
         model.similarity_map(image, "a cat")
+
+
+def test_encode_texts_uses_backend_tokenizer_and_embedding() -> None:
+    model = _model()
+    token_ids = torch.ones((2, 4), dtype=torch.long)
+    features = torch.ones((2, 768))
+    tokenizer = Mock(return_value=token_ids)
+    create_tokenizer = Mock(return_value=tokenizer)
+    encoder = Mock(return_value=features)
+    model._create_tokenizer = create_tokenizer  # type: ignore[method-assign]
+    model.encode_text = encoder  # type: ignore[method-assign]
+    texts = ["first", "second"]
+
+    result = model.encode_texts(texts, normalize=True, truncate_dim=256)
+
+    assert result is features
+    create_tokenizer.assert_called_once_with(prompt_name=None)
+    tokenizer.assert_called_once_with(texts)
+    encoder.assert_called_once_with(
+        token_ids,
+        normalize=True,
+        truncate_dim=256,
+    )
+
+
+def test_text_encoding_reuses_the_model_cache_directory() -> None:
+    backend = EmbeddingGemma2Backend()
+    tokenizer = object()
+    create_tokenizer = Mock(return_value=tokenizer)
+    backend.create_tokenizer = create_tokenizer  # type: ignore[method-assign]
+    model = EmbeddingGemmaCLIP(
+        nn.Linear(2, 2),
+        processor=object(),
+        inference_backend=backend,
+        cache_dir="model-cache",
+    )
+    metadata = model.embedding_space_metadata
+
+    assert model._create_tokenizer(prompt_name=None) is tokenizer
+    create_tokenizer.assert_called_once_with(
+        model_id=metadata.model_id,
+        revision=metadata.model_revision,
+        cache_dir="model-cache",
+        prompt_name=None,
+        context_length=None,
+    )
+
+
+def test_encode_texts_rejects_unmapped_instructions() -> None:
+    model = _model()
+    create_tokenizer = Mock()
+    model._create_tokenizer = create_tokenizer  # type: ignore[method-assign]
+
+    with pytest.raises(NotImplementedError, match="registered task prompts"):
+        model.encode_texts("a photo", instruction="describe this image")
+
+    create_tokenizer.assert_not_called()
+
+
+def test_gemmamodel_rejects_unsupported_multimodal_and_video_encoding() -> None:
+    model = _model()
+
+    with pytest.raises(NotImplementedError, match="encode_multimodal"):
+        model.encode_multimodal({"text": "a photo"})
+    with pytest.raises(NotImplementedError, match="encode_video"):
+        model.encode_video("video.mp4")
 
 
 def test_forward_tuple_has_features_and_float32_scalar_scale() -> None:

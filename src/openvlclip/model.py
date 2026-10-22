@@ -11,8 +11,13 @@ from torch import nn
 from openvlclip.embedding_space import EmbeddingSpaceMetadata
 
 if TYPE_CHECKING:
-    from openvlclip.backends.base import Backend
-    from openvlclip.tokenizer import EmbeddingGemmaTokenizer
+    from openvlclip.backends.base import (
+        Backend,
+        MultimodalInput,
+        ProcessedImageBatch,
+        TokenizerAPI,
+        VideoInput,
+    )
 
 
 class EmbeddingGemmaCLIP(nn.Module):
@@ -27,6 +32,7 @@ class EmbeddingGemmaCLIP(nn.Module):
         logit_scale_mode: str = "strict",
         modalities: tuple[str, ...] = ("text", "image"),
         inference_backend: Backend[Any, Any, Any] | None = None,
+        cache_dir: str | None = None,
     ) -> None:
         super().__init__()
         if not isinstance(backend, nn.Module):
@@ -37,6 +43,8 @@ class EmbeddingGemmaCLIP(nn.Module):
             raise TypeError("logit_scale_mode must be a string.")
         if logit_scale_mode not in {"strict", "cosine"}:
             raise ValueError("logit_scale_mode must be 'strict' or 'cosine'.")
+        if cache_dir is not None and not isinstance(cache_dir, str):
+            raise TypeError("cache_dir must be a string or None.")
         if not isinstance(modalities, tuple):
             raise TypeError(
                 "modalities must be a tuple containing 'text' and optionally 'image'."
@@ -68,6 +76,7 @@ class EmbeddingGemmaCLIP(nn.Module):
         object.__setattr__(self, "_inference_backend", inference_backend)
         self.output_dict = output_dict
         self.logit_scale_mode = logit_scale_mode
+        self.cache_dir = cache_dir
         self.modalities = tuple(
             modality for modality in ("text", "image") if modality in modalities
         )
@@ -103,13 +112,13 @@ class EmbeddingGemmaCLIP(nn.Module):
         self,
         *,
         prompt_name: str | None,
-    ) -> EmbeddingGemmaTokenizer:
+    ) -> TokenizerAPI:
         """Create a query tokenizer through this model's selected backend."""
         metadata = self.embedding_space_metadata
         return self._inference_backend.create_tokenizer(
             model_id=metadata.model_id,
             revision=metadata.model_revision,
-            cache_dir=None,
+            cache_dir=self.cache_dir,
             prompt_name=prompt_name,
             context_length=None,
         )
@@ -132,7 +141,7 @@ class EmbeddingGemmaCLIP(nn.Module):
 
     def forward(
         self,
-        image: torch.Tensor | None = None,
+        image: ProcessedImageBatch | None = None,
         text: torch.Tensor | None = None,
         *,
         truncate_dim: int | None = None,
@@ -196,7 +205,7 @@ class EmbeddingGemmaCLIP(nn.Module):
 
     def get_logits(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         text: torch.Tensor,
         *,
         truncate_dim: int | None = None,
@@ -261,7 +270,7 @@ class EmbeddingGemmaCLIP(nn.Module):
 
     def encode_image(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         normalize: bool = False,
         *,
         truncate_dim: int | None = None,
@@ -294,9 +303,63 @@ class EmbeddingGemmaCLIP(nn.Module):
             truncate_dim=truncate_dim,
         )
 
+    def encode_texts(
+        self,
+        texts: str | Sequence[str],
+        *,
+        instruction: str | None = None,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        """Tokenize plain text and delegate embedding inference to the backend."""
+        if instruction is not None:
+            raise NotImplementedError(
+                "EmbeddingGemma 2 uses registered task prompts. Create tokens with "
+                "get_tokenizer(prompt_name=...) and call encode_text()."
+            )
+        if "text" not in self.modalities:
+            raise RuntimeError(
+                "encode_texts() is unavailable because the model was loaded "
+                "without the text modality."
+            )
+        token_ids = self._create_tokenizer(prompt_name=None)(texts)
+        return self.encode_text(
+            token_ids,
+            normalize=normalize,
+            truncate_dim=truncate_dim,
+        )
+
+    def encode_multimodal(
+        self,
+        items: MultimodalInput,
+        *,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        """Raise because EmbeddingGemma 2 does not jointly embed modalities."""
+        del items, normalize, truncate_dim
+        raise NotImplementedError(
+            "encode_multimodal() is not supported by the EmbeddingGemma 2 backend."
+        )
+
+    def encode_video(
+        self,
+        video: VideoInput,
+        *,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+        fps: float | None = None,
+        max_frames: int | None = None,
+    ) -> torch.Tensor:
+        """Raise because EmbeddingGemma 2 does not expose video embeddings."""
+        del video, normalize, truncate_dim, fps, max_frames
+        raise NotImplementedError(
+            "encode_video() is not supported by the EmbeddingGemma 2 backend."
+        )
+
     def encode_patches(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         normalize: bool = False,
     ) -> torch.Tensor:
         """Raise because EmbeddingGemma 2 does not expose aligned patch features."""
@@ -307,7 +370,7 @@ class EmbeddingGemmaCLIP(nn.Module):
 
     def similarity_map(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         text: str | Sequence[str],
         output_size: tuple[int, int] | None = None,
     ) -> torch.Tensor:

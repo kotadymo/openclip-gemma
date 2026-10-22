@@ -196,6 +196,15 @@ def test_encode_image_rejects_non_tensor_input(
         model.encode_image([[0.0]])  # type: ignore[arg-type]
 
 
+def test_encode_image_rejects_processor_mapping_for_embeddinggemma(
+    model_and_processor: tuple[EmbeddingGemmaCLIP, FakeProcessor],
+) -> None:
+    model, _ = model_and_processor
+
+    with pytest.raises(TypeError, match="processor-aware image mappings"):
+        model.encode_image({"pixel_values": torch.zeros((1, 3, 224, 224))})
+
+
 @pytest.mark.parametrize(
     ("image", "exception", "message"),
     [

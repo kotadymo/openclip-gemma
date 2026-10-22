@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
+from os import PathLike
 from typing import Any, Protocol, Self, TypeVar
 
 import torch
@@ -17,6 +18,11 @@ from openvlclip.embedding_space import EmbeddingSpaceMetadata
 ModelT = TypeVar("ModelT", bound=torch.nn.Module)
 TokenizerT = TypeVar("TokenizerT")
 PreprocessT = TypeVar("PreprocessT")
+
+type ProcessedImage = torch.Tensor | Mapping[str, object]
+type ProcessedImageBatch = ProcessedImage | Sequence[ProcessedImage]
+type MultimodalInput = Mapping[str, object] | Sequence[Mapping[str, object]]
+type VideoInput = str | PathLike[str] | Sequence[Image.Image | str | PathLike[str]]
 
 
 class InferenceModelAPI(Protocol):
@@ -39,7 +45,7 @@ class InferenceModelAPI(Protocol):
 
     def encode_image(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         normalize: bool = False,
         *,
         truncate_dim: int | None = None,
@@ -53,22 +59,49 @@ class InferenceModelAPI(Protocol):
         truncate_dim: int | None = None,
     ) -> torch.Tensor: ...
 
+    def encode_texts(
+        self,
+        texts: str | Sequence[str],
+        *,
+        instruction: str | None = None,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor: ...
+
+    def encode_multimodal(
+        self,
+        items: MultimodalInput,
+        *,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor: ...
+
+    def encode_video(
+        self,
+        video: VideoInput,
+        *,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+        fps: float | None = None,
+        max_frames: int | None = None,
+    ) -> torch.Tensor: ...
+
     def encode_patches(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         normalize: bool = False,
     ) -> torch.Tensor: ...
 
     def similarity_map(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         text: str | Sequence[str],
         output_size: tuple[int, int] | None = None,
     ) -> torch.Tensor: ...
 
     def forward(
         self,
-        image: torch.Tensor | None = None,
+        image: ProcessedImageBatch | None = None,
         text: torch.Tensor | None = None,
         *,
         truncate_dim: int | None = None,
@@ -79,7 +112,7 @@ class InferenceModelAPI(Protocol):
 
     def get_logits(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         text: torch.Tensor,
         *,
         truncate_dim: int | None = None,
@@ -99,7 +132,7 @@ class TokenizerAPI(Protocol):
 class ImagePreprocessAPI(Protocol):
     """Callable PIL-image preprocessing contract shared by model backends."""
 
-    def __call__(self, image: Image.Image) -> torch.Tensor: ...
+    def __call__(self, image: Image.Image) -> ProcessedImage: ...
 
 
 class Backend(Protocol[ModelT, TokenizerT, PreprocessT]):
@@ -146,7 +179,7 @@ class Backend(Protocol[ModelT, TokenizerT, PreprocessT]):
     def encode_image(
         self,
         model: ModelT,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         *,
         normalize: bool,
         truncate_dim: int | None,
@@ -160,6 +193,20 @@ class Backend(Protocol[ModelT, TokenizerT, PreprocessT]):
         normalize: bool,
         truncate_dim: int | None,
     ) -> torch.Tensor: ...
+
+
+def require_tensor_image(
+    image: ProcessedImageBatch,
+    *,
+    backend_name: str,
+) -> torch.Tensor:
+    """Reject processor-aware inputs in backends that only consume image tensors."""
+    if not isinstance(image, torch.Tensor):
+        raise TypeError(
+            f"image must be a torch.Tensor for the {backend_name} backend; "
+            "processor-aware image mappings are not supported."
+        )
+    return image
 
 
 def validate_model_embedding_dimension(

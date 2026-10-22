@@ -13,6 +13,11 @@ CAPABILITY_KEYS = (
     "text_similarity_map",
     "mrl",
     "selective_loading",
+    "video_embedding",
+    "multimodal_embedding",
+    "instruction_aware",
+    "variable_resolution",
+    "sigmoid_logits",
 )
 
 
@@ -42,15 +47,24 @@ def capabilities_for_modalities(
     resolved = dict(capabilities)
     has_image = "image" in modalities
     has_text = "text" in modalities
+    has_video = "video" in modalities
     if not has_image:
         resolved["image_embedding"] = False
         resolved["patch_embedding"] = False
+        resolved["variable_resolution"] = False
     if not has_text:
         resolved["text_embedding"] = False
+        resolved["instruction_aware"] = False
+    if not has_video:
+        resolved["video_embedding"] = False
     resolved["image_text_similarity"] = (
         resolved["image_text_similarity"] and has_image and has_text
     )
     resolved["text_similarity_map"] = (
         resolved["text_similarity_map"] and has_image and has_text
     )
+    resolved["multimodal_embedding"] = (
+        resolved["multimodal_embedding"] and len(set(modalities)) > 1
+    )
+    resolved["sigmoid_logits"] = resolved["sigmoid_logits"] and has_image and has_text
     return freeze_capabilities(resolved)

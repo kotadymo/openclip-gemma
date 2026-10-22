@@ -88,6 +88,10 @@ def _preprocess(image: Image.Image) -> torch.Tensor:
     )
 
 
+def _mapping_preprocess(image: Image.Image) -> dict[str, torch.Tensor]:
+    return {"pixel_values": _preprocess(image).unsqueeze(0)}
+
+
 def _write_image(
     path: Path,
     *,
@@ -136,6 +140,21 @@ def test_defaults_to_dinotxt_native_embedding_dimension(
     results = list(iter_image_embeddings(FakeDinoEncoder(), _preprocess, [path]))
 
     assert results[0][1].shape == (2048,)
+
+
+def test_file_batching_reports_processor_mapping_as_unsupported(
+    tmp_path: Path,
+) -> None:
+    path = _write_image(tmp_path / "image.png", red=100)
+
+    with pytest.raises(TypeError, match="Processor-aware mappings"):
+        list(
+            iter_image_embeddings(
+                FakeDinoEncoder(),
+                _mapping_preprocess,
+                [path],
+            )
+        )
 
 
 def test_preprocessed_batch_defaults_to_dinotxt_native_dimension() -> None:

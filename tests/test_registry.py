@@ -104,6 +104,11 @@ class FakeBackend:
             "text_similarity_map": False,
             "mrl": False,
             "selective_loading": True,
+            "video_embedding": False,
+            "multimodal_embedding": False,
+            "instruction_aware": False,
+            "variable_resolution": False,
+            "sigmoid_logits": False,
         }
     )
     embedding_space_metadata = EmbeddingSpaceMetadata(
@@ -396,13 +401,57 @@ def test_dense_capabilities_require_the_relevant_modalities() -> None:
             "text_similarity_map": True,
             "mrl": False,
             "selective_loading": True,
+            "video_embedding": True,
+            "multimodal_embedding": True,
+            "instruction_aware": True,
+            "variable_resolution": True,
+            "sigmoid_logits": True,
         }
     )
 
     text_only = capabilities_for_modalities(capabilities, ("text",))
     image_only = capabilities_for_modalities(capabilities, ("image",))
+    full = capabilities_for_modalities(
+        capabilities,
+        ("text", "image", "video"),
+    )
 
     assert text_only["patch_embedding"] is False
     assert text_only["text_similarity_map"] is False
+    assert text_only["variable_resolution"] is False
+    assert text_only["instruction_aware"] is True
+    assert text_only["video_embedding"] is False
+    assert text_only["multimodal_embedding"] is False
+    assert text_only["sigmoid_logits"] is False
     assert image_only["patch_embedding"] is True
     assert image_only["text_similarity_map"] is False
+    assert image_only["variable_resolution"] is True
+    assert image_only["instruction_aware"] is False
+    assert image_only["video_embedding"] is False
+    assert image_only["multimodal_embedding"] is False
+    assert image_only["sigmoid_logits"] is False
+    assert full["video_embedding"] is True
+    assert full["multimodal_embedding"] is True
+    assert full["instruction_aware"] is True
+    assert full["variable_resolution"] is True
+    assert full["sigmoid_logits"] is True
+
+
+def test_registered_backends_declare_the_extended_capability_contract() -> None:
+    registry = get_default_registry()
+    gemma = registry.resolve(MODEL_NAME)
+    dinotxt = registry.resolve(DINO_MODEL_NAME)
+
+    assert tuple(gemma.backend.capabilities) == CAPABILITY_KEYS
+    assert gemma.capabilities_for_full_model()["instruction_aware"] is True
+    assert gemma.capabilities_for_full_model()["variable_resolution"] is True
+    assert gemma.capabilities_for_full_model()["video_embedding"] is False
+    assert gemma.capabilities_for_full_model()["multimodal_embedding"] is False
+    assert gemma.capabilities_for_full_model()["sigmoid_logits"] is False
+
+    assert tuple(dinotxt.backend.capabilities) == CAPABILITY_KEYS
+    assert dinotxt.capabilities_for_full_model()["instruction_aware"] is False
+    assert dinotxt.capabilities_for_full_model()["variable_resolution"] is False
+    assert dinotxt.capabilities_for_full_model()["video_embedding"] is False
+    assert dinotxt.capabilities_for_full_model()["multimodal_embedding"] is False
+    assert dinotxt.capabilities_for_full_model()["sigmoid_logits"] is False
