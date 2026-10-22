@@ -2,7 +2,7 @@
 
 ## Scope and pinned source
 
-This document records the Phase 0 source, artifact, and licensing investigation and the Phase 1 OpenVLCLIP backend implementation and parity checks. Phase 2 scoring/search, Phase 3 dense features, and Phase 4 release validation remain out of scope here until completed.
+This document records the Phase 0 source, artifact, and licensing investigation and the Phase 1 backend and Phase 2 scoring/search implementations and parity checks. Phase 3 dense features and Phase 4 release validation remain out of scope until completed.
 
 The official source was pinned to commit `7764ea0f912e53c92e82eb78a2a1631e92725fc8` in `facebookresearch/dinov2` (commit date: 2026-06-03). The pinned commit, rather than a moving `main` branch, is the reference for implementation and regression tests.
 
@@ -114,14 +114,33 @@ This is parity of the adapter/wrapper against the same pinned official model pat
 
 Phase 1 local checks: `pytest -m "not integration"` completed with 288 passed and 27 deselected; the pinned dino.txt parity integration test passed; Ruff passed; `uv lock --check` passed; and wheel/sdist builds passed. The built wheel metadata identifies `openvlclip==0.5.0`, advertises the `dinotxt` extra with its optional dependencies, and contains the CLIP license notice and both new backend modules. The sdist contains the same license notice and backend modules. Linux, Python 3.13/3.14, CUDA-less systems, and clean installation of the built wheel have not yet been checked in this phase.
 
+## Phase 2 scoring and image-search verification
+
+`DinoTxtCLIP.forward()` and `get_logits()` now expose both supported score modes. Strict mode delegates to the pinned official dino.txt model, preserving its Hub-initialized `exp(logit_scale)` in logits and `forward()`; cosine mode returns the scale-1 dot product of normalized features. The wrapper accepts one-modality `forward()` calls while preserving the official two-modality path. `output_dict=True` returns the same feature/scale values in a mapping.
+
+`examples/dinotxt_zero_shot_classification.py` compares each image against multiple candidate texts using the selected strict or cosine score mode. It uses the dino.txt tokenizer without task prompts. Scores are not probabilities.
+
+Image search now accepts a registered `--model`, defaults the index dimension through that backend (`768` for EmbeddingGemma 2 and `2048` for dino.txt), and stores dino.txt's global embedding strategy. dino.txt index queries use `query_prompt_name=None` and the backend tokenizer with `prompt_name=None`; no EmbeddingGemma task prompt is applied. Loading a version-2 index resolves its backend from the stored backend/model/revision identity and checks the complete metadata against that backend. This allows registered dino.txt indexes while rejecting unknown checkpoints, unsupported dimensions, and metadata from a different embedding space. The v0.4/v0.5 legacy Gemma index path and its 768-dimensional restriction remain covered by the existing regression tests.
+
+The pinned official implementation and OpenVLCLIP wrapper were compared using the same model instance. For the tested image/text batches, preprocessing and token IDs were exactly equal. The maximum absolute differences for raw image/text embeddings, normalized forward features, logit scale, official strict logits, and scale-1 cosine logits were all `0.0`:
+
+| Device / precision | Raw image/text embeddings | Forward features | Logit scale | Strict logits | Cosine logits |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CPU FP32 | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+| CPU BF16 | `0.0` | `0.0` | `0.0` | `0.0` | `0.0` |
+
+The same real-model integration test built and searched a native 2048-dimensional dino.txt image index on CPU BF16. No dataset accuracy or performance benchmark was run; those results are `not evaluated`.
+
+Phase 2 local checks: `pytest -m "not integration"` completed with 295 passed, 4 skipped, and 27 deselected; the pinned official dino.txt parity and real-model search integration test passed; Ruff and `uv lock --check` passed. `uv build` produced `openvlclip-0.5.0` wheel and sdist artifacts; metadata and package contents were inspected, and the user-provided specification was not included. A clean installation remains part of Phase 4. CUDA was unavailable in the current environment: `torch.cuda.is_available()` was `False`, `torch.version.cuda` was `None`, and `torch.cuda.device_count()` was `0`. Therefore Phase 2 CUDA FP32/BF16 was not tested; this does not change the separate Phase 1 CUDA result above.
+
 ## Remaining validation before release
 
-Phase 1 verified the backend, tokenizer, preprocessing, and global embedding adapter. The following remain required in later phases and must not be reported as verified until actually run:
+Phases 0-2 verified the pinned backend, tokenizer, preprocessing, global embeddings, scoring, and CPU image search. The following remain required in later phases and must not be reported as verified until actually run:
 
-- Official logits/`forward()` and cosine-mode parity, zero-shot classification, text-to-image search, and embedding-index compatibility.
 - Patch-feature and similarity-map parity, including interpolation/normalization order.
 - Linux and Python 3.13/3.14 compatibility, including the project's Python 3.14.1 exclusion.
-- Gemma actual-model regression, v0.4.0 fixture/API regressions, image/video index compatibility, search-space mismatch rejection, and ordinary CI.
+- Gemma actual-model regression, v0.4.0 fixed-embedding/API regressions, and real-model image/video index compatibility.
+- CUDA FP32/BF16 scoring and search integration, when a CUDA-capable environment is available.
 - Clean installation of built distributions with `[dinotxt]` and compatibility with `[video]`.
-- Dataset-based accuracy and performance benchmarks. No dataset benchmark was run in Phase 0; those metrics are `not evaluated`.
+- Dataset-based accuracy and performance benchmarks. No dataset benchmark has been run in Phases 0-2; those metrics are `not evaluated`.
 - Explicit licensing confirmation for the externally hosted dino.txt Vision Head and Text Encoder weights. Until this gate is resolved, the v0.6.0 release must not be declared ready.

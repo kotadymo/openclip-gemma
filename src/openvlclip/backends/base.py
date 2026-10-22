@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Protocol, Self, TypeVar
 
 import torch
@@ -32,6 +32,8 @@ class InferenceModelAPI(Protocol):
         name: str,
     ) -> int: ...
 
+    def parameters(self, recurse: bool = True) -> Iterator[torch.nn.Parameter]: ...
+
     def encode_image(
         self,
         image: torch.Tensor,
@@ -47,6 +49,25 @@ class InferenceModelAPI(Protocol):
         *,
         truncate_dim: int | None = None,
     ) -> torch.Tensor: ...
+
+    def forward(
+        self,
+        image: torch.Tensor | None = None,
+        text: torch.Tensor | None = None,
+        *,
+        truncate_dim: int | None = None,
+    ) -> (
+        tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor]
+        | dict[str, object]
+    ): ...
+
+    def get_logits(
+        self,
+        image: torch.Tensor,
+        text: torch.Tensor,
+        *,
+        truncate_dim: int | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]: ...
 
     def eval(self) -> Self: ...
 
@@ -127,7 +148,7 @@ class Backend(Protocol[ModelT, TokenizerT, PreprocessT]):
 
 def validate_model_embedding_dimension(
     model: object,
-    value: object,
+    value: object | None,
     *,
     name: str,
 ) -> int:

@@ -13,11 +13,12 @@ from openvlclip.backends.dinov2_dinotxt import (
     DINO_MODEL_NAME,
     DINO_SOURCE_REVISION,
 )
+from openvlclip.image_search import build_or_update_image_index, search_images
 
 pytestmark = pytest.mark.integration
 
 
-def test_dinotxt_wrapper_matches_pinned_official_model() -> None:
+def test_dinotxt_wrapper_matches_pinned_official_model(tmp_path: Path) -> None:
     model, _, preprocess = create_model_and_transforms(
         DINO_MODEL_NAME,
         pretrained="official",
@@ -111,6 +112,67 @@ def test_dinotxt_wrapper_matches_pinned_official_model() -> None:
                 rtol=0,
                 atol=0,
             )
+            with torch.inference_mode():
+                official_forward = model.backend(model_images, token_batch)
+                actual_forward = model(image_batch, token_batch)
+                official_logits = model.backend.get_logits(
+                    model_images,
+                    token_batch,
+                )
+                actual_logits = model.get_logits(image_batch, token_batch)
+            for actual, official in zip(
+                actual_forward,
+                official_forward,
+                strict=True,
+            ):
+                torch.testing.assert_close(actual, official, rtol=0, atol=0)
+            for actual, official in zip(
+                actual_logits,
+                official_logits,
+                strict=True,
+            ):
+                torch.testing.assert_close(actual, official, rtol=0, atol=0)
+
+            model.logit_scale_mode = "cosine"
+            with torch.inference_mode():
+                cosine_forward = model(image_batch, token_batch)
+                cosine_logits = model.get_logits(image_batch, token_batch)
+            if dtype == torch.bfloat16 and device == "cpu":
+                expected_cosine_logits = (
+                    actual_image_normalized.float()
+                    @ actual_text_normalized.float().T
+                ).to(dtype=dtype)
+            else:
+                expected_cosine_logits = (
+                    actual_image_normalized @ actual_text_normalized.T
+                )
+            torch.testing.assert_close(
+                cosine_logits[0],
+                expected_cosine_logits,
+                rtol=0,
+                atol=0,
+            )
+            torch.testing.assert_close(
+                cosine_logits[1],
+                expected_cosine_logits.T,
+                rtol=0,
+                atol=0,
+            )
+            torch.testing.assert_close(
+                cosine_forward[0],
+                actual_image_normalized,
+                rtol=0,
+                atol=0,
+            )
+            torch.testing.assert_close(
+                cosine_forward[1],
+                actual_text_normalized,
+                rtol=0,
+                atol=0,
+            )
+            assert cosine_forward[2].item() == 1.0
+            model.logit_scale_mode = "strict"
+
             for features in (
                 actual_image,
                 actual_text,
@@ -128,5 +190,47 @@ def test_dinotxt_wrapper_matches_pinned_official_model() -> None:
                 "text_max_abs_error": float(
                     (actual_text - official_text).abs().max().item()
                 ),
+                "forward_image_max_abs_error": float(
+                    (actual_forward[0] - official_forward[0]).abs().max().item()
+                ),
+                "forward_text_max_abs_error": float(
+                    (actual_forward[1] - official_forward[1]).abs().max().item()
+                ),
+                "logit_scale_max_abs_error": float(
+                    (actual_forward[2] - official_forward[2]).abs().max().item()
+                ),
+                "strict_logits_max_abs_error": float(
+                    (actual_logits[0] - official_logits[0]).abs().max().item()
+                ),
+                "cosine_logits_max_abs_error": float(
+                    (cosine_logits[0] - expected_cosine_logits).abs().max().item()
+                ),
             }
+
+    image_root = tmp_path / "search-images"
+    image_root.mkdir()
+    image_path = image_root / "sample.png"
+    images[0].save(image_path)
+    index_dir = tmp_path / "search-index"
+    build_or_update_image_index(model, preprocess, image_root, index_dir)
+    query = "a blue object"
+    search_results = search_images(model, index_dir, query)
+    tokens = tokenizer(query).to(device="cpu")
+    pixels = preprocess(images[0]).unsqueeze(0)
+    with torch.inference_mode():
+        image_features = model.encode_image(
+            pixels,
+            truncate_dim=2048,
+        ).float()
+        text_features = model.encode_text(
+            tokens,
+            normalize=True,
+            truncate_dim=2048,
+        ).float()
+    expected_search_score = (
+        torch.nn.functional.normalize(image_features, dim=-1)
+        @ torch.nn.functional.normalize(text_features, dim=-1).T
+    ).item()
+    assert search_results[0].path == image_path
+    assert search_results[0].score == pytest.approx(expected_search_score, abs=1e-6)
     print(json.dumps(comparisons, sort_keys=True))

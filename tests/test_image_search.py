@@ -11,6 +11,7 @@ from PIL import Image
 from torch import nn
 
 from openvlclip import image_search
+from openvlclip.backends.dinov2_dinotxt import DinoV2DinoTxtBackend
 from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
 from openvlclip.embedding_space import EmbeddingSpaceMetadata
 from openvlclip.image_search import (
@@ -54,12 +55,12 @@ class FakeImageSearchModel(nn.Module):
 
     def encode_image(
         self,
-        images: torch.Tensor,
+        image: torch.Tensor,
         *,
         truncate_dim: int | None = None,
     ) -> torch.Tensor:
-        self.encoded_image_count += images.shape[0]
-        features = images.mean(dim=(2, 3))
+        self.encoded_image_count += image.shape[0]
+        features = image.mean(dim=(2, 3))
         features = torch.nn.functional.normalize(features, dim=-1)
         features = torch.nn.functional.pad(features, (0, 765))
         if truncate_dim is not None:
@@ -71,22 +72,93 @@ class FakeImageSearchModel(nn.Module):
 
     def encode_text(
         self,
-        tokens: torch.Tensor,
+        text: torch.Tensor,
         *,
         normalize: bool = False,
         truncate_dim: int | None = None,
     ) -> torch.Tensor:
-        self.received_tokens.append(tokens.detach().cpu())
+        self.received_tokens.append(text.detach().cpu())
         embedding_dim = 768 if truncate_dim is None else truncate_dim
         features = torch.zeros(
-            (tokens.shape[0], embedding_dim),
-            device=tokens.device,
+            (text.shape[0], embedding_dim),
+            device=text.device,
             dtype=self.anchor.dtype,
         )
         features[:, 0] = 1
         return (
             torch.nn.functional.normalize(features, dim=-1) if normalize else features
         )
+
+
+class FakeDinoImageSearchModel(nn.Module):
+    def __init__(
+        self,
+        *,
+        embedding_space_metadata: EmbeddingSpaceMetadata | None = None,
+    ) -> None:
+        super().__init__()
+        self.anchor = nn.Parameter(torch.zeros(()))
+        self._dimension_backend = DinoV2DinoTxtBackend()
+        self.embedding_space_metadata = (
+            embedding_space_metadata
+            or self._dimension_backend.embedding_space_metadata
+        )
+        self.received_prompt_names: list[str | None] = []
+        self.tokenizer = FakeTokenizer()
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        return self._dimension_backend.validate_embedding_dimension(
+            value,
+            name=name,
+        )
+
+    def encode_image(
+        self,
+        image: torch.Tensor,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        dimension = self.validate_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
+        features = torch.zeros(
+            (image.shape[0], dimension),
+            device=image.device,
+            dtype=self.anchor.dtype,
+        )
+        features[:, :3] = image.mean(dim=(2, 3))
+        return features
+
+    def encode_text(
+        self,
+        text: torch.Tensor,
+        *,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        dimension = self.validate_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
+        features = torch.zeros(
+            (text.shape[0], dimension),
+            device=text.device,
+            dtype=self.anchor.dtype,
+        )
+        features[:, 0] = 1
+        return (
+            torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        )
+
+    def _create_tokenizer(self, *, prompt_name: str | None) -> FakeTokenizer:
+        self.received_prompt_names.append(prompt_name)
+        return self.tokenizer
 
 
 class FakeTokenizer:
@@ -270,6 +342,98 @@ def test_index_builds_and_searches_at_requested_dimension(
     assert metadata["format_version"] == 2
     assert metadata["embedding_dimension"] == embedding_dim
     assert metadata["embedding_strategy"] == "leading-dimensions-l2-v1"
+
+
+def test_dino_index_uses_native_dimension_and_unprompted_search(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    model = FakeDinoImageSearchModel()
+
+    update = build_or_update_image_index(
+        model,
+        _preprocess,
+        images_dir,
+        index_dir,
+    )
+    loaded = _load_index(index_dir)
+    monkeypatch.setattr(
+        image_search,
+        "get_tokenizer",
+        lambda **_: pytest.fail("dino.txt search must use its backend tokenizer."),
+    )
+    results = search_images(model, index_dir, "red object")
+
+    assert update.added == 1
+    assert loaded.embeddings.shape == (1, 2048)
+    assert loaded.embedding_space.embedding_strategy == (
+        "dinotxt-global-cls-plus-mean-patches-v1"
+    )
+    assert model.received_prompt_names == [None]
+    assert model.tokenizer.received_texts == ["red object"]
+    assert results[0].score == pytest.approx(1.0)
+
+
+def test_dino_image_index_rejects_mrl_dimensions(tmp_path: Path) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+
+    with pytest.raises(ValueError, match="does not support MRL"):
+        build_or_update_image_index(
+            FakeDinoImageSearchModel(),
+            _preprocess,
+            images_dir,
+            tmp_path / "index",
+            embedding_dim=768,
+        )
+
+
+def test_search_rejects_another_registered_embedding_space(tmp_path: Path) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    build_or_update_image_index(
+        FakeDinoImageSearchModel(),
+        _preprocess,
+        images_dir,
+        index_dir,
+    )
+
+    with pytest.raises(ImageIndexCompatibilityError, match="embedding-space"):
+        search_images(FakeImageSearchModel(), index_dir, "red object")
+
+
+@pytest.mark.parametrize(
+    "identity_change",
+    [
+        {"model_id": "different/model"},
+        {"model_revision": "unregistered-revision"},
+    ],
+)
+def test_search_rejects_different_dinotxt_checkpoint_identity(
+    tmp_path: Path,
+    identity_change: dict[str, str],
+) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    build_or_update_image_index(
+        FakeDinoImageSearchModel(),
+        _preprocess,
+        images_dir,
+        index_dir,
+    )
+    changed_metadata = replace(
+        DinoV2DinoTxtBackend.embedding_space_metadata,
+        **identity_change,
+    )
+    model = FakeDinoImageSearchModel(embedding_space_metadata=changed_metadata)
+
+    with pytest.raises(ImageIndexCompatibilityError, match="embedding space"):
+        search_images(model, index_dir, "red object")
 
 
 @pytest.mark.parametrize("strategy", [None, "unsupported-strategy"])

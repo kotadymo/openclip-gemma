@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import math
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -35,14 +36,34 @@ class FakeDinoTxt(nn.Module):
     def __init__(self) -> None:
         super().__init__()
         self.anchor = nn.Parameter(torch.ones(()))
+        self.logit_scale = nn.Parameter(torch.tensor([math.log(10.0)]))
 
     def encode_image(self, image: torch.Tensor, normalize: bool = False) -> torch.Tensor:
-        del normalize
-        return self.anchor.expand(image.shape[0], 2048)
+        features = self.anchor.expand(image.shape[0], 2048)
+        return torch.nn.functional.normalize(features, dim=-1) if normalize else features
 
     def encode_text(self, text: torch.Tensor, normalize: bool = False) -> torch.Tensor:
-        del normalize
-        return self.anchor.expand(text.shape[0], 2048)
+        features = self.anchor.expand(text.shape[0], 2048)
+        return torch.nn.functional.normalize(features, dim=-1) if normalize else features
+
+    def get_logits(
+        self,
+        image: torch.Tensor,
+        text: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        text_features = self.encode_text(text, normalize=True)
+        image_features = self.encode_image(image, normalize=True)
+        image_logits = self.logit_scale.exp() * image_features @ text_features.T
+        return image_logits, image_logits.T
+
+    def forward(
+        self,
+        image: torch.Tensor,
+        text: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        text_features = self.encode_text(text, normalize=True)
+        image_features = self.encode_image(image, normalize=True)
+        return image_features, text_features, self.logit_scale.exp()
 
 
 def _mock_hub_loader(
@@ -220,6 +241,72 @@ def test_dinotxt_encoders_preserve_official_raw_and_normalized_features() -> Non
     )
     with pytest.raises(ValueError, match="does not support MRL or truncation"):
         model.encode_image(image, truncate_dim=768)
+
+
+def test_dinotxt_forward_and_logits_distinguish_official_scale_from_cosine() -> None:
+    backend = DinoV2DinoTxtBackend()
+    official_model = FakeDinoTxt()
+    model = DinoTxtCLIP(
+        official_model,
+        backend,
+        output_dict=False,
+        logit_scale_mode="strict",
+    )
+    image = torch.zeros((2, 3, 224, 224), dtype=torch.float32)
+    tokens = torch.tensor(
+        [
+            [49406, 320, 49407, 0],
+            [49406, 49407, 0, 0],
+            [49406, 334, 49407, 0],
+        ],
+        dtype=torch.long,
+    )
+
+    expected_forward = official_model(image, tokens)
+    actual_forward = model(image, tokens)
+    expected_logits = official_model.get_logits(image, tokens)
+    actual_logits = model.get_logits(image, tokens)
+
+    for actual, expected in zip(actual_forward, expected_forward, strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    for actual, expected in zip(actual_logits, expected_logits, strict=True):
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    torch.testing.assert_close(actual_logits[0], actual_logits[1].T, rtol=0, atol=0)
+    torch.testing.assert_close(
+        actual_logits[0],
+        actual_forward[2] * actual_forward[0] @ actual_forward[1].T,
+        rtol=0,
+        atol=0,
+    )
+    assert actual_forward[2].item() == pytest.approx(10.0)
+
+    model.logit_scale_mode = "cosine"
+    cosine_forward = model(image, tokens)
+    cosine_logits = model.get_logits(image, tokens)
+    expected_cosine_logits = (
+        official_model.encode_image(image, normalize=True)
+        @ official_model.encode_text(tokens, normalize=True).T
+    )
+    torch.testing.assert_close(
+        cosine_logits[0],
+        expected_cosine_logits,
+        rtol=0,
+        atol=0,
+    )
+    torch.testing.assert_close(cosine_logits[1], cosine_logits[0].T, rtol=0, atol=0)
+    assert cosine_forward[2].item() == 1.0
+
+    single_modality = model(image=image)
+    assert single_modality[0] is not None
+    assert single_modality[1] is None
+    assert single_modality[2].item() == 1.0
+
+    model.output_dict = True
+    dictionary_output = model(image, tokens)
+    assert isinstance(dictionary_output, dict)
+    assert dictionary_output["image_features"] is not None
+    assert dictionary_output["text_features"] is not None
+    assert dictionary_output["logit_scale"].item() == 1.0
 
 
 def test_dinotxt_encoders_reject_invalid_image_and_token_inputs() -> None:
