@@ -8,7 +8,7 @@ import torch
 from PIL import Image
 from torch import nn
 
-from openvlclip.batching import iter_image_embeddings
+from openvlclip.batching import _iter_preprocessed_embeddings, iter_image_embeddings
 
 
 class FakeEncoder(nn.Module):
@@ -35,6 +35,41 @@ class FakeEncoder(nn.Module):
         embeddings[:, 0] = images[:, 0, 0, 0]
         embeddings[:, 1] = 1
         return embeddings
+
+
+class FakeDinoEncoder(FakeEncoder):
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        if value is None:
+            return 2048
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"{name} must be a positive integer.")
+        if value <= 0:
+            raise ValueError(f"{name} must be greater than zero.")
+        if value != 2048:
+            raise ValueError(
+                f"{name} must be 2048; dino.txt does not support MRL or truncation."
+            )
+        return value
+
+    def encode_image(
+        self,
+        images: torch.Tensor,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        self.batch_sizes.append(images.shape[0])
+        self.inference_mode_states.append(torch.is_inference_mode_enabled())
+        embedding_dim = 2048 if truncate_dim is None else truncate_dim
+        return torch.zeros(
+            (images.shape[0], embedding_dim),
+            dtype=torch.float32,
+            device=images.device,
+        )
 
 
 class OutOfMemoryEncoder(FakeEncoder):
@@ -91,6 +126,63 @@ def test_streams_bounded_batches_and_restores_order_for_different_shapes(
     )
     assert model.batch_sizes == [2, 1]
     assert model.inference_mode_states == [True, True]
+
+
+def test_defaults_to_dinotxt_native_embedding_dimension(
+    tmp_path: Path,
+) -> None:
+    path = _write_image(tmp_path / "image.png", red=100)
+
+    results = list(iter_image_embeddings(FakeDinoEncoder(), _preprocess, [path]))
+
+    assert results[0][1].shape == (2048,)
+
+
+def test_preprocessed_batch_defaults_to_dinotxt_native_dimension() -> None:
+    items = [("frame-1", torch.zeros((3, 8, 8), dtype=torch.float32))]
+
+    results = list(_iter_preprocessed_embeddings(FakeDinoEncoder(), items))
+
+    assert results[0][0] == "frame-1"
+    assert results[0][1].shape == (2048,)
+
+
+def test_explicit_dinotxt_native_embedding_dimension_is_accepted(
+    tmp_path: Path,
+) -> None:
+    path = _write_image(tmp_path / "image.png", red=100)
+
+    results = list(
+        iter_image_embeddings(
+            FakeDinoEncoder(),
+            _preprocess,
+            [path],
+            embedding_dim=2048,
+        )
+    )
+
+    assert results[0][1].shape == (2048,)
+
+
+def test_preprocessed_generic_encoder_keeps_768_dimension_fallback() -> None:
+    items = [("frame-1", torch.zeros((3, 8, 8), dtype=torch.float32))]
+
+    results = list(_iter_preprocessed_embeddings(FakeEncoder(), items))
+
+    assert results[0][1].shape == (768,)
+
+
+@pytest.mark.parametrize("embedding_dim", [768, 1024])
+def test_rejects_non_native_dinotxt_embedding_dimensions(
+    embedding_dim: int,
+) -> None:
+    with pytest.raises(ValueError, match="does not support MRL"):
+        iter_image_embeddings(
+            FakeDinoEncoder(),
+            _preprocess,
+            [],
+            embedding_dim=embedding_dim,
+        )
 
 
 def test_batch_size_bounds_each_encoded_batch(tmp_path: Path) -> None:

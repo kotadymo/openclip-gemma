@@ -42,13 +42,13 @@ def iter_image_embeddings(
     image_paths: Iterable[ImagePath],
     *,
     batch_size: int = _DEFAULT_BATCH_SIZE,
-    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
+    embedding_dim: int | None = None,
 ) -> Iterator[ImageEmbedding]:
     """Lazily encode image paths and yield ordered paths with CPU embeddings.
 
     The encoder is taken from the supplied model, whose parameters determine the
-    inference device. Each returned embedding is an ``embedding_dim``-dimensional
-    CPU Tensor.
+    inference device. If ``embedding_dim`` is omitted, the model's native
+    embedding dimension is used. Each returned embedding is a CPU Tensor.
     """
     if isinstance(batch_size, bool) or not isinstance(batch_size, int):
         raise TypeError("batch_size must be a positive integer.")
@@ -122,7 +122,7 @@ def _iter_preprocessed_embeddings[EmbeddingKey](
     *,
     batch_size: int = _DEFAULT_BATCH_SIZE,
     item_kind: str = "images",
-    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
+    embedding_dim: int | None = None,
 ) -> Iterator[tuple[EmbeddingKey, torch.Tensor]]:
     """Batch preprocessed image tensors, yielding their keys and CPU embeddings."""
     if isinstance(batch_size, bool) or not isinstance(batch_size, int):

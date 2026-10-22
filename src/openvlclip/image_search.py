@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
@@ -110,6 +111,7 @@ class _ImageRecord:
     relative_path: str
     size_bytes: int
     mtime_ns: int
+    content_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -152,13 +154,27 @@ def _validate_batch_size(batch_size: int) -> None:
         raise ValueError("batch_size must be greater than zero.")
 
 
+def _file_content_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as file:
+            while chunk := file.read(1024 * 1024):
+                digest.update(chunk)
+    except OSError as error:
+        raise ImageIndexError(f"Could not hash image file {path}: {error}") from error
+    return digest.hexdigest()
+
+
 def _scan_image_files(
     images_dir: str | os.PathLike[str],
     *,
     recursive: bool,
+    verify_contents: bool = False,
 ) -> tuple[Path, tuple[_ImageRecord, ...]]:
     if not isinstance(recursive, bool):
         raise TypeError("recursive must be a bool.")
+    if not isinstance(verify_contents, bool):
+        raise TypeError("verify_contents must be a bool.")
     try:
         root = Path(images_dir).expanduser().resolve(strict=True)
     except (OSError, RuntimeError) as error:
@@ -183,6 +199,9 @@ def _scan_image_files(
                     relative_path=relative_path,
                     size_bytes=file_stat.st_size,
                     mtime_ns=file_stat.st_mtime_ns,
+                    content_sha256=(
+                        _file_content_sha256(path) if verify_contents else None
+                    ),
                 ),
             )
     except OSError as error:
@@ -385,6 +404,7 @@ def _parse_record(value: object) -> _ImageRecord:
     path = _validate_relative_path(value.get("path"))
     size_bytes = value.get("size_bytes")
     mtime_ns = value.get("mtime_ns")
+    content_sha256 = value.get("content_sha256")
     if (
         isinstance(size_bytes, bool)
         or not isinstance(size_bytes, int)
@@ -393,7 +413,15 @@ def _parse_record(value: object) -> _ImageRecord:
         or not isinstance(mtime_ns, int)
     ):
         raise ImageIndexError("Index metadata contains invalid file information.")
-    return _ImageRecord(path, size_bytes, mtime_ns)
+    if content_sha256 is not None and (
+        not isinstance(content_sha256, str)
+        or len(content_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in content_sha256)
+    ):
+        raise ImageIndexError(
+            "Index metadata contains an invalid image content SHA-256."
+        )
+    return _ImageRecord(path, size_bytes, mtime_ns, content_sha256)
 
 
 def _metadata_for_index(index: _ImageIndex, precision: str) -> dict[str, object]:
@@ -412,6 +440,11 @@ def _metadata_for_index(index: _ImageIndex, precision: str) -> dict[str, object]
                 "path": record.relative_path,
                 "size_bytes": record.size_bytes,
                 "mtime_ns": record.mtime_ns,
+                **(
+                    {"content_sha256": record.content_sha256}
+                    if record.content_sha256 is not None
+                    else {}
+                ),
             }
             for record in index.records
         ],
@@ -657,15 +690,22 @@ def _build_or_update_image_index(
     batch_size: int = 8,
     recursive: bool = False,
     embedding_dim: int | None = None,
+    verify_contents: bool = False,
 ) -> ImageIndexUpdate:
     """Create or incrementally update a safe, local image index."""
     _validate_batch_size(batch_size)
+    if not isinstance(verify_contents, bool):
+        raise TypeError("verify_contents must be a bool.")
     embedding_dim = validate_model_embedding_dimension(
         model,
         embedding_dim,
         name="embedding_dim",
     )
-    root, records = _scan_image_files(images_dir, recursive=recursive)
+    root, records = _scan_image_files(
+        images_dir,
+        recursive=recursive,
+        verify_contents=verify_contents,
+    )
     output_dir = Path(index_dir).expanduser()
     if output_dir.exists() and not output_dir.is_dir():
         raise ValueError(f"Index output path is not a directory: {output_dir}")
@@ -711,6 +751,7 @@ def _build_or_update_image_index(
     )
 
     embeddings = np.empty((len(records), embedding_dim), dtype=np.float32)
+    records_for_index = list(records)
     changed_records: list[_ImageRecord] = []
     changed_rows: dict[str, int] = {}
     added = 0
@@ -721,22 +762,39 @@ def _build_or_update_image_index(
         previous_row = previous_rows.get(key)
         if previous_row is None:
             added += 1
-        elif _record_signature(previous.records[previous_row]) == _record_signature(
-            record
-        ):
-            embeddings[row] = previous.embeddings[previous_row]
-            unchanged += 1
-            continue
         else:
+            previous_record = previous.records[previous_row]
+            if verify_contents:
+                unchanged_content = (
+                    previous_record.content_sha256 is not None
+                    and previous_record.content_sha256 == record.content_sha256
+                )
+            else:
+                unchanged_content = _record_signature(previous_record) == (
+                    _record_signature(record)
+                )
+            if unchanged_content:
+                embeddings[row] = previous.embeddings[previous_row]
+                unchanged += 1
+                if not verify_contents:
+                    records_for_index[row] = replace(
+                        record,
+                        content_sha256=previous_record.content_sha256,
+                    )
+                continue
             updated += 1
+
         changed_records.append(record)
         changed_rows[key] = row
+
+    records = tuple(records_for_index)
 
     if (
         previous is not None
         and previous.recursive == recursive
         and not changed_records
         and removed == 0
+        and records == previous.records
     ):
         return ImageIndexUpdate(index_path, added, updated, removed, unchanged)
 
@@ -774,7 +832,12 @@ def _build_or_update_image_index(
 
     for record in records:
         path = root / PurePosixPath(record.relative_path)
-        if _file_signature(path) != _record_signature(record):
+        changed_during_indexing = _file_signature(path) != _record_signature(record)
+        if verify_contents:
+            changed_during_indexing = changed_during_indexing or (
+                _file_content_sha256(path) != record.content_sha256
+            )
+        if changed_during_indexing:
             raise ImageIndexError(
                 f"Image changed during indexing: {path}. Run the index command again."
             )
@@ -895,13 +958,15 @@ def build_or_update_image_index(
     batch_size: int = 8,
     recursive: bool = False,
     embedding_dim: int | None = None,
+    verify_contents: bool = False,
 ) -> ImageIndexUpdate:
     """Build or incrementally update a local image embedding index.
 
     The model's current device and precision are used. A corrupt image or
     incompatible index raises an error and leaves the previous index intact.
     If ``embedding_dim`` is omitted, the model's native embedding dimension is
-    used.
+    used. Set ``verify_contents=True`` to compare stored SHA-256 hashes and
+    re-embed files whose contents changed; this reads each file during scanning.
     """
     return _build_or_update_image_index(
         model,
@@ -911,6 +976,7 @@ def build_or_update_image_index(
         batch_size=batch_size,
         recursive=recursive,
         embedding_dim=embedding_dim,
+        verify_contents=verify_contents,
     )
 
 

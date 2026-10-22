@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -314,6 +315,70 @@ def test_index_build_round_trip_and_incremental_changes(tmp_path: Path) -> None:
     ]
 
 
+def test_verify_contents_reembeds_same_size_same_mtime_image(
+    tmp_path: Path,
+) -> None:
+    images_dir = tmp_path / "photos"
+    images_dir.mkdir()
+    image_path = images_dir / "same.png"
+    Image.new("RGB", (16, 16), (255, 0, 0)).save(
+        image_path,
+        format="PNG",
+        compress_level=0,
+    )
+    index_dir = tmp_path / "index"
+    model = FakeImageSearchModel()
+
+    _build(model, images_dir, index_dir)
+    original_stat = image_path.stat()
+    original_embedding = _load_index(index_dir).embeddings.copy()
+
+    Image.new("RGB", (16, 16), (0, 0, 255)).save(
+        image_path,
+        format="PNG",
+        compress_level=0,
+    )
+    assert image_path.stat().st_size == original_stat.st_size
+    os.utime(
+        image_path,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    changed_stat = image_path.stat()
+    assert changed_stat.st_size == original_stat.st_size
+    assert changed_stat.st_mtime_ns == original_stat.st_mtime_ns
+
+    fast_update = _build(model, images_dir, index_dir)
+    assert (fast_update.updated, fast_update.unchanged) == (0, 1)
+    assert model.encoded_image_count == 1
+    np.testing.assert_array_equal(_load_index(index_dir).embeddings, original_embedding)
+
+    verified_update = build_or_update_image_index(
+        model,
+        _preprocess,
+        images_dir,
+        index_dir,
+        embedding_dim=768,
+        verify_contents=True,
+    )
+    assert (verified_update.updated, verified_update.unchanged) == (1, 0)
+    assert model.encoded_image_count == 2
+    assert not np.array_equal(
+        _load_index(index_dir).embeddings,
+        original_embedding,
+    )
+
+    unchanged = build_or_update_image_index(
+        model,
+        _preprocess,
+        images_dir,
+        index_dir,
+        embedding_dim=768,
+        verify_contents=True,
+    )
+    assert (unchanged.updated, unchanged.unchanged) == (0, 1)
+    assert model.encoded_image_count == 2
+
+
 @pytest.mark.parametrize("embedding_dim", [128, 256, 512, 768])
 def test_index_builds_and_searches_at_requested_dimension(
     tmp_path: Path,
@@ -488,6 +553,36 @@ def test_legacy_768_index_remains_readable_and_can_be_converted(
     np.testing.assert_allclose(np.linalg.norm(converted.embeddings, axis=1), 1.0)
     assert model.encoded_image_count == encoded_count
     assert _load_index(source_dir).embeddings.shape == (1, 768)
+
+
+def test_strict_update_rebuilds_legacy_index_without_content_hash(
+    tmp_path: Path,
+) -> None:
+    images_dir = tmp_path / "photos"
+    _write_image(images_dir / "red.png", (255, 0, 0))
+    index_dir = tmp_path / "index"
+    model = FakeImageSearchModel()
+    _build(model, images_dir, index_dir)
+    _rewrite_index_version(index_dir / "index.npz", 1)
+
+    update = build_or_update_image_index(
+        model,
+        _preprocess,
+        images_dir,
+        index_dir,
+        embedding_dim=768,
+        verify_contents=True,
+    )
+    loaded = _load_index(index_dir)
+
+    assert (update.updated, update.unchanged) == (1, 0)
+    assert model.encoded_image_count == 2
+    assert loaded.embeddings.shape == (1, 768)
+    assert loaded.records[0].content_sha256 is not None
+    with np.load(index_dir / "index.npz", allow_pickle=False) as archive:
+        metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
+    assert metadata["format_version"] == 2
+    assert metadata["records"][0]["content_sha256"] == loaded.records[0].content_sha256
 
 
 def test_legacy_image_index_requires_native_dimension(
