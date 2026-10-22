@@ -7,6 +7,7 @@ from typing import Any
 
 import torch
 
+from openvlclip.backends.base import TokenizerAPI
 from openvlclip.constants import MODEL_NAME
 from openvlclip.registry import get_default_registry
 
@@ -162,7 +163,7 @@ def get_tokenizer(
     prompt_name: str | None = None,
     context_length: int | None = None,
     cache_dir: str | None = None,
-) -> EmbeddingGemmaTokenizer:
+) -> TokenizerAPI:
     """Load the tokenizer and optionally apply an official task prompt.
 
     ``context_length`` bounds truncation; returned batches are padded to the

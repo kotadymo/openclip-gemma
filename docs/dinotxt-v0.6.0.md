@@ -2,7 +2,7 @@
 
 ## Scope and pinned source
 
-This document records the Phase 0 source, artifact, licensing, and runtime checks for the official Meta dino.txt model. It does not claim that the OpenVLCLIP backend or its numerical parity tests have been implemented.
+This document records the Phase 0 source, artifact, and licensing investigation and the Phase 1 OpenVLCLIP backend implementation and parity checks. Phase 2 scoring/search, Phase 3 dense features, and Phase 4 release validation remain out of scope here until completed.
 
 The official source was pinned to commit `7764ea0f912e53c92e82eb78a2a1631e92725fc8` in `facebookresearch/dinov2` (commit date: 2026-06-03). The pinned commit, rather than a moving `main` branch, is the reference for implementation and regression tests.
 
@@ -17,7 +17,7 @@ The official source was pinned to commit `7764ea0f912e53c92e82eb78a2a1631e92725f
 - [Official dino.txt notebook](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/notebooks/dinotxt.ipynb)
 - [DINOv2 Hub configuration](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/hubconf.py)
 
-The public OpenVLCLIP model name will be `dinov2-dinotxt`; the exact official Hub entry is `dinov2_vitl14_reg4_dinotxt_tet1280d20h24l`.
+The registered OpenVLCLIP model name is `dinov2-dinotxt`; the exact official Hub entry is `dinov2_vitl14_reg4_dinotxt_tet1280d20h24l`.
 
 ## Official architecture and inference contract
 
@@ -65,10 +65,10 @@ The dino.txt weights are external runtime downloads and are not included in the 
 ## License and dependency findings
 
 - The pinned DINOv2 repository `LICENSE` is Apache-2.0. The official `MODEL_CARD.md` also lists Apache-2.0 for the DINOv2 ViT-S/B/L/g model family.
-- The official README's dino.txt table links the Vision Head and Text Encoder checkpoints but does not link a separate dino.txt checkpoint license. No dino.txt-specific license file was found in the pinned repository tree; the repository-level Apache-2.0 license is the available project license, and no more restrictive dino.txt-specific notice was found. This is documented evidence, not legal advice. Do not redistribute the weights in OpenVLCLIP.
+- The official README links the dino.txt Vision Head and Text Encoder checkpoints but does not state their license or link a dino.txt-specific checkpoint license. The pinned repository-level Apache-2.0 license is evidence for the repository, but it does not conclusively establish rights for the externally hosted dino.txt checkpoints. Do not redistribute these weights; obtain explicit licensing confirmation before the v0.6.0 release. This is a release gate, not legal advice.
 - The official README explicitly links a separate license for the BPE vocabulary. That license is the MIT License (OpenAI, 2021). The repository also has a third-party CLIP license file; retain applicable notices if any upstream tokenizer code is ever copied rather than loaded from the pinned source.
 - The pinned repository contains additional Cell-DINO and X-Ray-DINO license files for those separate model families. Neither those models nor their weights/code are used by this integration.
-- The official code path imports `ftfy`, `regex`, and `requests` for tokenization and BPE retrieval. They are absent from the base environment in some installations and should be declared in the optional `[dinotxt]` extra, not required for a base EmbeddingGemma-only import. xFormers is optional in the tested path: the official implementation emitted its fallback warnings and completed inference without xFormers.
+- The dino.txt tokenizer requires `ftfy` and `regex`, so these are declared in the optional `[dinotxt]` extra rather than being required for a base EmbeddingGemma-only import. BPE retrieval uses the standard-library URL loader and verifies the pinned SHA-256. xFormers is optional in the tested path: the official implementation emitted fallback warnings and completed inference without xFormers.
 - The pinned safe state-dict loader passes `weights_only=True` for PyTorch 2.1 and newer. The Hub source itself is executable Python; production loading must always use the pinned commit, not a mutable branch.
 
 ## Phase 0 runtime verification
@@ -97,13 +97,31 @@ The smoke input was a deterministic synthetic RGB image (256 by 320 pixels), not
 
 These checks establish that the pinned official model and tokenizer load and that the expected computation paths/shapes are reachable on CUDA FP32. They are not a wrapper parity test, accuracy benchmark, or evidence of CPU/BF16 support.
 
+## Phase 1 backend verification
+
+The new `dinov2-dinotxt` Registry entry resolves only the official Hub model and pinned revision. The shared Factory defaults `pretrained` to `"official"` for both registered models; for EmbeddingGemma 2 this still resolves to the existing `google/embeddinggemma-2` checkpoint. Explicit `pretrained=None` remains rejected. Listing models and pretrained tags does not load weights. dino.txt rejects selective loading, task prompts, unsupported checkpoint identifiers, and every truncation dimension other than its native 2048 dimensions.
+
+The wrapper was compared with the pinned official implementation using the same model instance and identical inference calls. Its deterministic preprocessing output and tokenizer token IDs were exactly equal to the official outputs for the tested RGB images and text strings. Global image/text embeddings had 2048 dimensions. Maximum absolute error for raw and normalized image/text embeddings was `0.0` in all tested cases:
+
+| Device / precision | Image max absolute error | Text max absolute error |
+| --- | ---: | ---: |
+| CPU FP32 | `0.0` | `0.0` |
+| CPU BF16 | `0.0` | `0.0` |
+| CUDA FP32 | `0.0` | `0.0` |
+| CUDA BF16 | `0.0` | `0.0` |
+
+This is parity of the adapter/wrapper against the same pinned official model path, not an independent model reimplementation or a dataset accuracy benchmark. The tested environment was the Windows/Python 3.12.10/CUDA 13.0 environment described above. xFormers was unavailable; the official PyTorch fallback path passed.
+
+Phase 1 local checks: `pytest -m "not integration"` completed with 288 passed and 27 deselected; the pinned dino.txt parity integration test passed; Ruff passed; `uv lock --check` passed; and wheel/sdist builds passed. The built wheel metadata identifies `openvlclip==0.5.0`, advertises the `dinotxt` extra with its optional dependencies, and contains the CLIP license notice and both new backend modules. The sdist contains the same license notice and backend modules. Linux, Python 3.13/3.14, CUDA-less systems, and clean installation of the built wheel have not yet been checked in this phase.
+
 ## Remaining validation before release
 
-Phase 0 passed the official source/artifact/runtime gate for a CUDA FP32 smoke test. The following remain required in later phases and must not be reported as verified until actually run:
+Phase 1 verified the backend, tokenizer, preprocessing, and global embedding adapter. The following remain required in later phases and must not be reported as verified until actually run:
 
-- OpenVLCLIP backend parity against this pinned implementation, including preprocessing, exact token IDs, raw/normalized embeddings, logits, patch features, and similarity maps.
-- CPU FP32/BF16 and CUDA FP32/BF16 regression with fixed tolerances.
+- Official logits/`forward()` and cosine-mode parity, zero-shot classification, text-to-image search, and embedding-index compatibility.
+- Patch-feature and similarity-map parity, including interpolation/normalization order.
 - Linux and Python 3.13/3.14 compatibility, including the project's Python 3.14.1 exclusion.
-- Gemma v0.4.0 fixture/API regressions, image/video index compatibility, search-space mismatch rejection, and ordinary CI.
-- Wheel/sdist and clean-install checks with `[dinotxt]` and `[video]`.
+- Gemma actual-model regression, v0.4.0 fixture/API regressions, image/video index compatibility, search-space mismatch rejection, and ordinary CI.
+- Clean installation of built distributions with `[dinotxt]` and compatibility with `[video]`.
 - Dataset-based accuracy and performance benchmarks. No dataset benchmark was run in Phase 0; those metrics are `not evaluated`.
+- Explicit licensing confirmation for the externally hosted dino.txt Vision Head and Text Encoder weights. Until this gate is resolved, the v0.6.0 release must not be declared ready.

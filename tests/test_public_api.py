@@ -41,7 +41,7 @@ def test_factory_signatures_preserve_v040_contract() -> None:
 
     factory_arguments = [
         ("model_name", positional, "embeddinggemma-2"),
-        ("pretrained", positional, "google/embeddinggemma-2"),
+        ("pretrained", positional, "official"),
         ("precision", positional, "fp32"),
         ("device", positional, "cpu"),
         ("cache_dir", positional, None),
