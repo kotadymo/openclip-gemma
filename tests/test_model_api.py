@@ -7,7 +7,10 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from openvlclip.backends.embeddinggemma2 import _truncate_and_normalize
+from openvlclip.backends.embeddinggemma2 import (
+    EmbeddingGemma2Backend,
+    _truncate_and_normalize,
+)
 from openvlclip.model import EmbeddingGemmaCLIP
 
 
@@ -69,6 +72,29 @@ def test_encode_texts_uses_backend_tokenizer_and_embedding() -> None:
         token_ids,
         normalize=True,
         truncate_dim=256,
+    )
+
+
+def test_text_encoding_reuses_the_model_cache_directory() -> None:
+    backend = EmbeddingGemma2Backend()
+    tokenizer = object()
+    create_tokenizer = Mock(return_value=tokenizer)
+    backend.create_tokenizer = create_tokenizer  # type: ignore[method-assign]
+    model = EmbeddingGemmaCLIP(
+        nn.Linear(2, 2),
+        processor=object(),
+        inference_backend=backend,
+        cache_dir="model-cache",
+    )
+    metadata = model.embedding_space_metadata
+
+    assert model._create_tokenizer(prompt_name=None) is tokenizer
+    create_tokenizer.assert_called_once_with(
+        model_id=metadata.model_id,
+        revision=metadata.model_revision,
+        cache_dir="model-cache",
+        prompt_name=None,
+        context_length=None,
     )
 
 

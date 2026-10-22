@@ -218,6 +218,7 @@ class EmbeddingGemma2Backend:
             logit_scale_mode=logit_scale_mode,
             modalities=modalities or ("text", "image"),
             inference_backend=self,
+            cache_dir=cache_dir,
         ).eval()
 
     def create_tokenizer(

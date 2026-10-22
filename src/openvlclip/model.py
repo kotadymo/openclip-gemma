@@ -32,6 +32,7 @@ class EmbeddingGemmaCLIP(nn.Module):
         logit_scale_mode: str = "strict",
         modalities: tuple[str, ...] = ("text", "image"),
         inference_backend: Backend[Any, Any, Any] | None = None,
+        cache_dir: str | None = None,
     ) -> None:
         super().__init__()
         if not isinstance(backend, nn.Module):
@@ -42,6 +43,8 @@ class EmbeddingGemmaCLIP(nn.Module):
             raise TypeError("logit_scale_mode must be a string.")
         if logit_scale_mode not in {"strict", "cosine"}:
             raise ValueError("logit_scale_mode must be 'strict' or 'cosine'.")
+        if cache_dir is not None and not isinstance(cache_dir, str):
+            raise TypeError("cache_dir must be a string or None.")
         if not isinstance(modalities, tuple):
             raise TypeError(
                 "modalities must be a tuple containing 'text' and optionally 'image'."
@@ -73,6 +76,7 @@ class EmbeddingGemmaCLIP(nn.Module):
         object.__setattr__(self, "_inference_backend", inference_backend)
         self.output_dict = output_dict
         self.logit_scale_mode = logit_scale_mode
+        self.cache_dir = cache_dir
         self.modalities = tuple(
             modality for modality in ("text", "image") if modality in modalities
         )
@@ -114,7 +118,7 @@ class EmbeddingGemmaCLIP(nn.Module):
         return self._inference_backend.create_tokenizer(
             model_id=metadata.model_id,
             revision=metadata.model_revision,
-            cache_dir=None,
+            cache_dir=self.cache_dir,
             prompt_name=prompt_name,
             context_length=None,
         )
