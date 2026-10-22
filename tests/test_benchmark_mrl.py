@@ -37,6 +37,7 @@ class FakeModel(nn.Module):
         self.anchor = nn.Parameter(torch.zeros(()))
         self.image_batch_sizes: list[int] = []
         self.embedding_space_metadata = EmbeddingGemma2Backend.embedding_space_metadata
+        self.capabilities = EmbeddingGemma2Backend.capabilities
 
     def encode_image(
         self,
