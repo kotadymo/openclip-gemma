@@ -11,13 +11,18 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from platform import processor, python_version, release, system
+from tempfile import TemporaryDirectory
 from typing import Any, Self
 
+import numpy as np
 import torch
 from PIL import Image, ImageDraw
 
 from openvlclip import create_model_and_transforms, get_tokenizer
-from openvlclip.constants import MODEL_ID, MODEL_REVISION
+from openvlclip.constants import MODEL_REVISION
+from openvlclip.image_search import build_or_update_image_index, search_images
+
+DINO_MODEL_NAME = "dinov2-dinotxt"
 
 
 class PeakRssSampler:
@@ -53,7 +58,7 @@ def _positive_int(value: str) -> int:
 
 
 def _measure(
-    operation: Callable[[], torch.Tensor],
+    operation: Callable[[], object],
     *,
     warmup: int,
     iterations: int,
@@ -79,7 +84,13 @@ def _demo_image() -> Image.Image:
     return image
 
 
-def run_benchmark(*, warmup: int, iterations: int, threads: int | None) -> dict[str, object]:
+def run_benchmark(
+    *,
+    model_name: str,
+    warmup: int,
+    iterations: int,
+    threads: int | None,
+) -> dict[str, object]:
     try:
         import psutil
     except ImportError as error:
@@ -90,13 +101,18 @@ def run_benchmark(*, warmup: int, iterations: int, threads: int | None) -> dict[
 
     if threads is not None:
         torch.set_num_threads(threads)
+    if model_name not in {"embeddinggemma-2", DINO_MODEL_NAME}:
+        raise ValueError(
+            "model_name must be 'embeddinggemma-2' or "
+            f"{DINO_MODEL_NAME!r}."
+        )
 
     process = psutil.Process()
     baseline_rss = process.memory_info().rss
     with PeakRssSampler(process) as sampler:
         load_started = time.perf_counter()
         model, _, preprocess = create_model_and_transforms(
-            "embeddinggemma-2",
+            model_name,
             precision="fp32",
             device="cpu",
         )
@@ -104,9 +120,10 @@ def run_benchmark(*, warmup: int, iterations: int, threads: int | None) -> dict[
         model_loaded_rss = process.memory_info().rss
 
         tokenizer_started = time.perf_counter()
-        tokenizer = get_tokenizer(
-            "embeddinggemma-2",
-            context_length=128,
+        tokenizer = (
+            get_tokenizer(model_name, context_length=128)
+            if model_name == "embeddinggemma-2"
+            else get_tokenizer(model_name)
         )
         tokenizer_load_ms = (time.perf_counter() - tokenizer_started) * 1000
 
@@ -143,10 +160,80 @@ def run_benchmark(*, warmup: int, iterations: int, threads: int | None) -> dict[
                 iterations=iterations,
             ),
         }
+        metadata = model.embedding_space_metadata
+        dense_features: dict[str, object] | str
+        if model.capabilities["patch_embedding"]:
+            timings["patches"] = _measure(
+                lambda: model.encode_patches(image_one),
+                warmup=warmup,
+                iterations=iterations,
+            )
+            timings["similarity_map"] = _measure(
+                lambda: model.similarity_map(image_one, texts[0]),
+                warmup=warmup,
+                iterations=iterations,
+            )
+            patch_shape = tuple(model.encode_patches(image_one).shape)
+            similarity_map_shape = tuple(
+                model.similarity_map(image_one, texts[0]).shape
+            )
+            dense_features = {
+                "patch_dimension": patch_shape[-1],
+                "patch_shape": list(patch_shape),
+                "similarity_map_shape": list(similarity_map_shape),
+                "scores_are_probabilities": False,
+            }
+        else:
+            dense_features = "not supported by this model"
+
+        with TemporaryDirectory(prefix="openvlclip-v060-benchmark-") as root:
+            images_dir = Path(root) / "images"
+            images_dir.mkdir()
+            _demo_image().save(images_dir / "sample.png")
+            index_dir = Path(root) / "index"
+            index_started = time.perf_counter()
+            index_update = build_or_update_image_index(
+                model,
+                preprocess,
+                images_dir,
+                index_dir,
+                batch_size=1,
+            )
+            index_build_ms = (time.perf_counter() - index_started) * 1000
+            search_timing = _measure(
+                lambda: search_images(model, index_dir, texts[0], top_k=1),
+                warmup=warmup,
+                iterations=iterations,
+            )
+            with np.load(index_update.index_path, allow_pickle=False) as archive:
+                vector_bytes = int(archive["embeddings"].nbytes)
+            index_storage = {
+                "image_count": 1,
+                "serialized_index_bytes": index_update.index_path.stat().st_size,
+                "vector_bytes": vector_bytes,
+                "build_latency_ms": index_build_ms,
+                "query_search_latency_ms": search_timing,
+            }
+
+        if model_name == "embeddinggemma-2" and metadata.model_revision != MODEL_REVISION:
+            raise RuntimeError("The registered EmbeddingGemma revision is unexpected.")
+        if model_name == DINO_MODEL_NAME:
+            from openvlclip.backends.dinov2_dinotxt import DINO_MODEL_REVISION
+
+            if metadata.model_revision != DINO_MODEL_REVISION:
+                raise RuntimeError("The registered dino.txt revision is unexpected.")
     return {
         "measured_at": datetime.now(UTC).isoformat(),
-        "model_id": MODEL_ID,
-        "model_revision": MODEL_REVISION,
+        "model_name": model_name,
+        "model_id": metadata.model_id,
+        "model_revision": metadata.model_revision,
+        "embedding_dimension": model.validate_embedding_dimension(
+            None,
+            name="embedding_dim",
+        ),
+        "embedding_strategy": metadata.embedding_strategy,
+        "preprocessing_id": metadata.preprocessing_id,
+        "query_prompt_name": metadata.query_prompt_name,
         "device": "cpu",
         "dtype": "float32",
         "environment": {
@@ -160,6 +247,7 @@ def run_benchmark(*, warmup: int, iterations: int, threads: int | None) -> dict[
             "image_batch_shape": list(image_batch.shape),
             "text_batch_shape": list(text_batch.shape),
             "text_count": len(texts),
+            "synthetic_smoke_input": True,
             "preprocessing_included_in_inference_latency": False,
         },
         "warmup_runs_per_operation": warmup,
@@ -169,6 +257,18 @@ def run_benchmark(*, warmup: int, iterations: int, threads: int | None) -> dict[
             "tokenizer_and_config_ms": tokenizer_load_ms,
         },
         "latency": timings,
+        "index": index_storage,
+        "dense_features": dense_features,
+        "quality_metrics": {
+            "cosine_distribution_and_rank": "not evaluated",
+            "zero_shot_top_1_top_5": "not evaluated",
+            "retrieval_recall_at_k": "not evaluated",
+            "reason": (
+                "The synthetic smoke input is not labeled evaluation data; "
+                "no licensed benchmark dataset was supplied."
+            ),
+        },
+        "gpu_memory": "not measured by this CPU-only benchmark.",
         "memory": {
             "baseline_rss_bytes": baseline_rss,
             "after_model_and_processor_load_rss_bytes": model_loaded_rss,
@@ -183,13 +283,20 @@ def run_benchmark(*, warmup: int, iterations: int, threads: int | None) -> dict[
             "Weights are loaded from the local Hugging Face cache or downloaded if absent.",
             "Preprocessing and tokenization time are excluded from encoder latency.",
             "Peak RSS is sampled and can miss short-lived allocation spikes.",
-            "This benchmark does not measure the 8192-token context limit.",
+            "The generated image is for execution-path measurement only, not accuracy, retrieval quality, or model superiority.",
+            "Index size describes one synthetic image and is not representative of a real collection.",
+            "CUDA memory and dataset-based cosine, zero-shot, and Recall@K metrics are not evaluated.",
         ],
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--model",
+        choices=("embeddinggemma-2", DINO_MODEL_NAME),
+        default="embeddinggemma-2",
+    )
     parser.add_argument("--warmup", type=_positive_int, default=2)
     parser.add_argument("--iterations", type=_positive_int, default=5)
     parser.add_argument("--threads", type=_positive_int, default=None)
@@ -198,6 +305,7 @@ def main() -> None:
 
     report = json.dumps(
         run_benchmark(
+            model_name=args.model,
             warmup=args.warmup,
             iterations=args.iterations,
             threads=args.threads,

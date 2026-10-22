@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.6.0
+
+### Added
+
+- Register Meta DINOv2 ViT-L/14 with dino.txt vision and text heads as
+  `dinov2-dinotxt`, alongside the existing EmbeddingGemma 2 backend.
+- Add native 2048-dimensional dino.txt embeddings, official-scale logits,
+  cosine scoring, image search, 1024-dimensional patch embeddings, and text
+  similarity maps.
+- Add backend-specific model capabilities and embedding-space metadata to keep
+  dino.txt, EmbeddingGemma MRL, and legacy indexes from being mixed.
+- Add optional `[dinotxt]` dependencies and the v0.6.0 migration, evaluation,
+  and release-checklist documentation.
+
+### Compatibility
+
+- Preserve EmbeddingGemma 2 factories, prompts, preprocessing, selective
+  loading, MRL dimensions, image/video search, and legacy index reads.
+- dino.txt does not support MRL truncation, EmbeddingGemma task prompts, or
+  selective loading; its checkpoints remain external downloads and are not
+  included in distributions.
+- The dino.txt Vision Head and Text Encoder checkpoint licensing has not been
+  conclusively established. This is a release blocker until clarified.
+
+### Validation
+
+- Dataset-based zero-shot accuracy, retrieval quality, and model-comparison
+  metrics must be reported as not evaluated without a suitable licensed
+  dataset. See `docs/benchmark-v0.6.0.md` for the executed measurements and
+  limitations.
+
 ## v0.5.0
 
 ### Added

@@ -1,4 +1,4 @@
-"""Model factories for the supported EmbeddingGemma 2 checkpoint."""
+"""Model factories for checkpoints registered by the package."""
 
 from __future__ import annotations
 
