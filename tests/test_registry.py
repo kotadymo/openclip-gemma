@@ -255,10 +255,17 @@ def test_default_registry_lists_models_without_loading_weights(
     monkeypatch.setattr(torch.hub, "load", model_loader)
     registry = get_default_registry()
 
-    assert registry.list_models() == [MODEL_NAME, DINO_MODEL_NAME]
+    assert registry.list_models() == [
+        MODEL_NAME,
+        DINO_MODEL_NAME,
+        "siglip2-base",
+        "siglip2-naflex-base",
+    ]
     assert registry.list_pretrained() == [
         (MODEL_NAME, "official"),
         (DINO_MODEL_NAME, "official"),
+        ("siglip2-base", "official"),
+        ("siglip2-naflex-base", "official"),
     ]
     assert registry.resolve(" EMBEDDINGGEMMA_2 ") is registry.descriptors[0]
     assert registry.descriptors[0].model_id == MODEL_ID

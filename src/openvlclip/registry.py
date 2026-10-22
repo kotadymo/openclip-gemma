@@ -211,9 +211,30 @@ def get_default_registry() -> ModelRegistry:
         DinoV2DinoTxtBackend,
     )
     from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
+    from openvlclip.backends.siglip2 import (
+        SIGLIP2_FIXRES_MODEL_ID,
+        SIGLIP2_FIXRES_MODEL_NAME,
+        SIGLIP2_FIXRES_REVISION,
+        SIGLIP2_NAFLEX_MODEL_ID,
+        SIGLIP2_NAFLEX_MODEL_NAME,
+        SIGLIP2_NAFLEX_REVISION,
+        Siglip2Backend,
+    )
 
     gemma_backend = EmbeddingGemma2Backend()
     dinotxt_backend = DinoV2DinoTxtBackend()
+    siglip2_fixres_backend = Siglip2Backend(
+        model_name=SIGLIP2_FIXRES_MODEL_NAME,
+        model_id=SIGLIP2_FIXRES_MODEL_ID,
+        revision=SIGLIP2_FIXRES_REVISION,
+        variant="fixres",
+    )
+    siglip2_naflex_backend = Siglip2Backend(
+        model_name=SIGLIP2_NAFLEX_MODEL_NAME,
+        model_id=SIGLIP2_NAFLEX_MODEL_ID,
+        revision=SIGLIP2_NAFLEX_REVISION,
+        variant="naflex",
+    )
     return ModelRegistry(
         (
             ModelDescriptor(
@@ -239,6 +260,34 @@ def get_default_registry() -> ModelRegistry:
                 capabilities=dinotxt_backend.capabilities,
                 embedding_space_metadata=dinotxt_backend.embedding_space_metadata,
                 backend=dinotxt_backend,
+            ),
+            ModelDescriptor(
+                model_name=SIGLIP2_FIXRES_MODEL_NAME,
+                aliases=(),
+                backend_id=siglip2_fixres_backend.backend_id,
+                model_id=SIGLIP2_FIXRES_MODEL_ID,
+                revision=SIGLIP2_FIXRES_REVISION,
+                pretrained_tags={"official": SIGLIP2_FIXRES_MODEL_ID},
+                pretrained_aliases={},
+                capabilities=siglip2_fixres_backend.capabilities,
+                embedding_space_metadata=(
+                    siglip2_fixres_backend.embedding_space_metadata
+                ),
+                backend=siglip2_fixres_backend,
+            ),
+            ModelDescriptor(
+                model_name=SIGLIP2_NAFLEX_MODEL_NAME,
+                aliases=(),
+                backend_id=siglip2_naflex_backend.backend_id,
+                model_id=SIGLIP2_NAFLEX_MODEL_ID,
+                revision=SIGLIP2_NAFLEX_REVISION,
+                pretrained_tags={"official": SIGLIP2_NAFLEX_MODEL_ID},
+                pretrained_aliases={},
+                capabilities=siglip2_naflex_backend.capabilities,
+                embedding_space_metadata=(
+                    siglip2_naflex_backend.embedding_space_metadata
+                ),
+                backend=siglip2_naflex_backend,
             ),
         )
     )

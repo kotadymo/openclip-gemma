@@ -469,14 +469,23 @@ def test_list_apis_do_not_load_model_or_processor(
         processor_loader,
     )
 
-    assert list_models() == ["embeddinggemma-2", "dinov2-dinotxt"]
+    assert list_models() == [
+        "embeddinggemma-2",
+        "dinov2-dinotxt",
+        "siglip2-base",
+        "siglip2-naflex-base",
+    ]
     assert list_pretrained() == [
         ("embeddinggemma-2", "official"),
         ("dinov2-dinotxt", "official"),
+        ("siglip2-base", "official"),
+        ("siglip2-naflex-base", "official"),
     ]
     assert list_pretrained(as_str=True) == [
         "embeddinggemma-2:official",
         "dinov2-dinotxt:official",
+        "siglip2-base:official",
+        "siglip2-naflex-base:official",
     ]
     model_loader.assert_not_called()
     processor_loader.assert_not_called()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import torch
 from PIL import Image
 from torch import nn
 
+from openvlclip.backends.base import ProcessedImageBatch
 from openvlclip.batching import _iter_preprocessed_embeddings, iter_image_embeddings
 
 
@@ -72,6 +74,33 @@ class FakeDinoEncoder(FakeEncoder):
         )
 
 
+class FakeMappingEncoder(FakeEncoder):
+    def __init__(self) -> None:
+        super().__init__()
+        self.received_batches: list[dict[str, torch.Tensor]] = []
+
+    def encode_image(
+        self,
+        images: ProcessedImageBatch,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        assert isinstance(images, Mapping)
+        batch = dict(images)
+        self.received_batches.append(batch)
+        self.batch_sizes.append(batch["pixel_values"].shape[0])
+        self.inference_mode_states.append(torch.is_inference_mode_enabled())
+        embedding_dim = 768 if truncate_dim is None else truncate_dim
+        features = torch.zeros(
+            (batch["pixel_values"].shape[0], embedding_dim),
+            dtype=torch.float32,
+            device=batch["pixel_values"].device,
+        )
+        features[:, 0] = batch["pixel_values"][:, 0, 0]
+        features[:, 1] = 1
+        return features
+
+
 class OutOfMemoryEncoder(FakeEncoder):
     def encode_image(self, images: torch.Tensor) -> torch.Tensor:
         raise torch.cuda.OutOfMemoryError("CUDA out of memory")
@@ -89,7 +118,16 @@ def _preprocess(image: Image.Image) -> torch.Tensor:
 
 
 def _mapping_preprocess(image: Image.Image) -> dict[str, torch.Tensor]:
-    return {"pixel_values": _preprocess(image).unsqueeze(0)}
+    pixel = image.getpixel((0, 0))
+    first_channel = pixel[0] if isinstance(pixel, tuple) else pixel
+    red = float(first_channel) / 255
+    mask = torch.zeros((256,), dtype=torch.long)
+    mask[0] = 1
+    return {
+        "pixel_values": torch.full((256, 768), red, dtype=torch.float32),
+        "pixel_attention_mask": mask,
+        "spatial_shapes": torch.tensor((1, 1), dtype=torch.long),
+    }
 
 
 def _write_image(
@@ -142,19 +180,44 @@ def test_defaults_to_dinotxt_native_embedding_dimension(
     assert results[0][1].shape == (2048,)
 
 
-def test_file_batching_reports_processor_mapping_as_unsupported(
+def test_file_batching_preserves_processor_mapping_fields_and_order(
     tmp_path: Path,
 ) -> None:
-    path = _write_image(tmp_path / "image.png", red=100)
+    paths = [
+        _write_image(tmp_path / "first.png", red=51),
+        _write_image(tmp_path / "second.png", red=102),
+        _write_image(tmp_path / "third.png", red=153),
+    ]
+    model = FakeMappingEncoder()
 
-    with pytest.raises(TypeError, match="Processor-aware mappings"):
-        list(
-            iter_image_embeddings(
-                FakeDinoEncoder(),
-                _mapping_preprocess,
-                [path],
-            )
+    results = list(
+        iter_image_embeddings(
+            model,
+            _mapping_preprocess,
+            paths,
+            batch_size=2,
         )
+    )
+
+    assert [path for path, _ in results] == paths
+    assert [feature.shape for _, feature in results] == [(768,)] * 3
+    torch.testing.assert_close(
+        torch.stack([feature[0] for _, feature in results]),
+        torch.tensor([51, 102, 153], dtype=torch.float32) / 255,
+    )
+    assert model.batch_sizes == [2, 1]
+    assert all(
+        tuple(batch["pixel_values"].shape) == (size, 256, 768)
+        for batch, size in zip(model.received_batches, (2, 1), strict=True)
+    )
+    assert all(
+        tuple(batch["pixel_attention_mask"].shape) == (size, 256)
+        for batch, size in zip(model.received_batches, (2, 1), strict=True)
+    )
+    assert all(
+        tuple(batch["spatial_shapes"].shape) == (size, 2)
+        for batch, size in zip(model.received_batches, (2, 1), strict=True)
+    )
 
 
 def test_preprocessed_batch_defaults_to_dinotxt_native_dimension() -> None:
