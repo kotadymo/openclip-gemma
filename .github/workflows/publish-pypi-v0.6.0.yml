@@ -1,14 +1,14 @@
-name: Publish v0.6.0 to PyPI
+name: Publish v0.6.1 to PyPI
 
 on:
   push:
     tags:
-      - v0.6.0
+      - v0.6.1
 
 permissions: {}
 
 concurrency:
-  group: pypi-v0.6.0-${{ github.ref }}
+  group: pypi-v0.6.1-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -19,8 +19,8 @@ jobs:
       actions: read
       contents: read
     env:
-      EXPECTED_TAG: v0.6.0
-      EXPECTED_VERSION: 0.6.0
+      EXPECTED_TAG: v0.6.1
+      EXPECTED_VERSION: 0.6.1
       DINOTXT_LICENSE_CONFIRMED: ${{ vars.OPENVLCLIP_DINOTXT_LICENSE_CONFIRMED }}
     steps:
       - name: Check out the exact tagged commit
@@ -46,7 +46,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ($env:GITHUB_EVENT_NAME -cne "push") {
-            throw "This workflow only publishes from the exact v0.6.0 tag push."
+            throw "This workflow only publishes from the exact v0.6.1 tag push."
           }
 
           $expectedRef = "refs/tags/$env:EXPECTED_TAG"
@@ -122,7 +122,7 @@ jobs:
         shell: pwsh
         run: |
           $env:SOURCE_DATE_EPOCH = (git show -s --format=%ct $env:GITHUB_SHA).Trim()
-          $constraints = Join-Path $env:RUNNER_TEMP "v0.6.0-build-constraints.txt"
+          $constraints = Join-Path $env:RUNNER_TEMP "v0.6.1-build-constraints.txt"
           "uv_build==0.13.1" | Set-Content -Path $constraints -Encoding ascii
           uv build --build-constraints $constraints --out-dir dist
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -143,7 +143,7 @@ jobs:
       - name: Upload verified distributions for the publish job
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
-          name: pypi-openvlclip-0.6.0-distributions
+          name: pypi-openvlclip-0.6.1-distributions
           path: |
             dist/*.whl
             dist/*.tar.gz
@@ -156,14 +156,14 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/openvlclip/0.6.0/
+      url: https://pypi.org/project/openvlclip/0.6.1/
     permissions:
       id-token: write
     steps:
       - name: Download verified distributions
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
-          name: pypi-openvlclip-0.6.0-distributions
+          name: pypi-openvlclip-0.6.1-distributions
           path: dist
 
       - name: Publish to production PyPI

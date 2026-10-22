@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.6.1
+
+Backward-compatible patch release; no model weights, model outputs, or
+EmbeddingGemma 2 MRL behavior are changed.
+
+### Fixed
+
+- Resolve omitted batch embedding dimensions from the selected backend so
+  dino.txt uses 2048 dimensions by default while EmbeddingGemma 2 retains its
+  768-dimensional default and MRL options.
+- Add opt-in SHA-256 image-content verification for incremental index updates,
+  including safe re-embedding of legacy entries without stored hashes.
+- Calculate skipped video sampling intervals with exact `Fraction` arithmetic
+  rather than iterating once per missed interval.
+
+See the [v0.6.1 release notes](docs/release-notes-v0.6.1.md).
+
 ## v0.6.0 — 2026-10-22
 
 Released on [PyPI](https://pypi.org/project/openvlclip/0.6.0/) and as a
