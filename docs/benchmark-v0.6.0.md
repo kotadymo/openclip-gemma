@@ -86,6 +86,8 @@ Dataset-dependent model comparison remains `not evaluated`.
 - The current environment's CUDA status and CPU BF16/FP32 official-parity
   results are maintained in the dino.txt reference and the final Phase 4
   validation record.
-- Licensing for the dino.txt Vision Head and Text Encoder checkpoints remains
-  unresolved. Do not distribute the weights or declare a release ready until
-  the rights are clarified.
+- The individual license terms for the external dino.txt Vision Head and Text
+  Encoder checkpoints are not clearly specified in the pinned upstream
+  repository. The v0.6.0 package release is complete, but that does not resolve
+  rights for separately redistributing those checkpoint files; see the
+  [dino.txt integration reference](dinotxt-v0.6.0.md).

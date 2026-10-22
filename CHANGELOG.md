@@ -1,6 +1,13 @@
 # Changelog
 
-## v0.6.0
+## v0.6.0 — 2026-10-22
+
+Released on [PyPI](https://pypi.org/project/openvlclip/0.6.0/) and as a
+[GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.0).
+
+Install the base package with `pip install openvlclip==0.6.0`, or include the
+optional dino.txt dependencies with
+`pip install "openvlclip[dinotxt]==0.6.0"`.
 
 ### Added
 
@@ -21,15 +28,22 @@
 - dino.txt does not support MRL truncation, EmbeddingGemma task prompts, or
   selective loading; its checkpoints remain external downloads and are not
   included in distributions.
-- The dino.txt Vision Head and Text Encoder checkpoint licensing has not been
-  conclusively established. This is a release blocker until clarified.
+- Meta's pinned DINOv2 repository license and model card identify Apache-2.0
+  for the repository and DINOv2 model family. The individual license terms for
+  the external dino.txt Vision Head and Text Encoder checkpoints are not
+  separately identified in the pinned repository; the public release does
+  not resolve that scope question. See the [dino.txt reference](docs/dinotxt-v0.6.0.md).
 
 ### Validation
 
-- Dataset-based zero-shot accuracy, retrieval quality, and model-comparison
-  metrics must be reported as not evaluated without a suitable licensed
-  dataset. See `docs/benchmark-v0.6.0.md` for the executed measurements and
-  limitations.
+- `pytest -q`: 304 passed, 30 skipped, 3 warnings. The clean-wheel real-model
+  suite had 16 passes and 11 CUDA-only skips on a CPU-only environment.
+- CPU FP32/BF16 dino.txt parity against the pinned official implementation
+  had 0.0 maximum absolute error for the compared outputs. The v0.4.0
+  EmbeddingGemma image/text baseline across MRL 768/512/256/128 had maximum
+  absolute error no greater than `1.27e-7`.
+- Dataset-based accuracy, retrieval quality, and comparative GPU performance
+  remain not evaluated. See [the v0.6.0 evaluation report](docs/benchmark-v0.6.0.md).
 
 ## v0.5.0
 

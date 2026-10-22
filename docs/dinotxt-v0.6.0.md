@@ -2,7 +2,7 @@
 
 ## Scope and pinned source
 
-This document records the Phase 0 source, artifact, and licensing investigation and the Phase 1 backend, Phase 2 scoring/search, Phase 3 dense feature implementation, and Phase 4 validation. The final Phase 4 test, distribution, and benchmark results are recorded after execution; unresolved licensing remains a release blocker.
+This post-release reference records the Phase 0 source, artifact, and licensing investigation; the Phase 1 backend, Phase 2 scoring/search, Phase 3 dense feature implementation; and Phase 4 validation. OpenVLCLIP v0.6.0 was published on 2026-10-22 to [PyPI](https://pypi.org/project/openvlclip/0.6.0/) and as a [GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.0). That publication fact is separate from the remaining uncertainty about the license scope of the external dino.txt Vision Head and Text Encoder checkpoints.
 
 The official source was pinned to commit `7764ea0f912e53c92e82eb78a2a1631e92725fc8` in `facebookresearch/dinov2` (commit date: 2026-06-03). The pinned commit, rather than a moving `main` branch, is the reference for implementation and regression tests.
 
@@ -16,6 +16,10 @@ The official source was pinned to commit `7764ea0f912e53c92e82eb78a2a1631e92725f
 - [Official preprocessing](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/dinov2/data/transforms.py)
 - [Official dino.txt notebook](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/notebooks/dinotxt.ipynb)
 - [DINOv2 Hub configuration](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/hubconf.py)
+- [Pinned DINOv2 repository license](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/LICENSE)
+- [Pinned DINOv2 model card](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/MODEL_CARD.md)
+- [Official README dino.txt pretrained-head section](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/README.md)
+- [BPE vocabulary license](https://dl.fbaipublicfiles.com/dinov2/thirdparty/LICENSE)
 
 The registered OpenVLCLIP model name is `dinov2-dinotxt`; the exact official Hub entry is `dinov2_vitl14_reg4_dinotxt_tet1280d20h24l`.
 
@@ -60,13 +64,13 @@ The pinned Hub loader and official README identify these artifacts. Checkpoint f
 | dino.txt Text Encoder | `https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_dinotxt_tet1280d20h24l_text_encoder.pth` | 2,152,639,923 | `13378274c79f67af8b47b11dd57827d659e7b1ee01e4dde58d2266422ea7846a` | `48d005e5e9a8900e0a13aba88ab92ba6-257` |
 | CLIP BPE vocabulary | `https://dl.fbaipublicfiles.com/dinov2/thirdparty/bpe_simple_vocab_16e6.txt.gz` | 1,356,917 | `924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a` | `933b7abbbbde62c36f02f0e6ccde464f` |
 
-The dino.txt weights are external runtime downloads and are not included in the OpenVLCLIP wheel or sdist. Phase 1 must use these fixed URLs and verify the expected SHA-256 before accepting cached or newly downloaded artifacts; a mismatching cache must fail explicitly.
+The dino.txt weights are external runtime downloads and are not included in the OpenVLCLIP wheel or sdist. The backend uses these fixed URLs and verifies the expected SHA-256 before accepting cached or newly downloaded artifacts; a mismatching cache fails explicitly.
 
 ## License and dependency findings
 
-- The pinned DINOv2 repository `LICENSE` is Apache-2.0. The official `MODEL_CARD.md` also lists Apache-2.0 for the DINOv2 ViT-S/B/L/g model family.
-- The official README links the dino.txt Vision Head and Text Encoder checkpoints but does not state their license or link a dino.txt-specific checkpoint license. The pinned repository-level Apache-2.0 license is evidence for the repository, but it does not conclusively establish rights for the externally hosted dino.txt checkpoints. Do not redistribute these weights; obtain explicit licensing confirmation before the v0.6.0 release. This is a release gate, not legal advice.
-- The official README explicitly links a separate license for the BPE vocabulary. That license is the MIT License (OpenAI, 2021). The repository also has a third-party CLIP license file; retain applicable notices if any upstream tokenizer code is ever copied rather than loaded from the pinned source.
+- The pinned DINOv2 repository [LICENSE](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/LICENSE) is Apache-2.0. The pinned [MODEL_CARD.md](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/MODEL_CARD.md) also lists Apache License 2.0 for the DINOv2 ViT-S/B/L/g model family.
+- The pinned [official README](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/README.md) links the dino.txt Vision Head and Text Encoder checkpoints and the official Hub loader, but does not specify separate license terms for those two external checkpoint files. The repository license and DINOv2 model card do not conclusively establish the terms for these distinct dino.txt assets. Their specific license scope remains unconfirmed; do not infer permission to redistribute them from the DINOv2 repository license. The v0.6.0 publication does not change this assessment.
+- The official README links the BPE vocabulary and its separate [vocabulary license](https://dl.fbaipublicfiles.com/dinov2/thirdparty/LICENSE), which is the MIT License (OpenAI, 2021). Retain applicable notices if any upstream tokenizer code is copied rather than loaded from the pinned source.
 - The pinned repository contains additional Cell-DINO and X-Ray-DINO license files for those separate model families. Neither those models nor their weights/code are used by this integration.
 - The dino.txt tokenizer requires `ftfy` and `regex`, so these are declared in the optional `[dinotxt]` extra rather than being required for a base EmbeddingGemma-only import. BPE retrieval uses the standard-library URL loader and verifies the pinned SHA-256. xFormers is optional in the tested path: the official implementation emitted fallback warnings and completed inference without xFormers.
 - The pinned safe state-dict loader passes `weights_only=True` for PyTorch 2.1 and newer. The Hub source itself is executable Python; production loading must always use the pinned commit, not a mutable branch.
@@ -190,10 +194,15 @@ and minimum cosine similarities for each native MRL dimension:
 | 256 | `1.1548e-07` | `1.1921e-07` | `1.0` |
 | 128 | `1.2666e-07` | `1.1921e-07` | `0.99999994` |
 
-CUDA, Linux, and Python 3.13/3.14 were not validated in this Phase 4
-environment; GitHub Actions is still required to establish the supported
-platform matrix. Dataset-based accuracy, retrieval quality, and comparative
-GPU performance remain `not evaluated`. Explicit licensing/redistribution
-rights for the externally hosted dino.txt Vision Head and Text Encoder
-checkpoints are still unresolved. Until that release gate is resolved,
-v0.6.0 must not be declared ready or published.
+The main GitHub Actions run [39716637667](https://github.com/kotadymo/openvlclip/actions/runs/39716637667) passed on Windows and Linux for Python 3.12, 3.13, and 3.14, including the DINO/video extras jobs. Those CI jobs do not constitute real-model GPU validation. CUDA was unavailable in the Phase 4 integration environment, so its CUDA-only cases remain unverified. Dataset-based accuracy, retrieval quality, and comparative GPU performance remain `not evaluated`.
+
+## v0.6.0 publication record
+
+The official release was published on 2026-10-22:
+
+- [GitHub Release v0.6.0](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.0)
+- [PyPI openvlclip 0.6.0](https://pypi.org/project/openvlclip/0.6.0/)
+- Wheel `openvlclip-0.6.0-py3-none-any.whl`: 73,375 bytes; SHA-256 `a6fc193bd988df697b595ee10daaefcadabb8238d128023139bbb64bce5722aa`.
+- Source archive `openvlclip-0.6.0.tar.gz`: 73,883 bytes; SHA-256 `9162351f8a133dd029385c658d6304f9bb1447b05ae80fa15255d0f8adc37a3d`.
+
+The wheel and sdist contain the loader and tokenizer code, not the DINOv2 or dino.txt model weights. The DINOv2 repository and model-card license statements, the separate MIT BPE vocabulary license, and the unresolved license scope of the external dino.txt heads are distinct facts. The release itself is not a legal determination for those external checkpoint files.

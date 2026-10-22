@@ -1,102 +1,73 @@
-# OpenVLCLIP v0.6.0 Release Checklist
+# OpenVLCLIP v0.6.0 Release Record
 
-This checklist prepares the direct `0.6.0` release path. It intentionally
-does not use TestPyPI. Creating release tags, publishing to PyPI, or creating
-a GitHub Release is outside the current preparation step.
+**Status: released on 2026-10-22.** TestPyPI was not used.
 
-## Blocking prerequisites
+- [GitHub Release v0.6.0](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.0)
+- [PyPI openvlclip 0.6.0](https://pypi.org/project/openvlclip/0.6.0/)
+- Release tag: `v0.6.0`
+- Release source: main commit `97f670c4a64200d6286f48fb238a9e8446a6433d`
 
-- [ ] Resolve and record explicit licensing/redistribution rights for the
-  dino.txt Vision Head and Text Encoder checkpoints. The DINOv2 repository
-  license does not conclusively establish rights for these separate assets.
-- [ ] Only after that review, set the GitHub repository variable
-  `OPENVLCLIP_DINOTXT_LICENSE_CONFIRMED` to the exact value `true`. The
-  `publish-pypi-v0.6.0.yml` build job fails closed without it.
-- [ ] Confirm the final `0.6.0` source and public docs do not contain
-  unresolved license claims or unverified accuracy/performance claims.
+This file records the completed release and preserves post-release limitations.
+It is not a request to recreate the tag, re-upload distributions, or recreate
+the GitHub Release.
 
-## Source, CI, and distribution checks
+## Completed source and validation checks
 
-- [ ] `pyproject.toml` declares `openvlclip==0.6.0`; `uv lock --check` passes.
-- [ ] Ruff and the normal pytest suite pass.
-- [ ] EmbeddingGemma v0.4.0 fixed-embedding, MRL, prompt, selective-loading,
-  image/video-search, conversion, and legacy-index tests pass. Do not
-  regenerate or modify the fixed `.npz` baseline.
-- [ ] dino.txt tokenization, preprocessing, FP32/BF16 parity, official logits,
-  cosine scoring, image search, patch features, and similarity-map tests pass.
-- [ ] Record CUDA cases as untested when no compatible device/runtime is
-  available; a skipped test is not a pass.
-- [ ] Build wheel and sdist; run `tools/verify_wheel.py` and
-  `tools/verify_sdist.py` with `--expected-version 0.6.0`.
-- [ ] Confirm the distribution excludes model weights, includes the DINO
-  backend/tokenizer, declares the `dinotxt` extra, and identifies the
-  `kotadymo/openvlclip` repository.
-- [ ] Install the wheel in a clean Python 3.12 environment and test both
-  `[dinotxt]` and `[video]` dependency resolution without importing the
-  repository checkout.
-- [ ] Confirm the same main commit's GitHub Actions CI has completed
-  successfully and required reviews/protection rules are satisfied.
+- [x] `pyproject.toml` and `uv.lock` identify `openvlclip==0.6.0`;
+  `uv lock --check` passed.
+- [x] Ruff and `git diff --check` passed.
+- [x] Normal `pytest -q`: 304 passed, 30 skipped, 3 warnings.
+- [x] EmbeddingGemma regression tests passed for image/text embeddings, MRL
+  768/512/256/128, task prompts, selective loading, image/video search, and
+  index compatibility. The v0.4.0 `.npz` baseline was not modified.
+- [x] The CPU FP32 comparison with the v0.4.0 baseline had maximum absolute
+  errors of `1.27e-7` or less across the tested image/text MRL dimensions.
+- [x] dino.txt official CPU FP32/BF16 parity passed with maximum absolute
+  error `0.0` for the compared embeddings, logits, patches, and similarity
+  maps.
+- [x] The wheel and sdist passed content verification. A clean Python 3.12
+  wheel install reported version `0.6.0`, loaded from `site-packages`, and
+  passed the real-model integration suite (16 passed).
+- [x] Main CI on the release source passed Windows/Linux and Python
+  3.12/3.13/3.14. The manual real-model CI job was skipped.
+- [x] PyPI JSON confirmed both published files and the GitHub repository URL
+  in distribution metadata.
+- [x] The public GitHub Release uses the existing `v0.6.0` tag.
 
-## GitHub and PyPI publishing configuration
+### Published PyPI files
 
-- [ ] Configure the PyPI Trusted Publisher for:
-  - Owner: `kotadymo`
-  - Repository: `openvlclip`
-  - Workflow filename: `publish-pypi-v0.6.0.yml`
-  - GitHub Environment: `pypi`
-- [ ] Add `v0.6.0` to the `pypi` GitHub Environment tag allowlist without
-  weakening any protection or approval rule.
-- [ ] Confirm the `pypi` Environment uses the intended reviewers and
-  deployment protection.
-- [ ] Do not create a TestPyPI publisher for this release workflow.
+| File | Size | SHA-256 |
+| --- | ---: | --- |
+| `openvlclip-0.6.0-py3-none-any.whl` | 73,375 bytes | `a6fc193bd988df697b595ee10daaefcadabb8238d128023139bbb64bce5722aa` |
+| `openvlclip-0.6.0.tar.gz` | 73,883 bytes | `9162351f8a133dd029385c658d6304f9bb1447b05ae80fa15255d0f8adc37a3d` |
 
-After configuration, inspect the Environment in GitHub Settings and the
-Trusted Publisher configuration in the PyPI project settings. Confirm the
-repository, workflow filename, and Environment match exactly before tagging.
+The final Phase 4 environment had no CUDA runtime or GPU. Eleven CUDA-only
+real-model integration cases were skipped, not passed. Earlier targeted
+CUDA parity measurements are documented separately in the
+[dino.txt validation reference](dinotxt-v0.6.0.md). Dataset-based accuracy,
+retrieval quality, and comparative GPU performance remain `not evaluated`;
+see the [benchmark report](benchmark-v0.6.0.md).
 
-## Workflow guarantees
+## License scope and post-release follow-up
 
-`.github/workflows/publish-pypi-v0.6.0.yml` is tag-triggered only for
-`v0.6.0`. It must verify the exact tag/commit, main ancestry, a successful CI
-run for that commit, the project version, and the lockfile; run unit tests,
-Ruff, wheel/sdist build and content verification; and publish only with
-Trusted Publishing from the `pypi` Environment. `id-token: write` belongs
-only to the publish job. The existing v0.5.0 workflow must remain unchanged.
+The pinned DINOv2 repository [LICENSE](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/LICENSE)
+is Apache-2.0. Its [model card](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/MODEL_CARD.md)
+also lists Apache License 2.0 for the DINOv2 ViT model family. The official
+[dino.txt checkpoint links](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/README.md)
+point to external Vision Head and Text Encoder files whose individual license
+terms are not separately specified in the pinned repository. Do not infer
+that those distinct checkpoint terms are resolved by the repository license
+or by publication of this package.
 
-## Release sequence after every prerequisite is satisfied
+The BPE vocabulary's separate [official license](https://dl.fbaipublicfiles.com/dinov2/thirdparty/LICENSE)
+is MIT (OpenAI, 2021). OpenVLCLIP's wheel and sdist do not include DINOv2 or
+dino.txt model weights; they are retrieved externally at runtime. Clarify the
+head/text checkpoint terms before separately redistributing those files.
 
-1. Verify the current main SHA and its successful CI run:
+## Release workflow record
 
-   ```powershell
-   git fetch origin main --tags
-   git switch main
-   git pull --ff-only origin main
-   git rev-parse HEAD
-   gh run list --repo kotadymo/openvlclip --workflow ci.yml --commit (git rev-parse HEAD) --status completed
-   ```
-
-2. Confirm `v0.6.0` does not already exist, then create and push it to that
-   verified main commit. Never overwrite or recreate an existing tag:
-
-   ```powershell
-   git show-ref --verify refs/tags/v0.6.0
-   git tag v0.6.0 (git rev-parse HEAD)
-   git push origin v0.6.0
-   ```
-
-   A nonzero `git show-ref` result means the tag is absent; inspect the
-   repository before proceeding. Do not use force-push.
-
-3. Monitor the tag-triggered Actions run. If `pypi` approval is required,
-   approve only through the normal GitHub Environment UI. Verify the PyPI
-   wheel and sdist, their SHA-256 values, metadata, clean-install behavior,
-   and required real-model regressions before creating a public GitHub
-   Release for the same tag.
-
-## Current preparation boundary
-
-At this preparation stage, the dino.txt checkpoint license gate is
-unresolved. Therefore v0.6.0 is **not release-ready**. Do not set the license
-confirmation variable, create `v0.6.0` or RC tags, run a publish workflow,
-upload to PyPI/TestPyPI, or create a GitHub Release until the blocker and all
-required validations are resolved.
+The v0.6.0-specific [Trusted Publishing workflow](../.github/workflows/publish-pypi-v0.6.0.yml)
+targets only `v0.6.0`, verifies the source/version/CI/artifacts, uses the
+`pypi` Environment, and grants `id-token: write` only to the publish job.
+TestPyPI was intentionally omitted. The v0.5.0 release files and historical
+v0.4.0/v0.5.0 records are unchanged.

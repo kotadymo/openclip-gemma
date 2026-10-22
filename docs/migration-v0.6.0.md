@@ -6,18 +6,36 @@ its existing Factory, tokenizer, preprocessing, task-prompt, MRL, image-search,
 video-search, and index contracts. The new `dinov2-dinotxt` backend is
 opt-in.
 
-## Install the optional dino.txt dependencies
+OpenVLCLIP v0.6.0 was published on 2026-10-22 to
+[PyPI](https://pypi.org/project/openvlclip/0.6.0/) with a public
+[GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.0).
 
-The v0.6.0 source tree declares dino.txt-only runtime dependencies in the
-`dinotxt` extra. From a source checkout:
+## Install the released package
+
+Install the base package:
 
 ```bash
-uv sync --locked --group dev --extra dinotxt
+pip install openvlclip==0.6.0
 ```
 
-The base install remains independent of `ftfy` and `regex`. Do not install
-weights from this package; the model downloads the pinned external artifacts
-at runtime and checks their SHA-256 hashes.
+For DINOv2 + dino.txt, install the optional tokenizer dependencies:
+
+```bash
+pip install "openvlclip[dinotxt]==0.6.0"
+```
+
+For video-frame indexing and search, install:
+
+```bash
+pip install "openvlclip[video]==0.6.0"
+```
+
+The base install remains independent of dino.txt's `ftfy` and `regex`
+dependencies. For source development, use
+`uv sync --locked --group dev --extra dinotxt`.
+
+The package does not include model weights. The model loader retrieves the
+pinned external artifacts at runtime and verifies their SHA-256 hashes.
 
 ## Select the DINOv2 + dino.txt model
 
@@ -64,13 +82,22 @@ supported by the video-search API.
 
 ## Release and licensing status
 
-The dino.txt Vision Head and Text Encoder checkpoints are fetched from the
-official DINOv2 asset URLs and are not bundled in distributions. The pinned
-upstream repository does not clearly state a license for those specific
-checkpoints. This remains a release blocker until explicit licensing
-confirmation is recorded; the Apache-2.0 repository license alone is not
-treated as conclusive permission for the separate weights.
+The DINOv2 repository's pinned [LICENSE](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/LICENSE)
+is Apache-2.0, and its [model card](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/MODEL_CARD.md)
+lists Apache License 2.0 for the DINOv2 ViT family. The official
+[dino.txt sources](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/README.md)
+link the externally hosted Vision Head and Text Encoder checkpoints, but
+their individual license terms are not separately specified in the pinned
+repository. Do not infer that the Apache-2.0 repository/model-card terms
+conclusively cover those assets. OpenVLCLIP's wheel and sdist do not bundle
+the weights; publication of the package is separate from that unresolved
+license-scope question.
 
-The `0.6.0` source version is prepared independently of PyPI publication.
-Consult the [v0.6.0 release checklist](release-checklist-v0.6.0.md) before
-creating a release tag.
+The official [BPE vocabulary license](https://dl.fbaipublicfiles.com/dinov2/thirdparty/LICENSE)
+is MIT (OpenAI, 2021). See the
+[dino.txt reference](dinotxt-v0.6.0.md) for the pinned source, artifact
+hashes, test results, and license notes.
+
+The release record is in the
+[v0.6.0 release checklist](release-checklist-v0.6.0.md). The public release
+must not be confused with a license grant for separate third-party assets.

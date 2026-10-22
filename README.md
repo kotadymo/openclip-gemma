@@ -13,7 +13,7 @@ An independent Python library that provides an OpenCLIP-inspired inference API f
 
 - OpenCLIP-style `create_model`, `create_model_and_transforms`, and `get_tokenizer` entry points.
 - Factory discovery with `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()`.
-- The registry supports `embeddinggemma-2` and `dinov2-dinotxt`; this is not a complete drop-in replacement for OpenCLIP.
+- A Model Registry, shared Backend interface, and per-model Capabilities for `embeddinggemma-2` and `dinov2-dinotxt`; this is not a complete drop-in replacement for OpenCLIP.
 - EmbeddingGemma uses the official Transformers model/processor and Sentence Transformers numerical reference; dino.txt follows the pinned Meta Hub implementation and checkpoints.
 - Model API includes `forward()`, `get_logits()`, and factory option `output_dict=True`.
 - EmbeddingGemma `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"`; dino.txt strict mode preserves its official scaled-logit path.
@@ -22,7 +22,7 @@ An independent Python library that provides an OpenCLIP-inspired inference API f
 - Optional text-only or text-and-image model loading; the default factory load remains unchanged.
 - Pinned model revisions; model weights are downloaded at runtime and are not bundled with this package.
 - Bounded-batch image embedding and incremental Japanese/English text-to-image search.
-- dino.txt zero-shot image scoring, image search, patch embeddings, and text similarity maps.
+- dino.txt zero-shot classification, image search, patch embeddings, and text similarity maps.
 - Optional PyAV-based video-frame indexing and text search.
 
 ## Installation
@@ -32,25 +32,34 @@ are supported, up to but not including Python 3.15, except Python 3.14.1
 (`>=3.12,<3.15,!=3.14.1`).
 
 ```bash
-pip install openvlclip
+pip install openvlclip==0.6.0
+```
+
+Install dino.txt's optional tokenizer dependencies with:
+
+```bash
+pip install "openvlclip[dinotxt]==0.6.0"
 ```
 
 Install the optional video dependency for video-frame indexing and search:
 
 ```bash
-pip install "openvlclip[video]"
+pip install "openvlclip[video]==0.6.0"
 ```
 
-For a source checkout that includes the v0.6.0 dino.txt integration, install
-its optional dependencies with:
+OpenVLCLIP v0.6.0 was published on 2026-10-22 to
+[PyPI](https://pypi.org/project/openvlclip/0.6.0/) with a public
+[GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.0).
+The earlier v0.5.0 distribution remains EmbeddingGemma-only; install v0.6.0
+for DINOv2 + dino.txt support. The wheel and sdist do not include model
+weights.
+
+For development from a source checkout, install the development and optional
+dino.txt dependencies with:
 
 ```bash
 uv sync --locked --group dev --extra dinotxt
 ```
-
-The PyPI `0.5.0` distribution remains EmbeddingGemma-only. The DINOv2 +
-dino.txt support described below is in the `0.6.0` source tree and is not
-included in that published distribution.
 
 The first model or tokenizer load downloads the required files unless they
 are already cached. EmbeddingGemma 2 is pinned to revision
@@ -118,9 +127,15 @@ The examples use CPU by default. To request CUDA, set `device="cuda"` when creat
 
 The `dinov2-dinotxt` backend uses the pinned DINOv2 ViT-L/14 register-token
 backbone and its trained dino.txt heads. Install the `[dinotxt]` extra when
-using a source checkout. Unlike EmbeddingGemma 2, dino.txt uses no task prompt,
-does not support selective loading or MRL truncation, and produces native
-2048-dimensional global image/text embeddings:
+using the published package:
+
+```bash
+pip install "openvlclip[dinotxt]==0.6.0"
+```
+
+Unlike EmbeddingGemma 2, dino.txt uses no task prompt, does not support
+selective loading or MRL truncation, and produces native 2048-dimensional
+global image/text embeddings:
 
 ```python
 from openvlclip import create_model_and_transforms, get_tokenizer
@@ -140,9 +155,11 @@ probabilities or pixel-accurate segmentation masks. See the
 [similarity-map example](examples/dinotxt_similarity_map.py).
 
 The dino.txt Vision Head and Text Encoder checkpoints are fetched at runtime
-and are not included in package distributions. Their redistribution/use
-licensing is not conclusively established by the pinned upstream repository;
-the release checklist treats this as a blocking item.
+from the official Meta-hosted URLs and are not included in the wheel or sdist.
+The release is public; this does not establish or expand the license terms for
+those external checkpoints. See [License and model terms](#license-and-model-terms)
+and the [dino.txt reference](docs/dinotxt-v0.6.0.md) for the documented
+sources and remaining license-scope uncertainty.
 
 ## Japanese text
 
@@ -502,13 +519,34 @@ The test skips CUDA checks when CUDA is unavailable; verify the probe reports `t
 
 ## License and model terms
 
-The OpenVLCLIP library is distributed under the [Apache License 2.0](LICENSE). It does not include EmbeddingGemma 2 model weights or OpenCLIP implementation code. OpenCLIP is distributed under the MIT License; EmbeddingGemma 2 weights are governed by the terms and license stated by Google for the pinned model revision on its [Hugging Face model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md).
+The OpenVLCLIP library is distributed under the [Apache License 2.0](LICENSE).
+It does not include model weights or OpenCLIP implementation code. OpenCLIP
+is distributed under the MIT License; EmbeddingGemma 2 weights are governed
+by the terms and license stated by Google for the pinned model revision on its
+[Hugging Face model card](https://huggingface.co/google/embeddinggemma-2/blob/914f7f89142e33e77833254d9c9b90c3cef7303b/README.md).
 
-The library license does not replace or alter the separate terms that apply to downloaded model weights or third-party dependencies. Review those terms before use.
+Meta's pinned DINOv2 repository [LICENSE](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/LICENSE)
+is Apache-2.0, and its
+[model card](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/MODEL_CARD.md)
+lists Apache License 2.0 for the DINOv2 ViT model family. The
+[official dino.txt README](https://github.com/facebookresearch/dinov2/blob/7764ea0f912e53c92e82eb78a2a1631e92725fc8/README.md)
+links the [Vision Head](https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_dinotxt_tet1280d20h24l_vision_head.pth)
+and [Text Encoder](https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_dinotxt_tet1280d20h24l_text_encoder.pth)
+checkpoints. Their individual license terms are not separately identified in
+the pinned repository. Do not infer that the repository/model-card license
+conclusively covers these distinct dino.txt checkpoints; review their terms
+before redistributing them. The v0.6.0 publication status is separate from
+this unresolved license-scope question.
+
+The official README also links the
+[BPE vocabulary](https://dl.fbaipublicfiles.com/dinov2/thirdparty/bpe_simple_vocab_16e6.txt.gz)
+and its separate [vocabulary license](https://dl.fbaipublicfiles.com/dinov2/thirdparty/LICENSE),
+which is the MIT License (OpenAI, 2021). The library license does not replace
+the separate terms for downloaded weights or third-party dependencies.
 
 ## About the name
 
-The name OpenVLCLIP reflects the goal of providing familiar interfaces across vision and vision-language foundation models. The v0.5.0 PyPI distribution supports EmbeddingGemma 2 only; the v0.6.0 source adds the dino.txt backend. The project does not claim OpenCLIP affiliation or full OpenCLIP compatibility.
+The name OpenVLCLIP reflects the goal of providing familiar interfaces across vision and vision-language foundation models. The v0.5.0 PyPI distribution supports EmbeddingGemma 2 only; v0.6.0 is the first published release with the dino.txt backend. The project does not claim OpenCLIP affiliation or full OpenCLIP compatibility.
 
 This is an independently developed library, not an official extension of OpenCLIP, Google, or Meta.
 

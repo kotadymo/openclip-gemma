@@ -1,7 +1,8 @@
 # OpenVLCLIP v0.6.0
 
-> Draft only. Do not publish while the dino.txt Vision Head and Text Encoder
-> checkpoint licensing gate remains unresolved.
+Released on 2026-10-22:
+[GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.0) ·
+[PyPI](https://pypi.org/project/openvlclip/0.6.0/)
 
 OpenVLCLIP v0.6.0 adds a DINOv2 + dino.txt backend while preserving the
 existing EmbeddingGemma 2 API and embedding behavior.
@@ -25,27 +26,31 @@ existing EmbeddingGemma 2 API and embedding behavior.
 
 - The distribution and import name remain `openvlclip`; see the
   [v0.6.0 migration guide](migration-v0.6.0.md).
+- Existing v0.5.0 EmbeddingGemma 2 usage and index compatibility are retained.
 - dino.txt does not support MRL truncation, EmbeddingGemma task prompts,
   selective loading, or video-search compatibility claims.
 - Similarity-map values are cosine scores, not probabilities or pixel-accurate
   segmentation masks.
 - No dataset-based accuracy or retrieval-quality improvement is claimed. See
   the [benchmark report](benchmark-v0.6.0.md).
-- Licensing for the dino.txt Vision Head and Text Encoder checkpoints must be
-  resolved before these notes can be published.
+- The DINOv2 repository license and model card identify Apache-2.0 for the
+  repository/model family. Separate license terms for the external dino.txt
+  Vision Head and Text Encoder checkpoints are not clearly specified in the
+  pinned repository. The release does not include those weights and does not
+  resolve that license-scope question; see the [dino.txt reference](dinotxt-v0.6.0.md).
 
 ## Install
 
-After publication, install the base distribution with:
+Install the base distribution:
 
 ```bash
-pip install openvlclip
+pip install openvlclip==0.6.0
 ```
 
-Install dino.txt's optional tokenizer dependencies with:
+Install dino.txt's optional tokenizer dependencies:
 
 ```bash
-pip install "openvlclip[dinotxt]"
+pip install "openvlclip[dinotxt]==0.6.0"
 ```
 
 See the [README](../README.md), the
