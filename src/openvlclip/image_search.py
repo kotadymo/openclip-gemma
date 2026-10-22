@@ -11,14 +11,16 @@ from typing import Protocol
 import numpy as np
 import torch
 from numpy.typing import NDArray
-from PIL import Image
 
 from openvlclip._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
     validate_positive_embedding_dimension,
 )
-from openvlclip.backends.base import validate_model_embedding_dimension
+from openvlclip.backends.base import (
+    ImagePreprocessAPI,
+    validate_model_embedding_dimension,
+)
 from openvlclip.batching import ImagePath, iter_image_embeddings
 from openvlclip.constants import (
     BACKEND_ID,
@@ -59,7 +61,7 @@ __all__ = [
 ]
 
 type _EmbeddingMatrix = NDArray[np.float32]
-type _ImagePreprocess = Callable[[Image.Image], torch.Tensor]
+type _ImagePreprocess = ImagePreprocessAPI
 
 
 class ImageIndexError(RuntimeError):
@@ -71,7 +73,8 @@ class ImageIndexCompatibilityError(ImageIndexError):
 
 
 class _ImageSearchModel(Protocol):
-    embedding_space_metadata: EmbeddingSpaceMetadata
+    @property
+    def embedding_space_metadata(self) -> EmbeddingSpaceMetadata: ...
 
     def parameters(self) -> Iterator[torch.nn.Parameter]: ...
 
@@ -84,14 +87,14 @@ class _ImageSearchModel(Protocol):
 
     def encode_image(
         self,
-        images: torch.Tensor,
+        image: torch.Tensor,
         *,
         truncate_dim: int | None = None,
     ) -> torch.Tensor: ...
 
     def encode_text(
         self,
-        tokens: torch.Tensor,
+        text: torch.Tensor,
         *,
         normalize: bool = False,
         truncate_dim: int | None = None,
@@ -248,7 +251,7 @@ def _model_embedding_space(
 
 def _get_search_tokenizer(
     model: _ImageSearchModel,
-    prompt_name: str,
+    prompt_name: str | None,
     fallback: Callable[..., _QueryTokenizer],
 ) -> _QueryTokenizer:
     backend_tokenizer = getattr(model, "_create_tokenizer", None)
@@ -257,7 +260,8 @@ def _get_search_tokenizer(
 
     metadata = getattr(model, "embedding_space_metadata", None)
     if (
-        isinstance(metadata, EmbeddingSpaceMetadata)
+        prompt_name is not None
+        and isinstance(metadata, EmbeddingSpaceMetadata)
         and metadata.backend_id == BACKEND_ID
         and metadata.model_id == MODEL_ID
         and metadata.model_revision == MODEL_REVISION
@@ -277,15 +281,51 @@ def _embedding_space_from_metadata(
     precision: str,
 ) -> EmbeddingSpace:
     if has_embedding_space_metadata(metadata):
+        backend_id = metadata.get("backend_id")
+        model_id = metadata.get("model_id")
+        model_revision = metadata.get("model_revision")
+        if (
+            not isinstance(backend_id, str)
+            or not isinstance(model_id, str)
+            or not isinstance(model_revision, str)
+        ):
+            raise ImageIndexCompatibilityError(
+                "Image index embedding-space identity is invalid."
+            )
+        try:
+            backend = get_default_registry().resolve_backend_for_embedding_space(
+                backend_id=backend_id,
+                model_id=model_id,
+                revision=model_revision,
+            )
+        except ValueError as error:
+            raise ImageIndexCompatibilityError(
+                f"Image index model identity is not registered: {error}"
+            ) from error
+        expected_metadata = backend.embedding_space_metadata
+        if metadata.get("embedding_strategy") != expected_metadata.embedding_strategy:
+            raise ImageIndexCompatibilityError(
+                "Image index embedding_strategy is missing or unsupported."
+            )
         try:
             embedding_space = EmbeddingSpace.from_metadata(metadata)
+            supported_dimension = backend.validate_embedding_dimension(
+                embedding_space.embedding_dimension,
+                name="embedding_dimension",
+            )
         except (TypeError, ValueError) as error:
             raise ImageIndexCompatibilityError(
                 f"Image index embedding-space metadata is invalid: {error}"
             ) from error
-        if embedding_space.embedding_strategy != EMBEDDING_STRATEGY:
+        expected_space = expected_metadata.for_index(
+            embedding_dimension=supported_dimension,
+            model_precision=precision,
+            storage_dtype=embedding_space.storage_dtype,
+        )
+        if embedding_space != expected_space:
             raise ImageIndexCompatibilityError(
-                "Image index embedding_strategy is missing or unsupported."
+                "Image index embedding-space metadata does not match its registered "
+                "model configuration."
             )
         return embedding_space
 
@@ -499,12 +539,12 @@ def _validate_metadata(
         raise ImageIndexCompatibilityError(
             f"Unsupported image index format version: {version!r}."
         )
-    if (
-        version == _INDEX_FORMAT_VERSION
-        and metadata.get("embedding_strategy") != EMBEDDING_STRATEGY
+    if version == _INDEX_FORMAT_VERSION and not isinstance(
+        metadata.get("embedding_strategy"),
+        str,
     ):
         raise ImageIndexCompatibilityError(
-            "Image index embedding_strategy is missing or unsupported."
+            "Image index embedding_strategy is missing or invalid."
         )
     try:
         embedding_dimension = validate_positive_embedding_dimension(
@@ -616,7 +656,7 @@ def _build_or_update_image_index(
     *,
     batch_size: int = 8,
     recursive: bool = False,
-    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
+    embedding_dim: int | None = None,
 ) -> ImageIndexUpdate:
     """Create or incrementally update a safe, local image index."""
     _validate_batch_size(batch_size)
@@ -758,7 +798,7 @@ def _search_index(
     *,
     top_k: int = 5,
 ) -> list[ImageSearchResult]:
-    """Search an index using the official EmbeddingGemma SearchQuery prompt."""
+    """Search an index using its registered text-query configuration."""
     if isinstance(top_k, bool) or not isinstance(top_k, int):
         raise TypeError("top_k must be a positive integer.")
     if top_k <= 0:
@@ -784,10 +824,6 @@ def _search_index(
         )
 
     prompt_name = index.embedding_space.query_prompt_name
-    if prompt_name is None:
-        raise ImageIndexCompatibilityError(
-            "Image index does not define a compatible text query prompt."
-        )
     tokenizer = _get_search_tokenizer(model, prompt_name, get_tokenizer)
     tokens = tokenizer(query).to(device)
     with torch.inference_mode():
@@ -851,19 +887,21 @@ def _search_index(
 
 
 def build_or_update_image_index(
-    model: torch.nn.Module,
+    model: _ImageSearchModel,
     preprocess: _ImagePreprocess,
     images_dir: str | os.PathLike[str],
     index_dir: str | os.PathLike[str],
     *,
     batch_size: int = 8,
     recursive: bool = False,
-    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
+    embedding_dim: int | None = None,
 ) -> ImageIndexUpdate:
     """Build or incrementally update a local image embedding index.
 
     The model's current device and precision are used. A corrupt image or
     incompatible index raises an error and leaves the previous index intact.
+    If ``embedding_dim`` is omitted, the model's native embedding dimension is
+    used.
     """
     return _build_or_update_image_index(
         model,
@@ -963,7 +1001,7 @@ def convert_image_index(
 
 
 def search_images(
-    model: torch.nn.Module,
+    model: _ImageSearchModel,
     index_dir: str | os.PathLike[str],
     query: str,
     *,

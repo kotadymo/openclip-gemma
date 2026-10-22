@@ -6,7 +6,7 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from openvlclip import create_model, create_model_and_transforms
+from openvlclip import create_model, create_model_and_transforms, list_models
 from openvlclip.constants import MODEL_NAME
 from openvlclip.image_search import (
     ImageIndexError,
@@ -16,27 +16,18 @@ from openvlclip.image_search import (
 from openvlclip.registry import get_default_registry
 
 
-def _parse_embedding_dim(value: str) -> int:
-    try:
-        dimension = int(value)
-    except ValueError as error:
-        raise argparse.ArgumentTypeError("embedding_dim must be an integer.") from error
-    return (
-        get_default_registry()
-        .resolve(MODEL_NAME)
-        .backend.validate_embedding_dimension(
-            dimension,
-            name="embedding_dim",
-        )
-    )
-
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
 
     index_parser = commands.add_parser(
         "index", help="Create or incrementally update an index."
+    )
+    index_parser.add_argument(
+        "--model",
+        choices=list_models(),
+        default=MODEL_NAME,
+        help=f"Registered model to index (default: {MODEL_NAME}).",
     )
     index_parser.add_argument(
         "--images", type=Path, required=True, help="Image directory."
@@ -52,9 +43,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     index_parser.add_argument(
         "--embedding-dim",
-        type=_parse_embedding_dim,
-        default=768,
-        help="Embedding dimension to store (default: 768).",
+        type=int,
+        default=None,
+        help="Embedding dimension to store (default: the model's native dimension).",
     )
     index_parser.add_argument(
         "--device",
@@ -69,6 +60,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     search_parser = commands.add_parser("search", help="Search a saved image index.")
+    search_parser.add_argument(
+        "--model",
+        choices=list_models(),
+        default=MODEL_NAME,
+        help=f"Registered model used to search the index (default: {MODEL_NAME}).",
+    )
     search_parser.add_argument(
         "--index", type=Path, required=True, help="Index directory."
     )
@@ -92,7 +89,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "index":
-            model, _, preprocess = create_model_and_transforms(device=args.device)
+            backend = get_default_registry().resolve(args.model).backend
+            embedding_dim = backend.validate_embedding_dimension(
+                args.embedding_dim,
+                name="embedding_dim",
+            )
+            model, _, preprocess = create_model_and_transforms(
+                args.model,
+                device=args.device,
+            )
             update = build_or_update_image_index(
                 model,
                 preprocess,
@@ -100,7 +105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.output,
                 batch_size=args.batch_size,
                 recursive=args.recursive,
-                embedding_dim=args.embedding_dim,
+                embedding_dim=embedding_dim,
             )
             print(
                 "Image index updated: "
@@ -110,7 +115,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Index: {update.index_path}")
             return 0
 
-        model = create_model(device=args.device)
+        model = create_model(args.model, device=args.device)
         results = search_images(
             model,
             args.index,

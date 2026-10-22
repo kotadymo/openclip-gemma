@@ -27,14 +27,14 @@ def _load_cli(script_name: str) -> dict[str, object]:
         ),
     ],
 )
-def test_search_cli_defaults_embedding_dimension_to_768(
+def test_search_cli_uses_model_native_embedding_dimension_by_default(
     script_name: str,
     arguments: list[str],
 ) -> None:
     module = _load_cli(script_name)
     args = module["_build_parser"]().parse_args(arguments)  # type: ignore[operator]
 
-    assert args.embedding_dim == 768
+    assert args.embedding_dim == (None if script_name == "image_search" else 768)
 
 
 @pytest.mark.parametrize(
@@ -101,6 +101,42 @@ def test_search_cli_forwards_embedding_dimension(
     loader.assert_called_once()
 
 
+def test_image_search_cli_uses_dino_native_dimension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_cli("image_search")
+    index_update = SimpleNamespace(
+        index_path=Path("index.npz"),
+        added=0,
+        updated=0,
+        removed=0,
+        unchanged=0,
+    )
+    loader = Mock(return_value=(object(), object(), object()))
+    builder = Mock(return_value=index_update)
+    namespace = module["main"].__globals__  # type: ignore[union-attr]
+    monkeypatch.setitem(namespace, "create_model_and_transforms", loader)
+    monkeypatch.setitem(namespace, "build_or_update_image_index", builder)
+
+    assert (
+        module["main"](
+            [
+                "index",
+                "--model",
+                "dinov2-dinotxt",
+                "--images",
+                "photos",
+                "--output",
+                "image-index",
+            ]
+        )
+        == 0
+    )
+
+    assert loader.call_args.args[0] == "dinov2-dinotxt"
+    assert builder.call_args.kwargs["embedding_dim"] == 2048
+
+
 @pytest.mark.parametrize(
     ("script_name", "arguments"),
     [
@@ -159,8 +195,12 @@ def test_search_cli_rejects_unsupported_embedding_dimension(
     arguments: list[str],
 ) -> None:
     module = _load_cli(script_name)
-    with pytest.raises(SystemExit, match="2"):
-        module["_build_parser"]().parse_args(arguments)  # type: ignore[operator]
+    if script_name == "image_search":
+        with pytest.raises(SystemExit, match="2"):
+            module["main"](arguments)  # type: ignore[operator]
+    else:
+        with pytest.raises(SystemExit, match="2"):
+            module["_build_parser"]().parse_args(arguments)  # type: ignore[operator]
 
 
 @pytest.mark.parametrize("script_name", ["image_search", "video_search"])
@@ -176,17 +216,34 @@ def test_search_cli_delegates_dimension_validation_to_backend(
     )
     namespace = module["_build_parser"].__globals__  # type: ignore[union-attr]
     monkeypatch.setitem(namespace, "get_default_registry", lambda: registry)
-    args = module["_build_parser"]().parse_args(
-        [
-            "index",
-            "--images" if script_name == "image_search" else "--videos",
-            "input",
-            "--output",
-            "index",
-            "--embedding-dim",
-            "384",
-        ]
-    )
+    arguments = [
+        "index",
+        "--images" if script_name == "image_search" else "--videos",
+        "input",
+        "--output",
+        "index",
+        "--embedding-dim",
+        "384",
+    ]
+    if script_name == "image_search":
+        index_update = SimpleNamespace(
+            index_path=Path("index.npz"),
+            added=0,
+            updated=0,
+            removed=0,
+            unchanged=0,
+        )
+        loader = Mock(return_value=(object(), object(), object()))
+        builder = Mock(return_value=index_update)
+        module_namespace = module["main"].__globals__  # type: ignore[union-attr]
+        monkeypatch.setitem(module_namespace, "create_model_and_transforms", loader)
+        monkeypatch.setitem(module_namespace, "build_or_update_image_index", builder)
 
+        assert module["main"](arguments) == 0  # type: ignore[operator]
+        assert builder.call_args.kwargs["embedding_dim"] == 384
+        validator.assert_called_once_with(384, name="embedding_dim")
+        return
+
+    args = module["_build_parser"]().parse_args(arguments)
     assert args.embedding_dim == 384
     validator.assert_called_once_with(384, name="embedding_dim")
