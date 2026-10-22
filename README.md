@@ -32,27 +32,27 @@ are supported, up to but not including Python 3.15, except Python 3.14.1
 (`>=3.12,<3.15,!=3.14.1`).
 
 ```bash
-pip install openvlclip==0.6.0
+pip install --upgrade openvlclip
 ```
 
 Install dino.txt's optional tokenizer dependencies with:
 
 ```bash
-pip install "openvlclip[dinotxt]==0.6.0"
+pip install --upgrade "openvlclip[dinotxt]"
 ```
 
 Install the optional video dependency for video-frame indexing and search:
 
 ```bash
-pip install "openvlclip[video]==0.6.0"
+pip install --upgrade "openvlclip[video]"
 ```
 
-OpenVLCLIP v0.6.0 was published on 2026-10-22 to
-[PyPI](https://pypi.org/project/openvlclip/0.6.0/) with a public
-[GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.0).
-The earlier v0.5.0 distribution remains EmbeddingGemma-only; install v0.6.0
-for DINOv2 + dino.txt support. The wheel and sdist do not include model
-weights.
+The `openvlclip` distribution supports both EmbeddingGemma 2 and DINOv2 +
+dino.txt. The v0.6.1 patch release fixes dino.txt batch embedding defaults,
+adds opt-in content verification for image-index updates, and avoids
+per-interval loops when skipping large video timestamp gaps. See the
+[v0.6.1 release notes](docs/release-notes-v0.6.1.md). The wheel and sdist do
+not include model weights.
 
 For development from a source checkout, install the development and optional
 dino.txt dependencies with:
@@ -130,7 +130,7 @@ backbone and its trained dino.txt heads. Install the `[dinotxt]` extra when
 using the published package:
 
 ```bash
-pip install "openvlclip[dinotxt]==0.6.0"
+pip install --upgrade "openvlclip[dinotxt]"
 ```
 
 Unlike EmbeddingGemma 2, dino.txt uses no task prompt, does not support
@@ -535,8 +535,8 @@ and [Text Encoder](https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vi
 checkpoints. Their individual license terms are not separately identified in
 the pinned repository. Do not infer that the repository/model-card license
 conclusively covers these distinct dino.txt checkpoints; review their terms
-before redistributing them. The v0.6.0 publication status is separate from
-this unresolved license-scope question.
+before redistributing them. The publication status of the package is separate from this unresolved
+license-scope question.
 
 The official README also links the
 [BPE vocabulary](https://dl.fbaipublicfiles.com/dinov2/thirdparty/bpe_simple_vocab_16e6.txt.gz)
@@ -546,7 +546,7 @@ the separate terms for downloaded weights or third-party dependencies.
 
 ## About the name
 
-The name OpenVLCLIP reflects the goal of providing familiar interfaces across vision and vision-language foundation models. The v0.5.0 PyPI distribution supports EmbeddingGemma 2 only; v0.6.0 is the first published release with the dino.txt backend. The project does not claim OpenCLIP affiliation or full OpenCLIP compatibility.
+The name OpenVLCLIP reflects the goal of providing familiar interfaces across vision and vision-language foundation models. The v0.5.0 PyPI distribution supports EmbeddingGemma 2 only; v0.6.0 is the first release with the dino.txt backend. The v0.6.1 patch preserves those model capabilities and embedding behavior. The project does not claim OpenCLIP affiliation or full OpenCLIP compatibility.
 
 This is an independently developed library, not an official extension of OpenCLIP, Google, or Meta.
 

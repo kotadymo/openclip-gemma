@@ -1,6 +1,6 @@
 [project]
 name = "openvlclip"
-version = "0.6.0"
+version = "0.6.1"
 description = "OpenCLIP-inspired image and text inference with EmbeddingGemma 2 and dino.txt"
 readme = "README.md"
 license = "Apache-2.0"
