@@ -54,6 +54,10 @@ per-interval loops when skipping large video timestamp gaps. See the
 [v0.6.1 release notes](docs/release-notes-v0.6.1.md). The wheel and sdist do
 not include model weights.
 
+OpenVLCLIP v0.6.1 was published on 2026-10-22 to
+[PyPI](https://pypi.org/project/openvlclip/0.6.1/) with a public
+[GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.1).
+
 For development from a source checkout, install the development and optional
 dino.txt dependencies with:
 
