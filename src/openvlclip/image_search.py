@@ -20,6 +20,7 @@ from openvlclip._dimensions import (
 )
 from openvlclip.backends.base import (
     ImagePreprocessAPI,
+    ProcessedImageBatch,
     validate_model_embedding_dimension,
 )
 from openvlclip.batching import ImagePath, iter_image_embeddings
@@ -88,7 +89,7 @@ class _ImageSearchModel(Protocol):
 
     def encode_image(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         *,
         truncate_dim: int | None = None,
     ) -> torch.Tensor: ...

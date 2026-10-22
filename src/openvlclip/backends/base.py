@@ -209,6 +209,83 @@ def require_tensor_image(
     return image
 
 
+def stack_processed_images(
+    images: Sequence[ProcessedImage],
+    *,
+    backend_name: str,
+) -> ProcessedImage:
+    """Stack homogeneous per-image Tensor or processor-mapping outputs."""
+    if isinstance(images, (str, bytes, bytearray)) or not isinstance(images, Sequence):
+        raise TypeError(f"images must be a sequence for the {backend_name} backend.")
+    if not images:
+        raise ValueError("Cannot batch an empty image sequence.")
+
+    first = images[0]
+    if isinstance(first, torch.Tensor):
+        if any(not isinstance(image, torch.Tensor) for image in images):
+            raise TypeError(
+                f"Image inputs must use one representation for the {backend_name} "
+                "backend."
+            )
+        tensors = [image for image in images if isinstance(image, torch.Tensor)]
+        first_tensor = tensors[0]
+        if any(tuple(image.shape) != tuple(first_tensor.shape) for image in tensors):
+            raise ValueError(
+                f"Preprocessed Tensor images must have matching shapes for the "
+                f"{backend_name} backend."
+            )
+        if any(
+            image.dtype != first_tensor.dtype or image.device != first_tensor.device
+            for image in tensors
+        ):
+            raise ValueError(
+                f"Preprocessed Tensor images must share dtype and device for the "
+                f"{backend_name} backend."
+            )
+        return torch.stack(tensors)
+
+    if not isinstance(first, Mapping):
+        raise TypeError(
+            f"Image inputs must be Tensors or processor mappings for the "
+            f"{backend_name} backend."
+        )
+    keys = tuple(first)
+    mappings: list[Mapping[str, object]] = []
+    for image in images:
+        if not isinstance(image, Mapping) or set(image) != set(keys):
+            raise ValueError(
+                f"Processor mappings must contain the same keys for the "
+                f"{backend_name} backend."
+            )
+        mappings.append(image)
+
+    batch: dict[str, torch.Tensor] = {}
+    for key in keys:
+        values = [image[key] for image in mappings]
+        if any(not isinstance(value, torch.Tensor) for value in values):
+            raise TypeError(
+                f"Processor mapping values must be Tensors for the "
+                f"{backend_name} backend."
+            )
+        tensors = [value for value in values if isinstance(value, torch.Tensor)]
+        first_tensor = tensors[0]
+        if any(tuple(value.shape) != tuple(first_tensor.shape) for value in tensors):
+            raise ValueError(
+                f"Processor mapping field {key!r} must have matching per-image "
+                f"shapes for the {backend_name} backend."
+            )
+        if any(
+            value.dtype != first_tensor.dtype or value.device != first_tensor.device
+            for value in tensors
+        ):
+            raise ValueError(
+                f"Processor mapping field {key!r} must share dtype and device for "
+                f"the {backend_name} backend."
+            )
+        batch[key] = torch.stack(tensors)
+    return batch
+
+
 def validate_model_embedding_dimension(
     model: object,
     value: object | None,

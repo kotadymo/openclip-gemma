@@ -127,14 +127,23 @@ def test_registry_and_listing_are_side_effect_free(
     hub_loader = Mock(side_effect=AssertionError("the Hub must not load"))
     monkeypatch.setattr(torch.hub, "load", hub_loader)
 
-    assert list_models() == ["embeddinggemma-2", DINO_MODEL_NAME]
+    assert list_models() == [
+        "embeddinggemma-2",
+        DINO_MODEL_NAME,
+        "siglip2-base",
+        "siglip2-naflex-base",
+    ]
     assert list_pretrained() == [
         ("embeddinggemma-2", "official"),
         (DINO_MODEL_NAME, "official"),
+        ("siglip2-base", "official"),
+        ("siglip2-naflex-base", "official"),
     ]
     assert list_pretrained(as_str=True) == [
         "embeddinggemma-2:official",
         f"{DINO_MODEL_NAME}:official",
+        "siglip2-base:official",
+        "siglip2-naflex-base:official",
     ]
     hub_loader.assert_not_called()
 

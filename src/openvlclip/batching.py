@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from os import PathLike
 from pathlib import Path
 from typing import Protocol
@@ -16,12 +16,14 @@ from openvlclip._dimensions import (
 )
 from openvlclip.backends.base import (
     ProcessedImage,
+    ProcessedImageBatch,
+    stack_processed_images,
     validate_model_embedding_dimension,
 )
 
 type ImagePath = str | PathLike[str]
 type ImageEmbedding = tuple[Path, torch.Tensor]
-type _ImageItem = tuple[int, Path, torch.Tensor]
+type _ImageItem = tuple[int, Path, ProcessedImage]
 
 _DEFAULT_BATCH_SIZE = 8
 
@@ -33,7 +35,7 @@ class _ImageEncoder(Protocol):
 
     def encode_image(
         self,
-        image: torch.Tensor,
+        image: ProcessedImageBatch,
         *,
         truncate_dim: int | None = None,
     ) -> torch.Tensor: ...
@@ -99,8 +101,8 @@ def _stream_image_embeddings(
                 f"Image path at input index {input_index} must be a string or Path."
             ) from error
 
-        image_tensor = _load_preprocessed_image(path, preprocess, input_index)
-        pending.append((input_index, path, image_tensor))
+        processed_image = _load_preprocessed_image(path, preprocess, input_index)
+        pending.append((input_index, path, processed_image))
         if len(pending) == batch_size:
             yield from _encode_image_chunk(
                 model,
@@ -204,7 +206,7 @@ def _load_preprocessed_image(
     path: Path,
     preprocess: Callable[[Image.Image], ProcessedImage],
     input_index: int,
-) -> torch.Tensor:
+) -> ProcessedImage:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -220,24 +222,52 @@ def _load_preprocessed_image(
             f"Could not read image at input index {input_index} ({path}): {error}"
         ) from error
 
-    if not isinstance(image_tensor, torch.Tensor):
+    if isinstance(image_tensor, torch.Tensor):
+        if image_tensor.ndim != 3:
+            raise ValueError(
+                f"Preprocessing image at input index {input_index} "
+                f"({path}) must return a [C,H,W] Tensor; "
+                f"received {tuple(image_tensor.shape)}."
+            )
+        return image_tensor
+    if not isinstance(image_tensor, Mapping):
         raise TypeError(
             f"Preprocessing image at input index {input_index} "
-            f"({path}) did not return a torch.Tensor. Processor-aware mappings "
-            "are not supported by file-based batching."
+            f"({path}) did not return a Tensor or processor mapping."
         )
-    if image_tensor.ndim != 3:
-        raise ValueError(
+    if not image_tensor or any(
+        not isinstance(key, str)
+        or not isinstance(value, torch.Tensor)
+        or value.ndim == 0
+        for key, value in image_tensor.items()
+    ):
+        raise TypeError(
             f"Preprocessing image at input index {input_index} "
-            f"({path}) must return a [C,H,W] Tensor; "
-            f"received {tuple(image_tensor.shape)}."
+            f"({path}) must return a non-empty mapping of names to non-scalar Tensors."
         )
     return image_tensor
 
 
+def _processed_image_shape_key(
+    image: ProcessedImage,
+) -> tuple[object, ...]:
+    if isinstance(image, torch.Tensor):
+        return ("tensor", tuple(image.shape))
+    return (
+        "mapping",
+        tuple(
+            sorted(
+                (key, tuple(value.shape))
+                for key, value in image.items()
+                if isinstance(value, torch.Tensor)
+            )
+        ),
+    )
+
+
 def _encode_image_chunk[EmbeddingKey](
     model: _ImageEncoder,
-    items: list[tuple[int, EmbeddingKey, torch.Tensor]],
+    items: list[tuple[int, EmbeddingKey, ProcessedImage]],
     batch_size: int,
     *,
     item_kind: str = "images",
@@ -251,19 +281,29 @@ def _encode_image_chunk[EmbeddingKey](
         ) from error
 
     groups: dict[
-        tuple[int, ...],
-        list[tuple[int, tuple[int, EmbeddingKey, torch.Tensor]]],
+        tuple[object, ...],
+        list[tuple[int, tuple[int, EmbeddingKey, ProcessedImage]]],
     ] = {}
     for position, item in enumerate(items):
-        groups.setdefault(tuple(item[2].shape), []).append((position, item))
+        groups.setdefault(_processed_image_shape_key(item[2]), []).append(
+            (position, item)
+        )
 
     ordered_features: list[torch.Tensor | None] = [None] * len(items)
     for group in groups.values():
         positions = [position for position, _ in group]
         input_indices = [item[0] for _, item in group]
-        image_batch = torch.stack([item[2] for _, item in group])
+        image_batch = stack_processed_images(
+            [item[2] for _, item in group],
+            backend_name="image",
+        )
         try:
-            image_batch = image_batch.to(model_device)
+            if isinstance(image_batch, torch.Tensor):
+                image_batch = image_batch.to(model_device)
+            else:
+                image_batch = {
+                    key: value.to(model_device) for key, value in image_batch.items()
+                }
             with torch.inference_mode():
                 if embedding_dim == DEFAULT_EMBEDDING_DIMENSION:
                     features = model.encode_image(image_batch)

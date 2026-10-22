@@ -67,7 +67,24 @@ Validation used Windows/Python 3.12.10, Torch `2.14.1+cu130`, Transformers `5.20
 | SigLIP 2 NaFlex | FP32 | `(1, 256, 768)` with mask `(1, 256)` and spatial shape `(1, 2)` | `(1, 768)` / `(1, 768)`; both L2 norms 1.0 | `(1, 1)` | 115.3019485 | -16.7769890 | `0.0` |
 | SigLIP 2 NaFlex | BF16 | `(1, 256, 768)` with mask `(1, 256)` and spatial shape `(1, 2)` | `(1, 768)` / `(1, 768)`; norms 1.002046 / 1.003297 | `(1, 1)` | 115.5842896 | -16.75 | `0.047818` |
 
-The tokenizer output was `(1, 64)` for both checkpoints. BF16 formula comparisons recomputed logits in FP32 from BF16-rounded embeddings and learned parameters; they reflect low-precision forward arithmetic and are not pass/fail thresholds. BF16-vs-FP32 maximum/mean absolute feature differences were: FixRes image `0.001540 / 0.000301`, text `0.001447 / 0.000369`; NaFlex image `0.003662 / 0.000577`, text `0.003468 / 0.000309`. The absolute logit differences were `0.028610` (FixRes) and `0.026999` (NaFlex). These are measured results, not a claim that any project-defined BF16 tolerance has been satisfied. No OpenVLCLIP implementation existed yet for direct parity comparison.
+The tokenizer output was `(1, 64)` for both checkpoints. BF16 formula comparisons recomputed logits in FP32 from BF16-rounded embeddings and learned parameters; they reflect low-precision forward arithmetic and are not pass/fail thresholds. BF16-vs-FP32 maximum/mean absolute feature differences were: FixRes image `0.001540 / 0.000301`, text `0.001447 / 0.000369`; NaFlex image `0.003662 / 0.000577`, text `0.003468 / 0.000309`. The absolute logit differences were `0.028610` (FixRes) and `0.026999` (NaFlex). These are measured results, not a claim that any project-defined BF16 tolerance has been satisfied. Direct wrapper parity results are recorded below.
+
+### Phase 2 OpenVLCLIP wrapper parity
+
+`tests/integration/test_siglip2_official_parity.py` compared the wrapper against a separately loaded official `AutoModel` and `AutoProcessor` at each fixed revision. The run used Windows, Python 3.12.10, PyTorch `2.14.1+cu130`, Transformers `5.20.1`, CUDA 13.0, and an NVIDIA GeForce RTX 4070 Ti SUPER with BF16 support. It used two synthetic RGB images (320x192 and 192x320) and the texts `"a red object"` and `"a blue object"`; these checks are parity tests, not retrieval-quality benchmarks.
+
+For both checkpoints, FixRes processor pixel values or all three NaFlex processor fields, and the 64-token IDs matched exactly. Image and text features (normalized and unnormalized) and official scaled logits matched the separate reference outputs with maximum absolute error `0.0` in all tested cases:
+
+| Checkpoint | Device / precision | Image feature max abs error | Text feature max abs error | Scaled-logit max abs error |
+| --- | --- | ---: | ---: | ---: |
+| FixRes | CPU FP32 | `0.0` | `0.0` | `0.0` |
+| NaFlex | CPU FP32 | `0.0` | `0.0` | `0.0` |
+| FixRes | CUDA FP32 | `0.0` | `0.0` | `0.0` |
+| NaFlex | CUDA FP32 | `0.0` | `0.0` | `0.0` |
+| FixRes | CUDA BF16 | `0.0` | `0.0` | `0.0` |
+| NaFlex | CUDA BF16 | `0.0` | `0.0` | `0.0` |
+
+All six parity cases passed with a separate assertion tolerance of `1e-5` for FP32 and `2e-3` for BF16. The two CPU FP32 cases also built and queried image indexes with the NaFlex processor-aware inputs. Transformers emitted warnings that configured BOS/EOS token IDs `49406`/`49407` exceed a reported text vocabulary bound of `31999`; the pinned checkpoint still loaded and the tokenizer, features, and logits passed the comparisons above. CPU BF16 and retrieval quality on real-world data were not evaluated.
 
 ### Qwen3-VL-Embedding-2B
 

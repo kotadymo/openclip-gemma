@@ -212,6 +212,14 @@ class EmbeddingGemmaCLIP(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Return image/text cosine similarity matrices in both orientations."""
         if self.logit_scale_mode != "cosine":
+            backend_get_logits = getattr(self._inference_backend, "get_logits", None)
+            if callable(backend_get_logits):
+                return backend_get_logits(
+                    self,
+                    image,
+                    text,
+                    truncate_dim=truncate_dim,
+                )
             raise NotImplementedError(
                 "get_logits() requires logit_scale_mode='cosine'; EmbeddingGemma 2 "
                 "has no trained OpenCLIP logit_scale."
