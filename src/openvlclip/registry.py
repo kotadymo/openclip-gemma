@@ -211,6 +211,15 @@ def get_default_registry() -> ModelRegistry:
         DinoV2DinoTxtBackend,
     )
     from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
+    from openvlclip.backends.pe_core import (
+        PE_CORE_S_MODEL_ID,
+        PE_CORE_S_MODEL_NAME,
+        PE_CORE_S_REVISION,
+        PE_CORE_T_MODEL_ID,
+        PE_CORE_T_MODEL_NAME,
+        PE_CORE_T_REVISION,
+        PECoreBackend,
+    )
     from openvlclip.backends.qwen3_vl_embedding import (
         QWEN3VL_2B_DIMENSION,
         QWEN3VL_2B_MODEL_ID,
@@ -274,6 +283,16 @@ def get_default_registry() -> ModelRegistry:
         variant="fixres",
         native_dimension=1152,
         image_size=384,
+    )
+    pe_t = PECoreBackend(
+        model_name=PE_CORE_T_MODEL_NAME,
+        model_id=PE_CORE_T_MODEL_ID,
+        revision=PE_CORE_T_REVISION,
+    )
+    pe_s = PECoreBackend(
+        model_name=PE_CORE_S_MODEL_NAME,
+        model_id=PE_CORE_S_MODEL_ID,
+        revision=PE_CORE_S_REVISION,
     )
     qwen3vl_2b_backend = Qwen3VLBackend(
         model_name=QWEN3VL_2B_MODEL_NAME,
@@ -370,6 +389,30 @@ def get_default_registry() -> ModelRegistry:
                 capabilities=siglip2_so400m_384_backend.capabilities,
                 embedding_space_metadata=siglip2_so400m_384_backend.embedding_space_metadata,
                 backend=siglip2_so400m_384_backend,
+            ),
+            ModelDescriptor(
+                model_name=PE_CORE_T_MODEL_NAME,
+                aliases=(),
+                backend_id=pe_t.backend_id,
+                model_id=PE_CORE_T_MODEL_ID,
+                revision=PE_CORE_T_REVISION,
+                pretrained_tags={"official": PE_CORE_T_MODEL_ID},
+                pretrained_aliases={},
+                capabilities=pe_t.capabilities,
+                embedding_space_metadata=pe_t.embedding_space_metadata,
+                backend=pe_t,
+            ),
+            ModelDescriptor(
+                model_name=PE_CORE_S_MODEL_NAME,
+                aliases=(),
+                backend_id=pe_s.backend_id,
+                model_id=PE_CORE_S_MODEL_ID,
+                revision=PE_CORE_S_REVISION,
+                pretrained_tags={"official": PE_CORE_S_MODEL_ID},
+                pretrained_aliases={},
+                capabilities=pe_s.capabilities,
+                embedding_space_metadata=pe_s.embedding_space_metadata,
+                backend=pe_s,
             ),
             ModelDescriptor(
                 model_name=QWEN3VL_2B_MODEL_NAME,

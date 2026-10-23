@@ -135,6 +135,8 @@ def test_registry_and_listing_are_side_effect_free(
         "siglip2-base-384",
         "siglip2-large-256",
         "siglip2-so400m-384",
+        "pe-core-t16-384",
+        "pe-core-s16-384",
         "qwen3-vl-embedding-2b",
     ]
     assert list_pretrained() == [
@@ -145,6 +147,8 @@ def test_registry_and_listing_are_side_effect_free(
         ("siglip2-base-384", "official"),
         ("siglip2-large-256", "official"),
         ("siglip2-so400m-384", "official"),
+        ("pe-core-t16-384", "official"),
+        ("pe-core-s16-384", "official"),
         ("qwen3-vl-embedding-2b", "official"),
     ]
     assert list_pretrained(as_str=True) == [
@@ -155,6 +159,8 @@ def test_registry_and_listing_are_side_effect_free(
         "siglip2-base-384:official",
         "siglip2-large-256:official",
         "siglip2-so400m-384:official",
+        "pe-core-t16-384:official",
+        "pe-core-s16-384:official",
         "qwen3-vl-embedding-2b:official",
     ]
     hub_loader.assert_not_called()
