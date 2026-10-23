@@ -16,6 +16,7 @@ import torch
 from numpy.typing import NDArray
 from PIL import Image
 
+from openvlclip._ranking import select_top_k
 from openvlclip._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
@@ -1336,8 +1337,9 @@ def _search_video_index(
         scores = index.embeddings[start:stop] @ query_vector
         if not np.isfinite(scores).all():
             raise VideoSearchError("Video index produced non-finite similarity scores.")
-        candidates = [(float(score), row + start) for row, score in enumerate(scores)]
-        best = sorted((*best, *candidates), key=sort_key)[:limit]
+        best = select_top_k(
+            scores, limit=limit, start_row=start, sort_key=sort_key, current=best
+        )
 
     return [
         VideoSearchResult(
@@ -2171,14 +2173,16 @@ def search_native_video(
     scores = index.embeddings @ query_vector
     if not np.isfinite(scores).all():
         raise VideoSearchError("Native-video index produced non-finite similarity scores.")
-    best = sorted(
-        ((float(score), row) for row, score in enumerate(scores)),
-        key=lambda item: (
+    best = select_top_k(
+        scores,
+        limit=min(top_k, len(index.videos)),
+        start_row=0,
+        sort_key=lambda item: (
             -item[0],
             _path_key(index.videos[item[1]].relative_path),
             index.videos[item[1]].relative_path,
         ),
-    )[: min(top_k, len(index.videos))]
+    )
     return [
         NativeVideoSearchResult(
             rank=rank,

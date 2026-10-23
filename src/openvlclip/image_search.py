@@ -45,6 +45,7 @@ from openvlclip.index_storage import (
     _save_numpy_archive_atomic,
 )
 from openvlclip.registry import get_default_registry
+from openvlclip._ranking import select_top_k
 from openvlclip.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 _INDEX_FILENAME = "index.npz"
@@ -1093,8 +1094,9 @@ def _search_index(
         scores = index.embeddings[start:stop] @ query_vector
         if not np.isfinite(scores).all():
             raise ImageIndexError("Image index produced non-finite similarity scores.")
-        candidates = [(float(score), row + start) for row, score in enumerate(scores)]
-        best = sorted((*best, *candidates), key=sort_key)[:limit]
+        best = select_top_k(
+            scores, limit=limit, start_row=start, sort_key=sort_key, current=best
+        )
 
     return [
         ImageSearchResult(
