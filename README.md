@@ -7,7 +7,7 @@ An independent Python library providing an OpenCLIP-inspired inference API for E
 >
 > `openvlclip` is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or officially maintained by Google, Google DeepMind, Meta, or the OpenCLIP project.
 >
-> The v0.7.0 PyPI upload succeeded on 2026-10-23 and includes five registered checkpoints: EmbeddingGemma 2, DINOv2 + dino.txt, SigLIP 2 FixRes Base, SigLIP 2 NaFlex Base, and Qwen3-VL-Embedding-2B. **Qwen 8B is deferred and is not available through the v0.7.0 Registry.** This library is not a drop-in replacement for OpenCLIP.
+> OpenVLCLIP v0.7.1 was formally published to PyPI and as a GitHub Release on 2026-10-23. This backward-compatible bug-fix release retains five registered checkpoints: EmbeddingGemma 2, DINOv2 + dino.txt, SigLIP 2 FixRes Base, SigLIP 2 NaFlex Base, and Qwen3-VL-Embedding-2B. It adds opt-in Native Video Index SHA-256 verification and enforces the Qwen 2B 64-frame limit. **Qwen 8B is not registered or supported.** Model weights are downloaded separately and are not bundled. This library is not a drop-in replacement for OpenCLIP.
 
 ## Features
 
@@ -51,16 +51,17 @@ Install the optional video dependency for video-frame indexing and search:
 pip install --upgrade "openvlclip[video]"
 ```
 
-OpenVLCLIP v0.7.0 was formally published to [PyPI](https://pypi.org/project/openvlclip/0.7.0/) and as a [GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.7.0) on 2026-10-23 using the unified Trusted Publishing workflow. The release includes five registered checkpoints. Model weights are downloaded separately and are not bundled.
+OpenVLCLIP v0.7.1 was formally published to [PyPI](https://pypi.org/project/openvlclip/0.7.1/) and as a [GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.7.1) on 2026-10-23 using the unified Trusted Publishing workflow. This backward-compatible patch keeps the five v0.7.0 checkpoints and embedding behavior, adds opt-in Native Video Index content verification, and enforces Qwen3-VL-Embedding-2B's native-video frame limit. Model weights are downloaded separately and are not bundled.
 
-To install v0.7.0:
+To install v0.7.1:
 
 ```bash
-pip install "openvlclip[qwen3vl]==0.7.0"
-pip install "openvlclip[dinotxt]==0.7.0"
+pip install "openvlclip==0.7.1"
+pip install "openvlclip[dinotxt]==0.7.1"
+pip install "openvlclip[qwen3vl]==0.7.1"
 ```
 
-**Qwen3-VL-Embedding-8B is not supported in v0.7.0.** Native Qwen video-file processing also requires a compatible video/FFmpeg runtime as described below.
+**Qwen3-VL-Embedding-8B is not supported in v0.7.1.** Native Qwen video-file processing also requires a compatible video/FFmpeg runtime as described below. See the [v0.7.1 release notes](docs/release-notes-v0.7.1.md) for patch details.
 OpenVLCLIP v0.6.1 was published on 2026-10-22 to
 [PyPI](https://pypi.org/project/openvlclip/0.6.1/) with a public
 [GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.1).
@@ -543,7 +544,7 @@ re-embeds those entries to establish their hashes.
 
 ## OpenCLIP differences and compatibility
 
-`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. The public registry contains `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, `siglip2-naflex-base`, and `qwen3-vl-embedding-2b`, with model-specific capabilities and embedding spaces. The v0.7.0 distribution includes these five checkpoints; Qwen3-VL-Embedding-8B is not registered.
+`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. The public registry contains `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, `siglip2-naflex-base`, and `qwen3-vl-embedding-2b`, with model-specific capabilities and embedding spaces. The v0.7.1 distribution includes these five checkpoints; Qwen3-VL-Embedding-8B is not registered or supported.
 
 | Area | `openvlclip` behavior |
 | --- | --- |

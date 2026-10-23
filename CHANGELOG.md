@@ -1,6 +1,9 @@
 # Changelog
 
-## v0.7.1 — Unreleased
+## v0.7.1 — 2026-10-23
+
+Released on [PyPI](https://pypi.org/project/openvlclip/0.7.1/) and as a
+[GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.7.1).
 
 This backward-compatible patch release hardens native-video indexing without
 changing registered models or embedding calculations.

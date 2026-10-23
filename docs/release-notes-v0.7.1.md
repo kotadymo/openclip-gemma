@@ -47,3 +47,21 @@ pip install "openvlclip[qwen3vl]==0.7.1"
 
 See the [release checklist](release-checklist-v0.7.1.md) for publication and
 verification evidence.
+
+## Publication and verification
+
+Published on 2026-10-23 to [PyPI](https://pypi.org/project/openvlclip/0.7.1/)
+and as the formal [GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.7.1).
+The [publishing workflow](https://github.com/kotadymo/openvlclip/actions/runs/39955230402)
+completed successfully.
+
+- `openvlclip-0.7.1-py3-none-any.whl` SHA-256:
+  `0555451509d9386a3bf440debc08a38942b5110c6336d5a58d12aba2818fafc3`
+- `openvlclip-0.7.1.tar.gz` SHA-256:
+  `54b95f1cac5ed420def81b57d0f5c0c799701c1848d719297b869eb94f8c90b0`
+- Both hashes match PyPI JSON and the workflow build summary. The public wheel
+  installed successfully in a clean Python 3.12.10 environment; import,
+  version, existing factory APIs, five-model registry, absence of Qwen 8B, and
+  the `verify_contents` parameter were verified.
+- The public wheel and sdist passed content verification and bundle no model
+  weights.
