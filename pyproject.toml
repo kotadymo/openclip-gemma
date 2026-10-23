@@ -1,6 +1,6 @@
 [project]
 name = "openvlclip"
-version = "0.7.0"
+version = "0.7.1"
 description = "OpenCLIP-inspired multimodal inference with EmbeddingGemma 2, dino.txt, SigLIP 2, and Qwen3-VL-Embedding-2B"
 readme = "README.md"
 license = "Apache-2.0"
