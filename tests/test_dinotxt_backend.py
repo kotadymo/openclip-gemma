@@ -147,7 +147,6 @@ def test_registry_and_listing_are_side_effect_free(
         "siglip2-base:official",
         "siglip2-naflex-base:official",
         "qwen3-vl-embedding-2b:official",
-        "qwen3-vl-embedding-8b:official",
     ]
     hub_loader.assert_not_called()
 
