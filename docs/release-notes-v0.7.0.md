@@ -1,7 +1,5 @@
 # OpenVLCLIP v0.7.0 — Release Notes
 
-**Status:** PyPI upload completed successfully on 2026-10-23, after GitHub Environment approval. See [the publishing run](https://github.com/kotadymo/openvlclip/actions/runs/39941731530). Independent PyPI JSON/hash comparison, fresh wheel install, and GitHub Release creation are tracked separately and are not yet verified here.
-
 ## New in v0.7.0
 
 The library supports **five registered checkpoints** (two existing and three new):
@@ -48,13 +46,15 @@ Weights are retrieved from pinned external official sources and are not distribu
 - See [model provenance](model-provenance-v0.7.0.md) for real-model parity under the tested CPU and CUDA configurations and the distinction between official wrapper parity and actual retrieval quality.
 - Windows full-shared FFmpeg/TorchCodec compatibility depends on the installed runtime.
 - Real-world retrieval accuracy and comprehensive benchmarks remain not evaluated.
-- Publishing requires the new PyPI Trusted Publisher for `publish-pypi.yml`, GitHub `pypi` Environment approval, valid license-confirmation variables, and successful main CI.
+- Published through GitHub Actions Trusted Publishing after the required `pypi` Environment approval; see the [publishing run](https://github.com/kotadymo/openvlclip/actions/runs/39941731530).
 
-### Published distribution hashes (GitHub Trusted Publishing log)
+### Published distribution SHA-256
 
 | Distribution | SHA-256 |
 | --- | --- |
 | `openvlclip-0.7.0-py3-none-any.whl` | `92944d02f57ef883d1a955452d1d9c2e1c446fa84f412c0e66752d4db4a38628` |
 | `openvlclip-0.7.0.tar.gz` | `7b6b2b8834659a3ba5b74bd2f4fcfed6e302898bd61c574356ea016edcc3528b` |
 
-These values are taken from the successful [GitHub Actions publish log](https://github.com/kotadymo/openvlclip/actions/runs/39941731530), which shows `200 OK` for both uploads. Independently fetching PyPI JSON and freshly installing the published wheel have not been completed in this document. The GitHub Release is also pending.
+The wheel and sdist hashes match the successful [GitHub Actions publish log](https://github.com/kotadymo/openvlclip/actions/runs/39941731530), the public [PyPI JSON metadata](https://pypi.org/pypi/openvlclip/0.7.0/json), and independently downloaded PyPI files. A clean Python 3.12 environment installed the published wheel; `import openvlclip`, version `0.7.0`, and `list_models()` succeeded. The registry contains the five checkpoints listed above and does not contain Qwen3-VL-Embedding-8B.
+
+The release is available on [PyPI](https://pypi.org/project/openvlclip/0.7.0/) and as the [OpenVLCLIP v0.7.0 GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.7.0).

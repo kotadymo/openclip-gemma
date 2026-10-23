@@ -49,7 +49,7 @@ Install the optional video dependency for video-frame indexing and search:
 pip install --upgrade "openvlclip[video]"
 ```
 
-OpenVLCLIP v0.7.0 was uploaded successfully to [PyPI](https://pypi.org/project/openvlclip/0.7.0/) on 2026-10-23 using the unified Trusted Publishing workflow. The release includes five registered checkpoints. Model weights are downloaded separately and are not bundled.
+OpenVLCLIP v0.7.0 was formally published to [PyPI](https://pypi.org/project/openvlclip/0.7.0/) and as a [GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.7.0) on 2026-10-23 using the unified Trusted Publishing workflow. The release includes five registered checkpoints. Model weights are downloaded separately and are not bundled.
 
 To install v0.7.0:
 
@@ -179,8 +179,8 @@ sources and remaining license-scope uncertainty.
 
 ## SigLIP 2
 
-SigLIP 2 is implemented in the unreleased v0.7.0 development source and is
-not included in the published v0.6.1 wheel.
+SigLIP 2 is included in the published v0.7.0 distribution; it is not included
+in the earlier v0.6.1 wheel.
 
 The registry provides two pinned Google SigLIP 2 checkpoints, each producing
 768-dimensional image and text embeddings:
@@ -256,7 +256,7 @@ similarity = image_features @ text_features.T
 ```
 
 Qwen has no trained OpenCLIP logit scale; strict logits are unsupported and
-cosine scoring must be requested explicitly. The v0.7.0 source parity results
+cosine scoring must be requested explicitly. The v0.7.0 reference-parity results
 and the deferral of 8B support are recorded in the
 [model provenance report](docs/model-provenance-v0.7.0.md). Synthetic-input
 parity is not a retrieval-quality benchmark; actual video-file pixel-budget
@@ -704,7 +704,7 @@ OpenVLCLIP wheel or sdist.
 
 ## About the name
 
-The name OpenVLCLIP reflects the goal of providing familiar interfaces across vision and vision-language foundation models. The v0.5.0 PyPI distribution supports EmbeddingGemma 2 only; v0.6.0 is the first release with the dino.txt backend. The v0.6.1 patch preserves those model capabilities and embedding behavior. The project does not claim OpenCLIP affiliation or full OpenCLIP compatibility.
+The name OpenVLCLIP reflects the goal of providing familiar interfaces across vision and vision-language foundation models. The v0.5.0 PyPI distribution supports EmbeddingGemma 2 only; v0.6.0 is the first release with the dino.txt backend; v0.7.0 adds SigLIP 2 and Qwen3-VL-Embedding-2B. The v0.6.1 patch preserves the earlier model capabilities and embedding behavior. The project does not claim OpenCLIP affiliation or full OpenCLIP compatibility.
 
 This is an independently developed library, not an official extension of OpenCLIP, Google, or Meta.
 
