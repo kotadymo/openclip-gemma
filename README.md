@@ -1,30 +1,30 @@
 # OpenVLCLIP
 
-An independent Python library that provides an OpenCLIP-inspired inference API for Google's EmbeddingGemma 2 and Meta's DINOv2 + dino.txt models. The unreleased v0.7.0 development work adds SigLIP 2 and Qwen3-VL-Embedding backends while retaining each model's own tokenizer, image processing, prompts, and embedding behavior.
+An independent Python library providing an OpenCLIP-inspired inference API for EmbeddingGemma 2, DINOv2 + dino.txt, Google SigLIP 2 FixRes/NaFlex, and Qwen3-VL-Embedding-2B. Each backend retains its official tokenizer, preprocessing, prompts, and embedding semantics.
 
 > [!IMPORTANT]
 > **Unofficial project**
 >
 > `openvlclip` is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or officially maintained by Google, Google DeepMind, Meta, or the OpenCLIP project.
 >
-> The published v0.6.1 distribution provides EmbeddingGemma 2 and DINOv2 + dino.txt. SigLIP 2 and Qwen3-VL-Embedding are unreleased v0.7.0 development features; Qwen 8B is deferred and is not a v0.7.0 supported model. This library is not a drop-in replacement for OpenCLIP and does not claim full API compatibility.
+> The v0.7.0 release candidate supports five checkpoints: EmbeddingGemma 2, DINOv2 + dino.txt, SigLIP 2 FixRes Base, SigLIP 2 NaFlex Base, and Qwen3-VL-Embedding-2B. **Qwen 8B is deferred and is not available through the v0.7.0 Registry.** This library is not a drop-in replacement for OpenCLIP.
 
 ## Features
 
 - OpenCLIP-style `create_model`, `create_model_and_transforms`, and `get_tokenizer` entry points.
 - Factory discovery with `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()`.
-- A Model Registry, shared Backend interface, and per-model Capabilities for `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, and `siglip2-naflex-base`; the v0.7.0 development branch also registers `qwen3-vl-embedding-2b`. This is not a complete drop-in replacement for OpenCLIP.
+- A Model Registry, shared Backend interface, and per-model Capabilities for `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, and `siglip2-naflex-base`; v0.7.0 also registers `qwen3-vl-embedding-2b`. This is not a complete drop-in replacement for OpenCLIP.
 - EmbeddingGemma uses the official Transformers model/processor and Sentence Transformers numerical reference; dino.txt follows the pinned Meta Hub implementation and checkpoints; SigLIP 2 uses pinned Google checkpoints and Transformers processors.
 - Model API includes `forward()`, `get_logits()`, and factory option `output_dict=True`.
 - EmbeddingGemma `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"`; dino.txt and SigLIP 2 strict modes preserve their official scaled-logit paths and learned parameters.
 - Cosine mode returns normalized features with scale `1.0`; these scores are not trained OpenCLIP logits or calibrated probabilities.
-- EmbeddingGemma 2's native 768-dimensional output and MRL dimensions 512, 256, and 128; dino.txt's native 2048-dimensional global and 1024-dimensional patch features; SigLIP 2's 768-dimensional global features without MRL; Qwen3-VL-Embedding-2B's 2048-dimensional native features with MRL (development branch only).
+- EmbeddingGemma 2's native 768-dimensional output and MRL dimensions 512, 256, and 128; dino.txt's native 2048-dimensional global and 1024-dimensional patch features; SigLIP 2's 768-dimensional global features without MRL; Qwen3-VL-Embedding-2B's 2048-dimensional native features with MRL.
 - EmbeddingGemma 2 selective text-only or text-and-image loading; the other backends require both image and text components.
 - SigLIP 2 FixRes image processing and NaFlex variable-resolution processing, preserving NaFlex patch masks and spatial shapes through batching and image search.
 - Pinned model revisions; model weights are downloaded at runtime and are not bundled with this package.
 - Bounded-batch image embedding and incremental Japanese/English text-to-image search.
 - dino.txt zero-shot classification, image search, patch embeddings, and text similarity maps.
-- Qwen3-VL processor-aware text, image, video, and mixed-input embedding through `encode_texts()`, `encode_image()`, `encode_video()`, and `encode_multimodal()` (unreleased v0.7.0 development only).
+- Qwen3-VL processor-aware text, image, video, and mixed-input embedding through `encode_texts()`, `encode_image()`, `encode_video()`, and `encode_multimodal()` in v0.7.0.
 - Optional PyAV-based video-frame indexing and text search.
 
 ## Installation
@@ -49,16 +49,15 @@ Install the optional video dependency for video-frame indexing and search:
 pip install --upgrade "openvlclip[video]"
 ```
 
-The published `openvlclip==0.6.1` distribution supports EmbeddingGemma 2 and
-DINOv2 + dino.txt. SigLIP 2 is in unreleased v0.7.0 development on `main`;
-Qwen3-VL-Embedding is in the unreleased v0.7.0 feature branch. Neither is
-included in the v0.6.1 PyPI wheel. The v0.6.1 patch release fixes dino.txt batch embedding defaults,
-adds opt-in content verification for image-index updates, and avoids
-per-interval loops when skipping large video timestamp gaps. See the
-[v0.6.1 release notes](docs/release-notes-v0.6.1.md). The wheel and sdist do
-not include model weights. The `[dinotxt]` extra provides dino.txt tokenizer
-dependencies.
+The latest published v0.6.1 wheel supports the two original backends. This source tree prepares v0.7.0 with five registered checkpoints; it is not yet evidence of a PyPI v0.7.0 publication. Model weights are downloaded separately, not bundled.
+For a v0.7.0 installation after the release becomes available on PyPI:
 
+```bash
+pip install "openvlclip[qwen3vl]==0.7.0"
+pip install "openvlclip[dinotxt]==0.7.0"
+```
+
+**Qwen3-VL-Embedding-8B is not supported in v0.7.0.** Native Qwen video-file processing also requires a compatible video/FFmpeg runtime as described below.
 OpenVLCLIP v0.6.1 was published on 2026-10-22 to
 [PyPI](https://pypi.org/project/openvlclip/0.6.1/) with a public
 [GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.1).
@@ -218,10 +217,9 @@ The same processor-aware input contract is retained by bounded file batching
 and image-index search. Neither SigLIP 2 variant supports patch embeddings or
 text similarity maps.
 
-## Qwen3-VL-Embedding (v0.7.0 development)
+## Qwen3-VL-Embedding-2B
 
-Qwen3-VL is not included in the published v0.6.1 distribution. Its v0.7.0
-development implementation uses the pinned Qwen processor and chat template:
+Qwen3-VL-Embedding-2B in v0.7.0 uses the pinned Qwen processor and chat template:
 
 | Model ID | Native image/text embedding | MRL range |
 | --- | ---: | ---: |
