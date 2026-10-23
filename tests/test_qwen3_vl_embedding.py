@@ -462,6 +462,7 @@ def test_file_video_records_and_uses_the_processor_pixel_budget(
     assert video_item["max_frames"] == 12
     assert video_item["total_pixels"] == 117_964_800.0
     assert video_item["video"] == str(video_path.resolve())
+    assert model.native_video_max_frames == 64
 
 
 def test_qwen_batching_passes_pil_images_to_processor(

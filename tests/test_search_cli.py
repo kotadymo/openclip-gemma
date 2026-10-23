@@ -221,6 +221,7 @@ def test_native_video_cli_forwards_model_and_video_policy(
                 "2",
                 "--max-frames",
                 "12",
+                "--verify-contents",
                 "--query-instruction",
                 "Represent this user's video query.",
             ]
@@ -235,6 +236,7 @@ def test_native_video_cli_forwards_model_and_video_policy(
         "max_frames": 12,
         "recursive": False,
         "embedding_dim": 2048,
+        "verify_contents": True,
         "query_instruction": "Represent this user's video query.",
     }
     validator.assert_called_once_with(None, name="embedding_dim")

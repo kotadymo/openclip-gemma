@@ -41,7 +41,9 @@ from openvlclip.embedding_space import (
 from openvlclip.image_search import (
     _PREPROCESSING_ID,
     ImageIndexCompatibilityError,
+    ImageIndexError,
     _encode_search_query,
+    _file_content_sha256,
     _ImageSearchModel,
     _model_embedding_space,
     _model_settings,
@@ -68,6 +70,7 @@ _NATIVE_VIDEO_INDEX_FORMAT_VERSION = 1
 _SAMPLING_METHOD = "first-presentation-frame-at-or-after-playback-origin-target-v2"
 _DEFAULT_NATIVE_VIDEO_FPS = 1.0
 _DEFAULT_NATIVE_VIDEO_MAX_FRAMES = 64
+_NO_NATIVE_VIDEO_MAX_FRAMES = object()
 _SUPPORTED_VIDEO_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi"})
 
 type _EmbeddingMatrix = NDArray[np.float32]
@@ -101,6 +104,7 @@ class _VideoRecord:
     relative_path: str
     size_bytes: int
     mtime_ns: int
+    content_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -206,13 +210,23 @@ def _validate_interval(interval: float) -> tuple[float, Fraction]:
     return interval_seconds, Fraction(str(interval_seconds))
 
 
+def _video_content_sha256(path: Path) -> str:
+    try:
+        return _file_content_sha256(path)
+    except ImageIndexError as error:
+        raise VideoSearchError(f"Could not hash video file {path}.") from error
+
+
 def _scan_video_files(
     videos_dir: str | os.PathLike[str],
     *,
     recursive: bool,
+    verify_contents: bool = False,
 ) -> tuple[Path, tuple[_VideoRecord, ...]]:
     if not isinstance(recursive, bool):
         raise TypeError("recursive must be a bool.")
+    if not isinstance(verify_contents, bool):
+        raise TypeError("verify_contents must be a bool.")
     try:
         root = Path(videos_dir).expanduser().resolve(strict=True)
     except (OSError, RuntimeError) as error:
@@ -236,7 +250,12 @@ def _scan_video_files(
             key = _path_key(relative_path)
             records_by_key.setdefault(
                 key,
-                _VideoRecord(relative_path, file_stat.st_size, file_stat.st_mtime_ns),
+                _VideoRecord(
+                    relative_path,
+                    file_stat.st_size,
+                    file_stat.st_mtime_ns,
+                    _video_content_sha256(path) if verify_contents else None,
+                ),
             )
     except OSError as error:
         raise VideoSearchError(
@@ -606,14 +625,7 @@ def _metadata_for_index(index: _VideoIndex, precision: str) -> dict[str, object]
         "sampling_method": _SAMPLING_METHOD,
         "video_count": len(index.videos),
         "frame_count": len(index.frames),
-        "videos": [
-            {
-                "path": video.relative_path,
-                "size_bytes": video.size_bytes,
-                "mtime_ns": video.mtime_ns,
-            }
-            for video in index.videos
-        ],
+        "videos": [_video_record_metadata(video) for video in index.videos],
         "frames": [
             {
                 "video_path": frame.video_path,
@@ -667,6 +679,7 @@ def _parse_video_record(value: object) -> _VideoRecord:
     relative_path = _validate_video_relative_path(value.get("path"))
     size_bytes = value.get("size_bytes")
     mtime_ns = value.get("mtime_ns")
+    content_sha256 = value.get("content_sha256")
     if (
         isinstance(size_bytes, bool)
         or not isinstance(size_bytes, int)
@@ -677,11 +690,30 @@ def _parse_video_record(value: object) -> _VideoRecord:
         raise VideoSearchError(
             "Video index metadata contains invalid video file information."
         )
+    if content_sha256 is not None and (
+        not isinstance(content_sha256, str)
+        or len(content_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in content_sha256)
+    ):
+        raise VideoSearchError(
+            "Video index metadata contains an invalid video content SHA-256."
+        )
     if PurePosixPath(relative_path).suffix.lower() not in _SUPPORTED_VIDEO_SUFFIXES:
         raise VideoSearchError(
             "Video index metadata contains an unsupported video extension."
         )
-    return _VideoRecord(relative_path, size_bytes, mtime_ns)
+    return _VideoRecord(relative_path, size_bytes, mtime_ns, content_sha256)
+
+
+def _video_record_metadata(record: _VideoRecord) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "path": record.relative_path,
+        "size_bytes": record.size_bytes,
+        "mtime_ns": record.mtime_ns,
+    }
+    if record.content_sha256 is not None:
+        metadata["content_sha256"] = record.content_sha256
+    return metadata
 
 
 def _validate_video_relative_path(value: object) -> str:
@@ -1580,6 +1612,25 @@ def _validate_native_video_settings(fps: object, max_frames: object) -> tuple[fl
     return fps_value, max_frames
 
 
+def _validate_native_video_model_frame_limit(model: object, max_frames: int) -> None:
+    model_limit = getattr(
+        model,
+        "native_video_max_frames",
+        _NO_NATIVE_VIDEO_MAX_FRAMES,
+    )
+    if model_limit is _NO_NATIVE_VIDEO_MAX_FRAMES:
+        return
+    if isinstance(model_limit, bool) or not isinstance(model_limit, int):
+        raise TypeError("model.native_video_max_frames must be a positive integer.")
+    if model_limit <= 0:
+        raise ValueError("model.native_video_max_frames must be greater than zero.")
+    if max_frames > model_limit:
+        raise ValueError(
+            "max_frames must not exceed the model's native video frame limit "
+            f"({model_limit})."
+        )
+
+
 def _require_native_video_model(model: object) -> Callable[..., torch.Tensor]:
     capabilities = getattr(model, "capabilities", None)
     if (
@@ -1639,14 +1690,7 @@ def _metadata_for_native_video_index(
         "fps": index.fps,
         "max_frames": index.max_frames,
         "video_count": len(index.videos),
-        "videos": [
-            {
-                "path": video.relative_path,
-                "size_bytes": video.size_bytes,
-                "mtime_ns": video.mtime_ns,
-            }
-            for video in index.videos
-        ],
+        "videos": [_video_record_metadata(video) for video in index.videos],
         "embedding_sha256": _array_sha256(index.embeddings),
     }
 
@@ -1918,11 +1962,19 @@ def build_or_update_native_video_index(
     max_frames: int = _DEFAULT_NATIVE_VIDEO_MAX_FRAMES,
     recursive: bool = False,
     embedding_dim: int | None = None,
+    verify_contents: bool = False,
     query_instruction: str | None = None,
 ) -> NativeVideoIndexUpdate:
-    """Build or incrementally update a model-native video-embedding index."""
+    """Build or incrementally update a model-native video-embedding index.
+
+    Set ``verify_contents=True`` to compare SHA-256 hashes and re-embed videos
+    whose bytes changed; this reads every video during each index update.
+    """
     encoder = _require_native_video_model(model)
     fps, max_frames = _validate_native_video_settings(fps, max_frames)
+    _validate_native_video_model_frame_limit(model, max_frames)
+    if not isinstance(verify_contents, bool):
+        raise TypeError("verify_contents must be a bool.")
     if not callable(getattr(model, "validate_embedding_dimension", None)):
         raise VideoSearchError(
             "Native video indexing requires a backend-native embedding dimension."
@@ -1932,7 +1984,11 @@ def build_or_update_native_video_index(
         embedding_dim,
         name="embedding_dim",
     )
-    root, videos = _scan_video_files(videos_dir, recursive=recursive)
+    root, videos = _scan_video_files(
+        videos_dir,
+        recursive=recursive,
+        verify_contents=verify_contents,
+    )
     output_dir = Path(index_dir).expanduser()
     if output_dir.exists() and not output_dir.is_dir():
         raise ValueError(f"Native-video index output path is not a directory: {output_dir}")
@@ -1979,20 +2035,33 @@ def build_or_update_native_video_index(
         else 0
     )
     embeddings_by_key: dict[str, np.ndarray] = {}
+    videos_for_index = list(videos)
     added = 0
     updated = 0
     unchanged = 0
-    for video in videos:
+    for row, video in enumerate(videos):
         key = _path_key(video.relative_path)
         previous_row = previous_rows.get(key)
         if previous is not None and previous_row is not None:
             previous_video = previous.videos[previous_row]
-            if (previous_video.size_bytes, previous_video.mtime_ns) == (
-                video.size_bytes,
-                video.mtime_ns,
-            ):
+            if verify_contents:
+                unchanged_content = (
+                    previous_video.content_sha256 is not None
+                    and previous_video.content_sha256 == video.content_sha256
+                )
+            else:
+                unchanged_content = (
+                    previous_video.size_bytes,
+                    previous_video.mtime_ns,
+                ) == (video.size_bytes, video.mtime_ns)
+            if unchanged_content:
                 embeddings_by_key[key] = previous.embeddings[previous_row]
                 unchanged += 1
+                if not verify_contents:
+                    videos_for_index[row] = replace(
+                        video,
+                        content_sha256=previous_video.content_sha256,
+                    )
                 continue
             updated += 1
         else:
@@ -2006,9 +2075,14 @@ def build_or_update_native_video_index(
             max_frames=max_frames,
         )
 
+    videos = tuple(videos_for_index)
     for video in videos:
         video_path = root / PurePosixPath(video.relative_path)
         if _file_signature(video_path) != (video.size_bytes, video.mtime_ns):
+            raise VideoSearchError(
+                f"Video changed during indexing: {video_path}. Run the index command again."
+            )
+        if verify_contents and _video_content_sha256(video_path) != video.content_sha256:
             raise VideoSearchError(
                 f"Video changed during indexing: {video_path}. Run the index command again."
             )
@@ -2061,6 +2135,7 @@ def search_native_video(
     _require_native_video_model(model)
     device, precision = _model_settings(model)
     index = _load_native_video_index(index_dir, expected_precision=precision)
+    _validate_native_video_model_frame_limit(model, index.max_frames)
     if not index.videos:
         raise ValueError("The native-video index is empty; run the index command first.")
     expected_embedding_space = _native_video_embedding_space(

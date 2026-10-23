@@ -154,6 +154,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Include videos in subdirectories.",
     )
     native_index_parser.add_argument(
+        "--verify-contents",
+        action="store_true",
+        help="Hash videos to detect content changes despite matching size and mtime.",
+    )
+    native_index_parser.add_argument(
         "--query-instruction",
         help="Fix a text-query instruction for instruction-aware models.",
     )
@@ -248,6 +253,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_frames=args.max_frames,
                 recursive=args.recursive,
                 embedding_dim=embedding_dim,
+                verify_contents=args.verify_contents,
                 query_instruction=args.query_instruction,
             )
             print(

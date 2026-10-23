@@ -26,6 +26,8 @@ An independent Python library providing an OpenCLIP-inspired inference API for E
 - dino.txt zero-shot classification, image search, patch embeddings, and text similarity maps.
 - Qwen3-VL processor-aware text, image, video, and mixed-input embedding through `encode_texts()`, `encode_image()`, `encode_video()`, and `encode_multimodal()` in v0.7.0.
 - Optional PyAV-based video-frame indexing and text search.
+- Optional SHA-256 validation for native whole-video indexes, including legacy
+  index entries without stored hashes.
 
 ## Installation
 
@@ -528,14 +530,20 @@ Native whole-video embedding is a distinct API and index format:
 cosine-ranked videos without timestamps. These functions require a backend with
 `model.capabilities["video_embedding"]` and do not fall back to sampled frames.
 The CLI commands are `native-index` and `native-search`; choose a registered
-model with that capability or the command fails explicitly. Qwen3-VL is still
-in Draft PR #44, so this repository state has fake-model unit tests only and no
-real Qwen native-video integration result. Do not treat it as an available
-Qwen workflow until that backend is merged and its GPU parity gate passes.
+model with that capability or the command fails explicitly. The Qwen3-VL-
+Embedding-2B backend supports native video embedding and limits `max_frames` to
+64; requests above its published limit are rejected before video scanning.
+Native-video indexes use size and modification time by default. Pass
+`verify_contents=True` to `build_or_update_native_video_index()` or
+`--verify-contents` to `native-index` to hash every video with SHA-256 and
+re-embed changed contents even when size and modification time are unchanged.
+This strict mode reads each file during every update. Existing native-video
+indexes without stored hashes remain readable; the first strict update safely
+re-embeds those entries to establish their hashes.
 
 ## OpenCLIP differences and compatibility
 
-`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. The development registry contains `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, `siglip2-naflex-base`, and `qwen3-vl-embedding-2b`, with model-specific capabilities and embedding spaces. SigLIP 2 and Qwen3-VL are not in the published v0.6.1 distribution.
+`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. The public registry contains `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, `siglip2-naflex-base`, and `qwen3-vl-embedding-2b`, with model-specific capabilities and embedding spaces. The v0.7.0 distribution includes these five checkpoints; Qwen3-VL-Embedding-8B is not registered.
 
 | Area | `openvlclip` behavior |
 | --- | --- |
