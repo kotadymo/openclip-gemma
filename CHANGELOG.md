@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.7.0 — Release preparation (2026-10-23)
+## v0.7.0 — 2026-10-23
 
 This minor release expands OpenVLCLIP to **five officially registered checkpoints**: EmbeddingGemma 2, DINOv2 + dino.txt, two SigLIP 2 Base variants (FixRes and NaFlex), and **Qwen3-VL-Embedding-2B**. Qwen3-VL-Embedding-8B is explicitly **deferred**; it is **not** registered or supported in v0.7.0.
 
@@ -20,7 +20,7 @@ This minor release expands OpenVLCLIP to **five officially registered checkpoint
 - Preserve legacy image/video indexes via versioned metadata and compatibility checks.
 - The pinned real-model parity results for SigLIP 2 FixRes, SigLIP 2 NaFlex, and Qwen 2B CPU/CUDA (FP32/BF16 as documented) are in [model provenance](docs/model-provenance-v0.7.0.md). Synthetic tests are **not** claims about retrieval quality.
 - Qwen 8B CPU research results remain documented but do not imply v0.7.0 support.
-- The distribution will be published only after release CI, wheel/sdist checks, license confirmation, the new PyPI Trusted Publisher configuration, and GitHub Environment approval.
+- Release CI passed and the authenticated GitHub Actions workflow uploaded both distributions to [PyPI](https://pypi.org/project/openvlclip/0.7.0/) after Environment approval. The GitHub Release and independent post-install verification are tracked in the [release checklist](docs/release-checklist-v0.7.0.md).
 
 See [v0.7.0 release notes](docs/release-notes-v0.7.0.md).
 

@@ -7,7 +7,7 @@ An independent Python library providing an OpenCLIP-inspired inference API for E
 >
 > `openvlclip` is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or officially maintained by Google, Google DeepMind, Meta, or the OpenCLIP project.
 >
-> The v0.7.0 release candidate supports five checkpoints: EmbeddingGemma 2, DINOv2 + dino.txt, SigLIP 2 FixRes Base, SigLIP 2 NaFlex Base, and Qwen3-VL-Embedding-2B. **Qwen 8B is deferred and is not available through the v0.7.0 Registry.** This library is not a drop-in replacement for OpenCLIP.
+> The v0.7.0 PyPI upload succeeded on 2026-10-23 and includes five registered checkpoints: EmbeddingGemma 2, DINOv2 + dino.txt, SigLIP 2 FixRes Base, SigLIP 2 NaFlex Base, and Qwen3-VL-Embedding-2B. **Qwen 8B is deferred and is not available through the v0.7.0 Registry.** This library is not a drop-in replacement for OpenCLIP.
 
 ## Features
 
@@ -49,8 +49,9 @@ Install the optional video dependency for video-frame indexing and search:
 pip install --upgrade "openvlclip[video]"
 ```
 
-The latest published v0.6.1 wheel supports the two original backends. This source tree prepares v0.7.0 with five registered checkpoints; it is not yet evidence of a PyPI v0.7.0 publication. Model weights are downloaded separately, not bundled.
-For a v0.7.0 installation after the release becomes available on PyPI:
+OpenVLCLIP v0.7.0 was uploaded successfully to [PyPI](https://pypi.org/project/openvlclip/0.7.0/) on 2026-10-23 using the unified Trusted Publishing workflow. The release includes five registered checkpoints. Model weights are downloaded separately and are not bundled.
+
+To install v0.7.0:
 
 ```bash
 pip install "openvlclip[qwen3vl]==0.7.0"
@@ -62,7 +63,7 @@ OpenVLCLIP v0.6.1 was published on 2026-10-22 to
 [PyPI](https://pypi.org/project/openvlclip/0.6.1/) with a public
 [GitHub Release](https://github.com/kotadymo/openvlclip/releases/tag/v0.6.1).
 
-For development from a source checkout with the Qwen3-VL feature branch,
+For development from a source checkout with the v0.7.0 Qwen3-VL backend,
 install the development and optional dependencies with:
 
 ```bash
@@ -78,7 +79,7 @@ The first model or tokenizer load downloads the required files unless they
 are already cached. EmbeddingGemma 2 is pinned to revision
 `914f7f89142e33e77833254d9c9b90c3cef7303b`; dino.txt code and weight hashes
 are recorded in the [dino.txt reference](docs/dinotxt-v0.6.0.md). The v0.7.0
-development model revisions and validation status are recorded in
+model revisions and validation status are recorded in
 [model provenance](docs/model-provenance-v0.7.0.md).
 
 For migration from the v0.4.0 distribution and import namespace, see the

@@ -1,6 +1,6 @@
 # OpenVLCLIP v0.7.0 — Release Notes
 
-**Status:** Release candidate; do not mark published until the tagged PyPI workflow succeeds and the public wheel is verified.
+**Status:** PyPI upload completed successfully on 2026-10-23, after GitHub Environment approval. See [the publishing run](https://github.com/kotadymo/openvlclip/actions/runs/39941731530). Independent PyPI JSON/hash comparison, fresh wheel install, and GitHub Release creation are tracked separately and are not yet verified here.
 
 ## New in v0.7.0
 
@@ -28,7 +28,7 @@ The library supports **five registered checkpoints** (two existing and three new
 - Opt-in SHA-256 image-content verification through `--verify-contents`.
 - Native embedding dimension resolution in frame-video indexing.
 
-### Install after publication
+### Installation
 
 ```bash
 pip install "openvlclip==0.7.0"
@@ -50,4 +50,11 @@ Weights are retrieved from pinned external official sources and are not distribu
 - Real-world retrieval accuracy and comprehensive benchmarks remain not evaluated.
 - Publishing requires the new PyPI Trusted Publisher for `publish-pypi.yml`, GitHub `pypi` Environment approval, valid license-confirmation variables, and successful main CI.
 
-**Before promoting this document to final:** verify PyPI artifact SHA-256 hashes, clean wheel install, `list_models()` output and GitHub Release URL.
+### Published distribution hashes (GitHub Trusted Publishing log)
+
+| Distribution | SHA-256 |
+| --- | --- |
+| `openvlclip-0.7.0-py3-none-any.whl` | `92944d02f57ef883d1a955452d1d9c2e1c446fa84f412c0e66752d4db4a38628` |
+| `openvlclip-0.7.0.tar.gz` | `7b6b2b8834659a3ba5b74bd2f4fcfed6e302898bd61c574356ea016edcc3528b` |
+
+These values are taken from the successful [GitHub Actions publish log](https://github.com/kotadymo/openvlclip/actions/runs/39941731530), which shows `200 OK` for both uploads. Independently fetching PyPI JSON and freshly installing the published wheel have not been completed in this document. The GitHub Release is also pending.
