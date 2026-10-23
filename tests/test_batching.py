@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -101,6 +101,36 @@ class FakeMappingEncoder(FakeEncoder):
         return features
 
 
+class FakePILImageEncoder(FakeEncoder):
+    def encode_image(
+        self,
+        images: ProcessedImageBatch,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        assert isinstance(images, Sequence)
+        assert not isinstance(images, (str, bytes, bytearray))
+        pil_images = [image for image in images if isinstance(image, Image.Image)]
+        assert len(pil_images) == len(images)
+        self.batch_sizes.append(len(pil_images))
+        self.inference_mode_states.append(torch.is_inference_mode_enabled())
+        embedding_dim = 768 if truncate_dim is None else truncate_dim
+        features = torch.zeros(
+            (len(pil_images), embedding_dim),
+            dtype=torch.float32,
+            device=self.anchor.device,
+        )
+        features[:, 0] = torch.tensor(
+            [
+                float(image.getpixel((0, 0))[0]) / 255
+                for image in pil_images
+            ],
+            device=self.anchor.device,
+        )
+        features[:, 1] = 1
+        return features
+
+
 class OutOfMemoryEncoder(FakeEncoder):
     def encode_image(self, images: torch.Tensor) -> torch.Tensor:
         raise torch.cuda.OutOfMemoryError("CUDA out of memory")
@@ -128,6 +158,10 @@ def _mapping_preprocess(image: Image.Image) -> dict[str, torch.Tensor]:
         "pixel_attention_mask": mask,
         "spatial_shapes": torch.tensor((1, 1), dtype=torch.long),
     }
+
+
+def _pil_preprocess(image: Image.Image) -> Image.Image:
+    return image
 
 
 def _write_image(
@@ -220,6 +254,34 @@ def test_file_batching_preserves_processor_mapping_fields_and_order(
     )
 
 
+def test_file_batching_passes_pil_preprocessor_outputs_in_order(
+    tmp_path: Path,
+) -> None:
+    paths = [
+        _write_image(tmp_path / "first.png", red=51),
+        _write_image(tmp_path / "second.png", red=102, size=(12, 8)),
+        _write_image(tmp_path / "third.png", red=153),
+    ]
+    model = FakePILImageEncoder()
+
+    results = list(
+        iter_image_embeddings(
+            model,
+            _pil_preprocess,
+            paths,
+            batch_size=2,
+        )
+    )
+
+    assert [path for path, _ in results] == paths
+    assert [feature.shape for _, feature in results] == [(768,)] * 3
+    torch.testing.assert_close(
+        torch.stack([feature[0] for _, feature in results]),
+        torch.tensor([51, 102, 153], dtype=torch.float32) / 255,
+    )
+    assert model.batch_sizes == [2, 1]
+
+
 def test_preprocessed_batch_defaults_to_dinotxt_native_dimension() -> None:
     items = [("frame-1", torch.zeros((3, 8, 8), dtype=torch.float32))]
 
@@ -227,6 +289,32 @@ def test_preprocessed_batch_defaults_to_dinotxt_native_dimension() -> None:
 
     assert results[0][0] == "frame-1"
     assert results[0][1].shape == (2048,)
+
+
+def test_preprocessed_batch_accepts_pil_frames() -> None:
+    frames = [
+        Image.new("RGB", (8, 8), (51, 0, 0)),
+        Image.new("RGB", (12, 8), (102, 0, 0)),
+    ]
+    model = FakePILImageEncoder()
+
+    results = list(
+        _iter_preprocessed_embeddings(
+            model,
+            [(index, image) for index, image in enumerate(frames)],
+            batch_size=2,
+            item_kind="video frames",
+        )
+    )
+
+    assert [key for key, _ in results] == [0, 1]
+    assert model.batch_sizes == [2]
+    torch.testing.assert_close(
+        torch.stack([feature[0] for _, feature in results]),
+        torch.tensor([51, 102], dtype=torch.float32) / 255,
+    )
+    for image in frames:
+        image.close()
 
 
 def test_explicit_dinotxt_native_embedding_dimension_is_accepted(

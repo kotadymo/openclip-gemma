@@ -419,9 +419,16 @@ uv run python examples/image_search.py search \
 ```
 
 Image indexes record model, revision, preprocessing, prompt, normalization,
-and embedding-strategy identity. A search or conversion across incompatible
-embedding spaces is rejected; dino.txt, EmbeddingGemma MRL, and patch-feature
-vectors cannot be mixed.
+embedding strategy, input type, and versioned query policy. Omitting
+`--embedding-dim` selects the registered backend's native dimension:
+EmbeddingGemma 2 and SigLIP 2 use 768, while dino.txt uses 2048. Only
+EmbeddingGemma 2 supports the 768/512/256/128 MRL set; dino.txt cannot be
+truncated to 768 or 1024. A search or conversion across incompatible embedding
+spaces is rejected; dino.txt, EmbeddingGemma MRL, and 1024-dimensional patch
+features cannot be mixed.
+If a backend supports arbitrary query instructions, pass the same
+`--query-instruction` value when creating and searching an index. EmbeddingGemma
+2 supports registered task prompts, not arbitrary query instructions.
 
 The local index is a versioned NumPy `.npz` archive containing JSON metadata and float32 embeddings; it is read with pickle loading disabled and replaced atomically after a successful update. Image and video index archives are limited to 512 MiB each; split larger collections into multiple indexes. By default, image changes are detected by relative path, size, and modification time. Use `examples/image_search.py index --verify-contents` when unchanged size and timestamp must not hide changed contents; this hashes each source file, stores the SHA-256 digest, and adds disk I/O. A strict update of an older index without stored hashes re-embeds its existing images once. A damaged image or incompatible/corrupt index stops the operation with an error rather than silently skipping data. See the [image search design and storage notes](docs/image-search-v0.2.0.md).
 
@@ -452,10 +459,11 @@ for result in search_images(model, "image-index-256", "青空の山", top_k=5):
 The streaming iterator yields CPU tensors in input order. Image-search results
 contain raw cosine similarity scores, not probabilities.
 Image indexes use format v2 and store one supported embedding dimension.
-Existing v1 indexes remain readable at 768 dimensions. An incremental update
-cannot mix dimensions; use a separate index directory or convert an existing
-768-dimensional index with `convert_image_index()`. Conversion truncates and
-renormalizes stored vectors without rerunning the model.
+Compatible legacy EmbeddingGemma indexes remain readable at 768 dimensions.
+An incremental update cannot mix dimensions; use a separate index directory or
+convert an existing supported MRL index with `convert_image_index()`.
+Conversion truncates and renormalizes stored vectors without rerunning the
+model.
 
 ## Video frame search (optional `video` extra)
 
@@ -466,16 +474,30 @@ text. The optional PyAV dependency is installed with
 ```bash
 uv sync --locked --group dev --extra video
 uv run python examples/video_search.py index \
-  --videos ./videos --output ./video-index --interval 1.0 \
+  --model embeddinggemma-2 --videos ./videos --output ./video-index --interval 1.0 \
   --batch-size 8 --embedding-dim 256 --device cpu --recursive
 uv run python examples/video_search.py search \
-  --index ./video-index --query "人がドリルで穴を開けている" \
+  --model embeddinggemma-2 --index ./video-index \
+  --query "人がドリルで穴を開けている" \
   --top-k 5 --device cpu
 ```
 
 MP4 is the primary target; `.mp4`, `.m4v`, `.mov`, `.mkv`, `.webm`, and `.avi` paths are considered. Actual container and codec support depends on the FFmpeg build bundled with PyAV. The decoder samples the first frame whose presentation timestamp reaches each interval target and records its PTS-derived time; the requested interval is a target, not a promise that a frame exists at that exact time. Video is decoded sequentially, while only a bounded frame batch is sent through the image encoder. Reduce `--batch-size` if GPU memory is limited.
 
-Search ranks individual sampled frames by cosine similarity. Timestamps are relative to the container playback start, or the video stream start when the container start is unavailable; if neither is present, the first decoded frame defines zero. It does not understand motion, event order, or temporal relationships, and a scene between sampled timestamps can be missed. The local `video-index.npz` archive stores frame embeddings and timing metadata separately from image indexes, uses pickle-disabled NumPy loading, and is atomically replaced. Video additions, changes, and deletions are reconciled by relative path, file size, and modification time in nanoseconds; preserving both size and timestamp can evade change detection. See the [video search design notes](docs/video-search-v0.2.0.md) for storage, sampling, validation, and decoder limitations.
+Omitting `--embedding-dim` uses the selected backend's native image-embedding
+dimension. Search ranks individual sampled frames by cosine similarity.
+Timestamps are relative to the container playback start, or the video stream
+start when the container start is unavailable; if neither is present, the first
+decoded frame defines zero. It does not understand motion, event order, or
+temporal relationships, and a scene between sampled timestamps can be missed.
+The local `video-index.npz` archive stores frame embeddings and timing metadata
+separately from image indexes, uses pickle-disabled NumPy loading, and is
+atomically replaced. Video additions, changes, and deletions are reconciled by
+relative path, file size, and modification time in nanoseconds; preserving both
+size and timestamp can evade change detection. The frame workflow uses each
+selected backend's image path; real dino.txt/Qwen video-frame integration has
+not been validated. See the [video search design notes](docs/video-search-v0.2.0.md)
+for storage, sampling, validation, and decoder limitations.
 
 The API is available in `openvlclip.video_search`:
 
@@ -492,14 +514,26 @@ for match in search_video(model, "video-index", "人がドリルで穴を開け�
 ```
 
 The documented video workflow uses the EmbeddingGemma backend; dino.txt video
-support is not claimed. Video search ranks individual sampled frames. It does not understand motion,
-event order, or temporal relationships, and scenes between sampled timestamps
-can be missed. Search loads the full index into RAM and uses brute-force cosine
-scoring, so memory and latency grow with collection size.
+frame-search integration is not yet claimed because the real-model path has not
+been exercised. Video search ranks individual sampled frames. It does not
+understand motion, event order, or temporal relationships, and scenes between
+sampled timestamps can be missed. Search loads the full index into RAM and uses
+brute-force cosine scoring, so memory and latency grow with collection size.
 Video indexes use format v3 and support EmbeddingGemma's MRL dimensions. Existing
 version-2 indexes remain readable at 768 dimensions; version-1 timestamp
 indexes are still unsupported. Use `convert_video_index()` to create a
 separate, smaller-dimensional index without model inference.
+
+Native whole-video embedding is a distinct API and index format:
+`build_or_update_native_video_index()` and `search_native_video()` in
+`openvlclip.video_search` call `model.encode_video()` once per video and return
+cosine-ranked videos without timestamps. These functions require a backend with
+`model.capabilities["video_embedding"]` and do not fall back to sampled frames.
+The CLI commands are `native-index` and `native-search`; choose a registered
+model with that capability or the command fails explicitly. Qwen3-VL is still
+in Draft PR #44, so this repository state has fake-model unit tests only and no
+real Qwen native-video integration result. Do not treat it as an available
+Qwen workflow until that backend is merged and its GPU parity gate passes.
 
 ## OpenCLIP differences and compatibility
 

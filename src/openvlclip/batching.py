@@ -123,7 +123,7 @@ def _stream_image_embeddings(
 
 def _iter_preprocessed_embeddings[EmbeddingKey](
     model: _ImageEncoder,
-    image_items: Iterable[tuple[EmbeddingKey, torch.Tensor]],
+    image_items: Iterable[tuple[EmbeddingKey, ProcessedImage]],
     *,
     batch_size: int = _DEFAULT_BATCH_SIZE,
     item_kind: str = "images",
@@ -159,12 +159,12 @@ def _iter_preprocessed_embeddings[EmbeddingKey](
 
 def _stream_preprocessed_embeddings[EmbeddingKey](
     model: _ImageEncoder,
-    image_items: Iterator[tuple[EmbeddingKey, torch.Tensor]],
+    image_items: Iterator[tuple[EmbeddingKey, ProcessedImage]],
     batch_size: int,
     item_kind: str,
     embedding_dim: int,
 ) -> Iterator[tuple[EmbeddingKey, torch.Tensor]]:
-    pending: list[tuple[int, EmbeddingKey, torch.Tensor]] = []
+    pending: list[tuple[int, EmbeddingKey, ProcessedImage]] = []
     for input_index, item in enumerate(image_items):
         try:
             key, image_tensor = item
@@ -172,16 +172,12 @@ def _stream_preprocessed_embeddings[EmbeddingKey](
             raise TypeError(
                 f"Preprocessed item at input index {input_index} must be a (key, Tensor) pair."
             ) from error
-        if not isinstance(image_tensor, torch.Tensor):
-            raise TypeError(
-                f"Preprocessed item at input index {input_index} is not a torch.Tensor."
-            )
-        if image_tensor.ndim != 3:
-            raise ValueError(
-                f"Preprocessed item at input index {input_index} must have shape [C,H,W]; "
-                f"received {tuple(image_tensor.shape)}."
-            )
-        pending.append((input_index, key, image_tensor))
+        processed_image = _validate_processed_image(
+            image_tensor,
+            input_index=input_index,
+            source="Preprocessed item",
+        )
+        pending.append((input_index, key, processed_image))
         if len(pending) == batch_size:
             yield from _encode_image_chunk(
                 model,
@@ -213,6 +209,11 @@ def _load_preprocessed_image(
             with Image.open(path) as image:
                 image.load()
                 image_tensor = preprocess(image)
+                return _validate_processed_image(
+                    image_tensor,
+                    input_index=input_index,
+                    source=f"Preprocessing image ({path})",
+                )
     except (
         OSError,
         Image.DecompressionBombError,
@@ -222,32 +223,38 @@ def _load_preprocessed_image(
             f"Could not read image at input index {input_index} ({path}): {error}"
         ) from error
 
-    if isinstance(image_tensor, torch.Tensor):
-        if image_tensor.ndim != 3:
+
+def _validate_processed_image(
+    image: object,
+    *,
+    input_index: int,
+    source: str,
+) -> ProcessedImage:
+    if isinstance(image, torch.Tensor):
+        if image.ndim != 3:
             raise ValueError(
-                f"Preprocessing image at input index {input_index} "
-                f"({path}) must return a [C,H,W] Tensor; "
-                f"received {tuple(image_tensor.shape)}."
+                f"{source} at input index {input_index} must return a [C,H,W] Tensor; "
+                f"received {tuple(image.shape)}."
             )
-        return image_tensor
-    if isinstance(image_tensor, Image.Image):
-        return image_tensor.copy()
-    if not isinstance(image_tensor, Mapping):
+        return image
+    if isinstance(image, Image.Image):
+        return image.copy()
+    if not isinstance(image, Mapping):
         raise TypeError(
-            f"Preprocessing image at input index {input_index} "
-            f"({path}) did not return a Tensor, processor mapping, or PIL image."
+            f"{source} at input index {input_index} did not return a Tensor, "
+            "PIL image, or processor mapping."
         )
-    if not image_tensor or any(
+    if not image or any(
         not isinstance(key, str)
         or not isinstance(value, torch.Tensor)
         or value.ndim == 0
-        for key, value in image_tensor.items()
+        for key, value in image.items()
     ):
         raise TypeError(
-            f"Preprocessing image at input index {input_index} "
-            f"({path}) must return a non-empty mapping of names to non-scalar Tensors."
+            f"{source} at input index {input_index} must return a non-empty "
+            "mapping of names to non-scalar Tensors."
         )
-    return image_tensor
+    return image
 
 
 def _processed_image_shape_key(
@@ -333,6 +340,10 @@ def _encode_image_chunk[EmbeddingKey](
                 f"{input_indices} (items={[str(item[1]) for _, item in group]}, "
                 f"batch_size={batch_size}); reduce batch_size."
             ) from error
+        finally:
+            for _, (_, _, processed_image) in group:
+                if isinstance(processed_image, Image.Image):
+                    processed_image.close()
 
         expected_shape = (len(group), embedding_dim)
         if (

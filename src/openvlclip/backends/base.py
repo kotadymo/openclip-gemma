@@ -213,8 +213,8 @@ def stack_processed_images(
     images: Sequence[ProcessedImage],
     *,
     backend_name: str,
-) -> ProcessedImage:
-    """Stack homogeneous per-image Tensor or processor-mapping outputs."""
+) -> ProcessedImageBatch:
+    """Batch homogeneous Tensor, processor-mapping, or PIL preprocessing outputs."""
     if isinstance(images, (str, bytes, bytearray)) or not isinstance(images, Sequence):
         raise TypeError(f"images must be a sequence for the {backend_name} backend.")
     if not images:
@@ -244,9 +244,17 @@ def stack_processed_images(
             )
         return torch.stack(tensors)
 
+    if isinstance(first, Image.Image):
+        if any(not isinstance(image, Image.Image) for image in images):
+            raise TypeError(
+                f"Image inputs must use one representation for the {backend_name} "
+                "backend."
+            )
+        return tuple(image for image in images if isinstance(image, Image.Image))
+
     if not isinstance(first, Mapping):
         raise TypeError(
-            f"Image inputs must be Tensors or processor mappings for the "
+            f"Image inputs must be Tensors, PIL images, or processor mappings for the "
             f"{backend_name} backend."
         )
     keys = tuple(first)

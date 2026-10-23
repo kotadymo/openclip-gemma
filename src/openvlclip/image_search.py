@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Protocol
@@ -34,6 +35,7 @@ from openvlclip.constants import (
 from openvlclip.embedding_space import (
     EmbeddingSpace,
     EmbeddingSpaceMetadata,
+    embedding_spaces_compatible,
     has_embedding_space_metadata,
 )
 from openvlclip.index_storage import (
@@ -76,6 +78,9 @@ class ImageIndexCompatibilityError(ImageIndexError):
 
 class _ImageSearchModel(Protocol):
     @property
+    def capabilities(self) -> Mapping[str, bool]: ...
+
+    @property
     def embedding_space_metadata(self) -> EmbeddingSpaceMetadata: ...
 
     def parameters(self) -> Iterator[torch.nn.Parameter]: ...
@@ -98,6 +103,15 @@ class _ImageSearchModel(Protocol):
         self,
         text: torch.Tensor,
         *,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor: ...
+
+    def encode_texts(
+        self,
+        texts: str | Sequence[str],
+        *,
+        instruction: str | None = None,
         normalize: bool = False,
         truncate_dim: int | None = None,
     ) -> torch.Tensor: ...
@@ -246,6 +260,9 @@ def _model_embedding_space(
     embedding_dimension: int,
     precision: str,
     sampling_method: str | None = None,
+    input_type: str = "image",
+    query_instruction: str | None = None,
+    processing_parameters: str = "{}",
 ) -> EmbeddingSpace:
     metadata = getattr(model, "embedding_space_metadata", None)
     if not isinstance(metadata, EmbeddingSpaceMetadata):
@@ -258,15 +275,68 @@ def _model_embedding_space(
             embedding_dimension,
             name="embedding_dimension",
         )
+        instruction_aware = _supports_instruction(model)
+        if query_instruction is not None:
+            if not isinstance(query_instruction, str):
+                raise TypeError("query_instruction must be a string or None.")
+            if not _supports_query_instruction(model):
+                raise NotImplementedError(
+                    "This model does not support query instructions."
+                )
+        index_policy = (
+            _policy_json(
+                {"input_type": input_type, "instruction": "backend-default"}
+            )
+            if instruction_aware
+            else None
+        )
+        query_policy = (
+            _policy_json({"instruction": query_instruction})
+            if instruction_aware
+            else None
+        )
         return metadata.for_index(
             embedding_dimension=embedding_dimension,
             model_precision=precision,
             sampling_method=sampling_method,
+            schema_version=2,
+            input_type=input_type,
+            index_policy=index_policy,
+            query_policy=query_policy,
+            processing_parameters=processing_parameters,
         )
     except (TypeError, ValueError) as error:
         raise ImageIndexCompatibilityError(
             f"The model exposes invalid embedding-space metadata: {error}"
         ) from error
+
+
+def _supports_instruction(model: object) -> bool:
+    capabilities = getattr(model, "capabilities", None)
+    return (
+        isinstance(capabilities, Mapping)
+        and capabilities.get("instruction_aware") is True
+    )
+
+
+def _supports_query_instruction(model: object) -> bool:
+    metadata = getattr(model, "embedding_space_metadata", None)
+    return _supports_instruction(model) and (
+        callable(getattr(model, "encode_texts", None))
+        and (
+            not isinstance(metadata, EmbeddingSpaceMetadata)
+            or metadata.query_prompt_name is None
+        )
+    )
+
+
+def _policy_json(policy: Mapping[str, object]) -> str:
+    return json.dumps(
+        policy,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _get_search_tokenizer(
@@ -342,11 +412,48 @@ def _embedding_space_from_metadata(
             model_precision=precision,
             storage_dtype=embedding_space.storage_dtype,
         )
-        if embedding_space != expected_space:
+        embedding_space_core = replace(
+            embedding_space,
+            schema_version=1,
+            input_type=None,
+            index_policy=None,
+            query_policy=None,
+            processing_parameters=None,
+        )
+        if embedding_space_core != expected_space:
             raise ImageIndexCompatibilityError(
                 "Image index embedding-space metadata does not match its registered "
                 "model configuration."
             )
+        if embedding_space.schema_version == 2:
+            capabilities = getattr(backend, "capabilities", {})
+            instruction_aware = (
+                isinstance(capabilities, Mapping)
+                and capabilities.get("instruction_aware") is True
+            )
+            expected_index_policy = (
+                _policy_json(
+                    {"input_type": "image", "instruction": "backend-default"}
+                )
+                if instruction_aware
+                else None
+            )
+            if (
+                embedding_space.input_type != "image"
+                or embedding_space.index_policy != expected_index_policy
+                or embedding_space.processing_parameters != "{}"
+                or (
+                    instruction_aware
+                    and embedding_space.query_policy is None
+                )
+                or (
+                    not instruction_aware
+                    and embedding_space.query_policy is not None
+                )
+            ):
+                raise ImageIndexCompatibilityError(
+                    "Image index input or instruction policy is unsupported."
+                )
         return embedding_space
 
     compatibility_fields = {
@@ -527,9 +634,10 @@ def _load_index(
                 f"dimension {expected_embedding_dimension}; convert it or use a new "
                 "index directory."
             )
-    if (
-        expected_embedding_space is not None
-        and embedding_space != expected_embedding_space
+    if expected_embedding_space is not None and not embedding_spaces_compatible(
+        embedding_space,
+        expected_embedding_space,
+        legacy_input_type="image",
     ):
         raise ImageIndexCompatibilityError(
             "Image index embedding space does not match the requested model, "
@@ -692,6 +800,7 @@ def _build_or_update_image_index(
     recursive: bool = False,
     embedding_dim: int | None = None,
     verify_contents: bool = False,
+    query_instruction: str | None = None,
 ) -> ImageIndexUpdate:
     """Create or incrementally update a safe, local image index."""
     _validate_batch_size(batch_size)
@@ -717,6 +826,8 @@ def _build_or_update_image_index(
         model,
         embedding_dimension=embedding_dim,
         precision=precision,
+        input_type="image",
+        query_instruction=query_instruction,
     )
 
     previous: _ImageIndex | None = None
@@ -855,12 +966,69 @@ def _build_or_update_image_index(
     return ImageIndexUpdate(saved_path, added, updated, removed, unchanged)
 
 
+def _encode_search_query(
+    model: _ImageSearchModel,
+    query: str,
+    *,
+    device: torch.device,
+    embedding_dimension: int,
+    embedding_space: EmbeddingSpace,
+    query_instruction: str | None,
+) -> torch.Tensor:
+    if query_instruction is not None and not _supports_query_instruction(model):
+        raise NotImplementedError("This model does not support query instructions.")
+
+    text_encoder = getattr(model, "encode_texts", None)
+    prompt_name = embedding_space.query_prompt_name
+    use_text_api = callable(text_encoder) and (
+        prompt_name is None or query_instruction is not None
+    )
+    with torch.inference_mode():
+        if use_text_api:
+            kwargs: dict[str, object] = {"normalize": True}
+            if query_instruction is not None or _supports_instruction(model):
+                kwargs["instruction"] = query_instruction
+            if embedding_dimension != DEFAULT_EMBEDDING_DIMENSION:
+                kwargs["truncate_dim"] = embedding_dimension
+            query_features = text_encoder(query, **kwargs)
+        else:
+            tokenizer = _get_search_tokenizer(model, prompt_name, get_tokenizer)
+            tokens = tokenizer(query).to(device)
+            if embedding_dimension == DEFAULT_EMBEDDING_DIMENSION:
+                query_features = model.encode_text(tokens, normalize=True)
+            else:
+                query_features = model.encode_text(
+                    tokens,
+                    normalize=True,
+                    truncate_dim=embedding_dimension,
+                )
+
+    expected_shape = (1, embedding_dimension)
+    if (
+        not isinstance(query_features, torch.Tensor)
+        or tuple(query_features.shape) != expected_shape
+    ):
+        actual_shape = (
+            tuple(query_features.shape)
+            if isinstance(query_features, torch.Tensor)
+            else type(query_features).__name__
+        )
+        raise ImageIndexError(
+            f"Text encoder returned an invalid query embedding: expected "
+            f"{expected_shape}, received {actual_shape}."
+        )
+    if not torch.isfinite(query_features).all().item():
+        raise ImageIndexError("Text encoder returned a non-finite query embedding.")
+    return query_features
+
+
 def _search_index(
     model: _ImageSearchModel,
     index_dir: str | os.PathLike[str],
     query: str,
     *,
     top_k: int = 5,
+    query_instruction: str | None = None,
 ) -> list[ImageSearchResult]:
     """Search an index using its registered text-query configuration."""
     if isinstance(top_k, bool) or not isinstance(top_k, int):
@@ -880,40 +1048,27 @@ def _search_index(
         model,
         embedding_dimension=index.embeddings.shape[1],
         precision=precision,
+        input_type="image",
+        query_instruction=query_instruction,
     )
-    if index.embedding_space != expected_embedding_space:
+    if not embedding_spaces_compatible(
+        index.embedding_space,
+        expected_embedding_space,
+        legacy_input_type="image",
+    ):
         raise ImageIndexCompatibilityError(
             "Image index embedding space does not match the search model, revision, "
-            "preprocessing, prompt, or precision."
+            "preprocessing, prompt, instruction policy, or precision."
         )
 
-    prompt_name = index.embedding_space.query_prompt_name
-    tokenizer = _get_search_tokenizer(model, prompt_name, get_tokenizer)
-    tokens = tokenizer(query).to(device)
-    with torch.inference_mode():
-        embedding_dimension = index.embeddings.shape[1]
-        if embedding_dimension == DEFAULT_EMBEDDING_DIMENSION:
-            query_features = model.encode_text(tokens, normalize=True)
-        else:
-            query_features = model.encode_text(
-                tokens,
-                normalize=True,
-                truncate_dim=embedding_dimension,
-            )
-    expected_shape = (1, embedding_dimension)
-    if (
-        not isinstance(query_features, torch.Tensor)
-        or tuple(query_features.shape) != expected_shape
-    ):
-        actual_shape = (
-            tuple(query_features.shape)
-            if isinstance(query_features, torch.Tensor)
-            else type(query_features).__name__
-        )
-        raise ImageIndexError(
-            f"Text encoder returned an invalid query embedding: expected "
-            f"{expected_shape}, received {actual_shape}."
-        )
+    query_features = _encode_search_query(
+        model,
+        query,
+        device=device,
+        embedding_dimension=index.embeddings.shape[1],
+        embedding_space=index.embedding_space,
+        query_instruction=query_instruction,
+    )
     query_vector = (
         query_features.detach().to(device="cpu", dtype=torch.float32).numpy()[0]
     )
@@ -960,6 +1115,7 @@ def build_or_update_image_index(
     recursive: bool = False,
     embedding_dim: int | None = None,
     verify_contents: bool = False,
+    query_instruction: str | None = None,
 ) -> ImageIndexUpdate:
     """Build or incrementally update a local image embedding index.
 
@@ -968,6 +1124,7 @@ def build_or_update_image_index(
     If ``embedding_dim`` is omitted, the model's native embedding dimension is
     used. Set ``verify_contents=True`` to compare stored SHA-256 hashes and
     re-embed files whose contents changed; this reads each file during scanning.
+    ``query_instruction`` fixes the text-query policy for instruction-aware models.
     """
     return _build_or_update_image_index(
         model,
@@ -978,6 +1135,7 @@ def build_or_update_image_index(
         recursive=recursive,
         embedding_dim=embedding_dim,
         verify_contents=verify_contents,
+        query_instruction=query_instruction,
     )
 
 
@@ -1073,10 +1231,17 @@ def search_images(
     query: str,
     *,
     top_k: int = 5,
+    query_instruction: str | None = None,
 ) -> list[ImageSearchResult]:
     """Search an image index with a Japanese or English text query.
 
     Results are ordered by descending cosine similarity. Scores are not
     probabilities; equal scores are ordered by relative image path.
     """
-    return _search_index(model, index_dir, query, top_k=top_k)
+    return _search_index(
+        model,
+        index_dir,
+        query,
+        top_k=top_k,
+        query_instruction=query_instruction,
+    )
