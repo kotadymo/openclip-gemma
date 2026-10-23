@@ -238,7 +238,7 @@ def test_qwen_registry_and_capabilities_are_pinned_and_side_effect_free() -> Non
         (QWEN3VL_2B_MODEL_NAME, "official"),
     ]
     registry = get_default_registry()
-    with pytest.raises(ValueError, match="Unknown model"):
+    with pytest.raises(ValueError, match="Unsupported model_name"):
         registry.resolve("qwen3-vl-embedding-8b")
     for name, model_id, revision, dimension in (
         (

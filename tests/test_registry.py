@@ -286,7 +286,7 @@ def test_default_registry_lists_models_without_loading_weights(
     qwen_2b = registry.resolve(QWEN3VL_2B_MODEL_NAME)
     assert qwen_2b.model_id == QWEN3VL_2B_MODEL_ID
     assert qwen_2b.revision == QWEN3VL_2B_REVISION
-    with pytest.raises(ValueError, match="Unknown model"):
+    with pytest.raises(ValueError, match="Unsupported model_name"):
         registry.resolve("qwen3-vl-embedding-8b")
     model_loader.assert_not_called()
 
