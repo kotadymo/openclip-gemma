@@ -731,3 +731,5 @@ The development branch for v0.8.0 adds three **fixed-resolution** Google SigLIP 
 | `siglip2-so400m-384` | `google/siglip2-so400m-patch14-384` | 384 × 384 | 1152 |
 
 All use separately pinned official Hugging Face revisions, the existing SigLIP 2 image/text and sigmoid-logit APIs, and distinct index embedding-space metadata. They do **not** share indexes with the 224-pixel or NaFlex checkpoints. Model weights are downloaded only on explicit model creation and are not included in the distribution. Real-model numerical parity and actual VRAM usage are **not yet validated**; see [v0.8.0 checkpoint implementation notes](docs/v0.8.0-siglip2-variants.md).
+
+**v0.8.0 scope decision (2026-10-23):** DINOv3 + dino.txt is deferred and is **not** a v0.8.0 target or release gate because Meta's model-weight access process remains a dependency. The remaining planned items are PE-Core T/S and optional search acceleration; the three SigLIP 2 variants above are already merged in the development source. See [v0.8.0 scope](docs/v0.8.0-scope.md).
