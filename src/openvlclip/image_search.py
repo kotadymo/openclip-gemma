@@ -19,6 +19,7 @@ from openvlclip._dimensions import (
     EMBEDDING_STRATEGY,
     validate_positive_embedding_dimension,
 )
+from openvlclip._ranking import select_top_k
 from openvlclip.backends.base import (
     ImagePreprocessAPI,
     ProcessedImageBatch,
@@ -45,7 +46,6 @@ from openvlclip.index_storage import (
     _save_numpy_archive_atomic,
 )
 from openvlclip.registry import get_default_registry
-from openvlclip._ranking import select_top_k
 from openvlclip.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
 
 _INDEX_FILENAME = "index.npz"

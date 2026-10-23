@@ -7,15 +7,11 @@ secondary ordering is applied; this preserves the legacy ranking exactly.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 
-_K = TypeVar("_K")
-
-
-def select_top_k(
+def select_top_k[_K](
     scores: NDArray[np.floating],
     *,
     limit: int,

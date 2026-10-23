@@ -16,12 +16,12 @@ import torch
 from numpy.typing import NDArray
 from PIL import Image
 
-from openvlclip._ranking import select_top_k
 from openvlclip._dimensions import (
     DEFAULT_EMBEDDING_DIMENSION,
     EMBEDDING_STRATEGY,
     validate_positive_embedding_dimension,
 )
+from openvlclip._ranking import select_top_k
 from openvlclip.backends.base import (
     ProcessedImage,
     validate_model_embedding_dimension,
