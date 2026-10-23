@@ -120,15 +120,13 @@ class FakeSiglipModel(nn.Module):
 
     def get_text_features(
         self,
-        *,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
+        **inputs: torch.Tensor,
     ) -> SimpleNamespace:
-        self.last_text_inputs = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-        }
-        signal = (input_ids * attention_mask).sum(dim=1).float()
+        if set(inputs) != {"input_ids"}:
+            raise AssertionError("SigLIP 2 text inference must not pass an attention mask.")
+        input_ids = inputs["input_ids"]
+        self.last_text_inputs = inputs
+        signal = input_ids.sum(dim=1).float()
         basis = torch.linspace(0.25, 1.25, 768, device=input_ids.device)
         return SimpleNamespace(pooler_output=(signal[:, None] + 1) * basis)
 
@@ -279,9 +277,10 @@ def test_feature_encoding_and_strict_sigmoid_logits(
         torch.ones(2),
     )
     assert hf_model.last_text_inputs is not None
+    assert set(hf_model.last_text_inputs) == {"input_ids"}
     torch.testing.assert_close(
-        hf_model.last_text_inputs["attention_mask"],
-        token_ids.ne(0),
+        hf_model.last_text_inputs["input_ids"],
+        token_ids,
     )
     if variant == "naflex":
         assert hf_model.last_image_inputs is not None
