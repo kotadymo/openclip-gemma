@@ -2,12 +2,12 @@
 
 > **v0.7.0 scope update (2026-10-23):** Qwen3-VL-Embedding-8B is deferred to a future release due to insufficient GPU VRAM. v0.7.0 supports SigLIP 2 FixRes, SigLIP 2 NaFlex, and Qwen3-VL-Embedding-2B in addition to existing Gemma/dino.txt. Earlier 8B CPU investigations below are retained as historical research, not evidence for v0.7.0 support. The 8B GPU validation is no longer a v0.7.0 release gate.
 
-- **Status:** SigLIP 2 parity and Qwen3-VL wrapper parity have passed for the tested cases; Qwen 8B CUDA FP32/BF16 remains an unmet release gate.
+- **Status:** v0.7.0 targets SigLIP 2 FixRes, SigLIP 2 NaFlex and Qwen3-VL-Embedding-2B. Tested official parity passed for these checkpoints. Qwen 8B CUDA FP32/BF16 is unverified research for a future release, **not a v0.7.0 release gate**.
 - **Audit date:** 2026-10-23
 - **OpenVLCLIP implementation base:** `main` at `25a34b008b81b463bac58a1d03fce33beb8fe48c`
 - **Distribution:** `openvlclip`
 
-This document records fixed upstream revisions, provenance, static API findings, and runtime comparisons for the four v0.7.0 models. The parity results apply only to tested inputs and do not constitute release approval. SigLIP 2 FixRes/NaFlex and Qwen 2B/8B were loaded from pinned revisions; Qwen 8B CPU FP32/BF16 and Qwen 2B CPU/CUDA FP32/BF16 were compared against independent reference model instances. No model weights were added to the repository. Qwen 8B CUDA FP32/BF16 remains unverified and is a mandatory stop gate.
+This document records fixed upstream revisions, provenance, static API findings, and runtime comparisons for **three new v0.7.0 release checkpoints** (SigLIP 2 FixRes, SigLIP 2 NaFlex and Qwen 2B), plus earlier **deferred Qwen 8B research**. The parity results apply only to tested inputs and do not constitute release approval. The pinned Qwen 8B checkpoint was compared with independent reference models on CPU FP32/BF16 but not on CUDA. No model weights were added to the repository. **Qwen 8B is not registered or released in v0.7.0, and its CUDA validation does not block v0.7.0.**
 
 ## Fixed model revisions
 
@@ -181,7 +181,7 @@ The two official paths do not currently produce the same input sequence for the 
 - The pinned Qwen `Qwen3VLEmbedder.format_model_input`/`process` path encoded the same text as a system/user conversation followed by an assistant generation prompt (25 tokens).
 - On the same pinned 2B checkpoint and BF16 precision, the full-dimensional normalized embeddings differed by maximum absolute error `0.0567017`. The 64/257/1024 truncated-and-normalized outputs differed from the Qwen-wrapper raw-prefix-and-renormalize result by `0.17403` / `0.11472` / `0.07769`.
 
-The v0.7.0 specification explicitly names `Qwen3VLEmbedder.process` as the canonical reference. Do not treat Sentence Transformers embeddings as compatible with that path or mix their indexes. Spec §7.3 and §19.1 item 4 define the OpenVLCLIP MRL behavior: accept dimensions from 64 through native, slice the unnormalized pooled feature, then L2-normalize. The pinned Qwen wrapper has no truncation argument, so OpenVLCLIP applies this documented post-processing to its canonical pooled feature. The Sentence Transformers route confirms the truncate-then-normalize mechanics but not numerical equivalence to the canonical wrapper's different text path. Separate-model CPU FP32/BF16 parity now passes for both Qwen sizes, and CUDA FP32/BF16 passes for 2B; 8B CUDA remains a mandatory validation gate.
+The v0.7.0 specification explicitly names `Qwen3VLEmbedder.process` as the canonical reference. Do not treat Sentence Transformers embeddings as compatible with that path or mix their indexes. Spec §7.3 and §19.1 item 4 define the OpenVLCLIP MRL behavior: accept dimensions from 64 through native, slice the unnormalized pooled feature, then L2-normalize. The pinned Qwen wrapper has no truncation argument, so OpenVLCLIP applies this documented post-processing to its canonical pooled feature. The Sentence Transformers route confirms the truncate-then-normalize mechanics but not numerical equivalence to the canonical wrapper's different text path. Separate-model CPU FP32/BF16 parity was observed for both Qwen sizes, and CUDA FP32/BF16 passed for 2B. The unverified 8B CUDA parity is relevant only if a **future release** adds 8B support.
 
 ### Qwen 2B runtime outputs
 
@@ -211,7 +211,7 @@ The official Qwen repository's `LICENSE` is Apache-2.0, SHA-256 `f08c07d73a60444
 
 ## License and dependency findings
 
-- The four pinned Hugging Face model cards declare Apache-2.0. The SigLIP repositories expose that declaration in model-card metadata; a separate `LICENSE` file was not listed in the queried snapshot. The tokenizer files are pinned within those same repositories. No separate tokenizer license statement was found during this static audit, so the model-card declaration is the current evidence and must remain clearly attributed.
+- The three v0.7.0 release checkpoint model cards (plus the deferred 8B research checkpoint) declare Apache-2.0. The SigLIP repositories expose that declaration in model-card metadata; a separate `LICENSE` file was not listed in the queried snapshot. The tokenizer files are pinned within those same repositories. No separate tokenizer license statement was found during this static audit, so the model-card declaration is the current evidence and must remain clearly attributed.
 - The Qwen model cards declare Apache-2.0. The pinned Qwen source repository includes an Apache-2.0 `LICENSE`. The `qwen-vl-utils` PyPI metadata for version `0.0.14` declares Apache-2.0 and Python `>=3.8`; its required dependencies include `av`, `packaging`, `pillow`, and `requests`, while `decord` is an optional extra.
 - The OpenVLCLIP wheel and sdist must not contain model weights. Downloaded weights remain in the user's Hugging Face cache.
 - The current OpenVLCLIP lock resolves Torch `2.14.1`, Torchvision `0.29.1`, and Transformers `5.20.1`; the Qwen parity run used those versions with `qwen-vl-utils==0.0.14`. The pinned Qwen source project's manifest requests Torch `2.8.*`, Torchvision `>=0.23.0`, and Transformers `>=4.57.3`, and lists additional development/data packages. Do not copy its Torch pin or install all of its development dependencies. Its manifest also configures an HTTP package mirror; that index must not be used.
@@ -245,7 +245,7 @@ The system interpreter is Windows Python 3.12.10 with CPU-only Torch `2.14.0+cpu
 
 After the integration run, `nvidia-smi` reported 16,376 MiB total and 14,301 MiB free on the RTX 4070 Ti SUPER. Qwen 8B requires 16,289,587,680 bytes (15.17 GiB) for BF16 parameters alone; FP32 requires twice that. Both Qwen 8B CUDA tests were skipped before loading because free VRAM was insufficient. The repository has no configured self-hosted Actions runners with high-memory CUDA.
 
-**Release stop gate:** Qwen 8B CUDA FP32/BF16 reference testing is mandatory before claiming full compatibility or release readiness. A 24 GiB-or-larger device is a practical starting point, not a measured minimum; record actual peak VRAM before accepting it. Run the opt-in parity test on a CUDA host with sufficient free VRAM and the fixed model revision. Do not substitute quantization or unverified CPU offload. The 8B CUDA gate and arbitrary video-file pixel-budget parity remain open.
+**Deferred checkpoint, not a v0.7.0 release gate:** Qwen 8B CUDA FP32/BF16 reference testing was not possible on the available GPU. This checkpoint is **excluded from the v0.7.0 Registry and release claims**. Before any future release with 8B support, validate official CUDA parity on a suitable GPU; 24 GiB or larger is a practical starting point, not a measured minimum. The arbitrary video-file pixel-budget parity remains an unverified limitation and must not be described as validated.
 
 Official references:
 
