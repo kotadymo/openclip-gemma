@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.7.0 — Release preparation (2026-10-23)
+
+This minor release expands OpenVLCLIP to **five officially registered checkpoints**: EmbeddingGemma 2, DINOv2 + dino.txt, two SigLIP 2 Base variants (FixRes and NaFlex), and **Qwen3-VL-Embedding-2B**. Qwen3-VL-Embedding-8B is explicitly **deferred**; it is **not** registered or supported in v0.7.0.
+
+### Added
+- Google SigLIP 2 FixRes 224 and NaFlex Base backends, preserving official image/text processors and trained logit scale/bias.
+- Qwen3-VL-Embedding-2B with instruction-aware text, image, native video, multimodal inputs, and MRL 64–2048 dimensional outputs.
+- Processor-aware shared batching and search, native-video indexing, compatible embedding-space metadata, and opt-in `[qwen3vl]` dependencies.
+- Reusable tag-only `.github/workflows/publish-pypi.yml` with dynamic SemVer validation and existing PyPI Trusted Publishing safeguards.
+
+### Fixed
+- dino.txt similarity-map resource budgeting and invalid special-token handling.
+- `examples/image_search.py index --verify-contents` strict file-change detection.
+- Existing frame-video embedding dimension inference for backends with non-768 native dimensions.
+
+### Compatibility and validation
+- Preserve EmbeddingGemma 2 MRL and the original dino.txt embedding/patch/map calculations.
+- Preserve legacy image/video indexes via versioned metadata and compatibility checks.
+- The pinned real-model parity results for SigLIP 2 FixRes, SigLIP 2 NaFlex, and Qwen 2B CPU/CUDA (FP32/BF16 as documented) are in [model provenance](docs/model-provenance-v0.7.0.md). Synthetic tests are **not** claims about retrieval quality.
+- Qwen 8B CPU research results remain documented but do not imply v0.7.0 support.
+- The distribution will be published only after release CI, wheel/sdist checks, license confirmation, the new PyPI Trusted Publisher configuration, and GitHub Environment approval.
+
+See [v0.7.0 release notes](docs/release-notes-v0.7.0.md).
+
+
 ## v0.6.1 — 2026-10-22
 
 Released on [PyPI](https://pypi.org/project/openvlclip/0.6.1/) and as a
