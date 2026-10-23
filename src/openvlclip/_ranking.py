@@ -11,12 +11,13 @@ from collections.abc import Callable
 import numpy as np
 from numpy.typing import NDArray
 
-def select_top_k[_K](
+
+def select_top_k[K](
     scores: NDArray[np.floating],
     *,
     limit: int,
     start_row: int,
-    sort_key: Callable[[tuple[float, int]], _K],
+    sort_key: Callable[[tuple[float, int]], K],
     current: list[tuple[float, int]] | None = None,
 ) -> list[tuple[float, int]]:
     """Return exact top-k with caller-defined ordering and deterministic ties.
