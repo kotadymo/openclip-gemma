@@ -523,14 +523,11 @@ class Siglip2Backend:
             raise TypeError("The loaded SigLIP 2 tokenizer has no valid pad token.")
         device, _ = self._model_device_dtype(model)
         input_ids = text.to(device=device)
-        attention_mask = input_ids.ne(pad_token_id)
-        if (attention_mask.sum(dim=1) == 0).any().item():
+        if input_ids.eq(pad_token_id).all(dim=1).any().item():
             raise ValueError("SigLIP 2 text input cannot contain an empty sequence.")
         with torch.inference_mode():
-            outputs = model.backend.get_text_features(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-            )
+            # Match the official fixed-length SigLIP 2 path: do not mask padding.
+            outputs = model.backend.get_text_features(input_ids=input_ids)
         features = self._pooler_output(outputs, "text")
         return self._validate_features(
             features,
