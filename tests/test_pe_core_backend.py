@@ -41,8 +41,21 @@ class FakePE(nn.Module):
 
 def _mock_loading(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, Mock]:
     (tmp_path / "open_clip_config.json").write_text(
-        json.dumps({"model_cfg": {"embed_dim": 512, "vision_cfg": {"image_size": 384},
-                                  "text_cfg": {"context_length": 32}}}),
+        json.dumps(
+            {
+                "model_cfg": {
+                    "embed_dim": 512,
+                    "vision_cfg": {"image_size": 384},
+                    "text_cfg": {"context_length": 32},
+                },
+                "preprocess_cfg": {
+                    "mean": [0.5, 0.5, 0.5],
+                    "std": [0.5, 0.5, 0.5],
+                    "interpolation": "bilinear",
+                    "resize_mode": "squash",
+                },
+            }
+        ),
         encoding="utf-8",
     )
     (tmp_path / "open_clip_model.safetensors").write_bytes(b"fake")
@@ -121,3 +134,40 @@ def test_pe_core_refuses_unsupported_api(tmp_path: Path, monkeypatch: pytest.Mon
         model.encode_patches(torch.ones((3, 384, 384)))
     with pytest.raises(ValueError):
         get_tokenizer("pe-core-t16-384", prompt_name="query")
+
+
+def test_pe_core_validates_pinned_preprocessing_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mock_loading(tmp_path, monkeypatch)
+    config_path = tmp_path / "open_clip_config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["preprocess_cfg"]["interpolation"] = "bicubic"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="preprocessing configuration"):
+        create_model_and_transforms("pe-core-t16-384")
+
+
+@pytest.mark.parametrize("entrypoint", ["model", "tokenizer"])
+def test_pe_core_missing_optional_dependency_is_actionable(
+    monkeypatch: pytest.MonkeyPatch, entrypoint: str
+) -> None:
+    monkeypatch.setitem(sys.modules, "open_clip", None)
+
+    with pytest.raises(ImportError) as error:
+        if entrypoint == "model":
+            create_model_and_transforms("pe-core-t16-384")
+        else:
+            get_tokenizer("pe-core-t16-384")
+
+    assert "openvlclip[pecore]" in str(error.value)
+
+
+def test_core_registry_listing_does_not_import_open_clip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "open_clip", None)
+
+    assert "pe-core-t16-384" in list_models()
+    assert "pe-core-s16-384" in list_models()

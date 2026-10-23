@@ -36,6 +36,13 @@ PE_CORE_S_REVISION = "3249a38eb1c432ec19231c6fe1774acb6a4e4efe"
 PE_CORE_DIMENSION = 512
 PE_CORE_IMAGE_SIZE = 384
 PE_CORE_CONTEXT_LENGTH = 32
+_PE_CORE_PREPROCESSING_ID = "pecore-rgb384-bilinear-squash-normalize-0.5-v1"
+_EXPECTED_PREPROCESS_CFG = {
+    "mean": [0.5, 0.5, 0.5],
+    "std": [0.5, 0.5, 0.5],
+    "interpolation": "bilinear",
+    "resize_mode": "squash",
+}
 _SNAPSHOT_PATTERNS = (
     "open_clip_config.json", "open_clip_model.safetensors", "vocab.json",
     "merges.txt", "tokenizer.json", "tokenizer_config.json",
@@ -192,7 +199,7 @@ class PECoreBackend:
             model_revision=revision,
             embedding_strategy="pecore-openclip-global-v1",
             normalization="l2-on-request-v1",
-            preprocessing_id="pecore-rgb384-bilinear-squash-normalize-0.5-v1",
+            preprocessing_id=_PE_CORE_PREPROCESSING_ID,
             index_prompt=None,
             query_prompt_name=None,
             query_prompt=None,
@@ -227,18 +234,26 @@ class PECoreBackend:
             import open_clip
         except ImportError as error:
             raise ImportError(
-                "PE-Core needs the optional package: pip install open-clip-torch"
+                "PE-Core needs the optional dependency. Install it with "
+                '`pip install "openvlclip[pecore]"` or, from a source checkout, '
+                '`pip install -e ".[pecore]"`.'
             ) from error
         local = _snapshot(model_id, revision, cache_dir)
         with (local / "open_clip_config.json").open(encoding="utf-8") as stream:
             config = json.load(stream)
         model_cfg = config.get("model_cfg", {})
+        preprocess_cfg = config.get("preprocess_cfg")
         if (
             model_cfg.get("embed_dim") != PE_CORE_DIMENSION
             or model_cfg.get("vision_cfg", {}).get("image_size") != PE_CORE_IMAGE_SIZE
             or model_cfg.get("text_cfg", {}).get("context_length") != PE_CORE_CONTEXT_LENGTH
         ):
             raise RuntimeError("Unexpected pinned PE-Core model configuration.")
+        if not isinstance(preprocess_cfg, Mapping) or any(
+            preprocess_cfg.get(key) != expected
+            for key, expected in _EXPECTED_PREPROCESS_CFG.items()
+        ):
+            raise RuntimeError("Unexpected pinned PE-Core preprocessing configuration.")
         loaded, _, preprocess = open_clip.create_model_and_transforms(
             f"local-dir:{local}", device="cpu", precision="fp32"
         )
@@ -265,7 +280,11 @@ class PECoreBackend:
         try:
             import open_clip
         except ImportError as error:
-            raise ImportError("Install open-clip-torch to use PE-Core.") from error
+            raise ImportError(
+                "PE-Core needs the optional dependency. Install it with "
+                '`pip install "openvlclip[pecore]"` or, from a source checkout, '
+                '`pip install -e ".[pecore]"`.'
+            ) from error
         local = _snapshot(model_id, revision, cache_dir)
         return PECoreTokenizer(open_clip.get_tokenizer(f"local-dir:{local}"))
 
