@@ -19,6 +19,7 @@ from openvlclip._dimensions import (
     EMBEDDING_STRATEGY,
     validate_positive_embedding_dimension,
 )
+from openvlclip._ranking import select_top_k
 from openvlclip.backends.base import (
     ImagePreprocessAPI,
     ProcessedImageBatch,
@@ -1093,8 +1094,9 @@ def _search_index(
         scores = index.embeddings[start:stop] @ query_vector
         if not np.isfinite(scores).all():
             raise ImageIndexError("Image index produced non-finite similarity scores.")
-        candidates = [(float(score), row + start) for row, score in enumerate(scores)]
-        best = sorted((*best, *candidates), key=sort_key)[:limit]
+        best = select_top_k(
+            scores, limit=limit, start_row=start, sort_key=sort_key, current=best
+        )
 
     return [
         ImageSearchResult(
