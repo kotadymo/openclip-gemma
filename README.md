@@ -1,24 +1,24 @@
 # OpenVLCLIP
 
-An independent Python library providing an OpenCLIP-inspired inference API for EmbeddingGemma 2, DINOv2 + dino.txt, Google SigLIP 2 FixRes/NaFlex, and Qwen3-VL-Embedding-2B. Each backend retains its official tokenizer, preprocessing, prompts, and embedding semantics.
+An independent Python library providing an OpenCLIP-inspired inference API for EmbeddingGemma 2, DINOv2 + dino.txt, Google SigLIP 2, Qwen3-VL-Embedding-2B, and optional Meta PE-Core T/S. Each backend retains its official tokenizer, preprocessing, prompts, and embedding semantics.
 
 > [!IMPORTANT]
 > **Unofficial project**
 >
 > `openvlclip` is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or officially maintained by Google, Google DeepMind, Meta, or the OpenCLIP project.
 >
-> OpenVLCLIP v0.7.1 was formally published to PyPI and as a GitHub Release on 2026-10-23. This backward-compatible bug-fix release retains five registered checkpoints: EmbeddingGemma 2, DINOv2 + dino.txt, SigLIP 2 FixRes Base, SigLIP 2 NaFlex Base, and Qwen3-VL-Embedding-2B. It adds opt-in Native Video Index SHA-256 verification and enforces the Qwen 2B 64-frame limit. **Qwen 8B is not registered or supported.** Model weights are downloaded separately and are not bundled. This library is not a drop-in replacement for OpenCLIP.
+> OpenVLCLIP v0.7.1 was formally published to PyPI and as a GitHub Release on 2026-10-23. That distribution has five registered checkpoints. The source registry also includes three additional SigLIP 2 variants and optional PE-Core T/S. **Qwen 8B (Qwen3-VL-Embedding-8B) is not registered or supported.** Model weights are downloaded separately and are not bundled. This library is not a drop-in replacement for OpenCLIP.
 
 ## Features
 
 - OpenCLIP-style `create_model`, `create_model_and_transforms`, and `get_tokenizer` entry points.
 - Factory discovery with `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()`.
-- A Model Registry, shared Backend interface, and per-model Capabilities for `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, and `siglip2-naflex-base`; v0.7.0 also registers `qwen3-vl-embedding-2b`. This is not a complete drop-in replacement for OpenCLIP.
+- A Model Registry, shared Backend interface, and per-model Capabilities; the v0.8.0 source registry contains ten checkpoints while the published v0.7.1 package remains at five. This is not a complete drop-in replacement for OpenCLIP.
 - EmbeddingGemma uses the official Transformers model/processor and Sentence Transformers numerical reference; dino.txt follows the pinned Meta Hub implementation and checkpoints; SigLIP 2 uses pinned Google checkpoints and Transformers processors.
 - Model API includes `forward()`, `get_logits()`, and factory option `output_dict=True`.
 - EmbeddingGemma `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"`; dino.txt and SigLIP 2 strict modes preserve their official scaled-logit paths and learned parameters.
 - Cosine mode returns normalized features with scale `1.0`; these scores are not trained OpenCLIP logits or calibrated probabilities.
-- EmbeddingGemma 2's native 768-dimensional output and MRL dimensions 512, 256, and 128; dino.txt's native 2048-dimensional global and 1024-dimensional patch features; SigLIP 2's 768-dimensional global features without MRL; Qwen3-VL-Embedding-2B's 2048-dimensional native features with MRL.
+- EmbeddingGemma 2's native 768-dimensional output and MRL dimensions 512, 256, and 128; dino.txt's native 2048-dimensional global and 1024-dimensional patch features; SigLIP 2's 768-, 1024-, and 1152-dimensional global features without MRL; PE-Core T/S 512-dimensional features; and Qwen3-VL-Embedding-2B's 2048-dimensional native features with MRL.
 - EmbeddingGemma 2 selective text-only or text-and-image loading; the other backends require both image and text components.
 - SigLIP 2 FixRes image processing and NaFlex variable-resolution processing, preserving NaFlex patch masks and spatial shapes through batching and image search.
 - Pinned model revisions; model weights are downloaded at runtime and are not bundled with this package.
@@ -34,6 +34,10 @@ An independent Python library providing an OpenCLIP-inspired inference API for E
 Install the package into an active virtual environment. Python 3.12 and later
 are supported, up to but not including Python 3.15, except Python 3.14.1
 (`>=3.12,<3.15,!=3.14.1`).
+
+Model availability depends on the installed distribution version. The
+source-checkout instructions below install the current repository version,
+including models added in v0.8.0.
 
 ```bash
 pip install --upgrade openvlclip
@@ -544,17 +548,17 @@ re-embeds those entries to establish their hashes.
 
 ## OpenCLIP differences and compatibility
 
-`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. The public registry contains `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, `siglip2-naflex-base`, and `qwen3-vl-embedding-2b`, with model-specific capabilities and embedding spaces. The v0.7.1 distribution includes these five checkpoints; Qwen3-VL-Embedding-8B is not registered or supported.
+`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. The v0.8.0 source registry contains ten model names with model-specific capabilities and embedding spaces; the v0.7.1 distribution includes the five original checkpoints. Qwen3-VL-Embedding-8B is not registered or supported.
 
 | Area | `openvlclip` behavior |
 | --- | --- |
-| Embeddings | EmbeddingGemma 2 produces 768 dimensions with MRL outputs of 512, 256, or 128. dino.txt produces 2048-dimensional global embeddings and 1024-dimensional patch features. Both SigLIP 2 variants produce 768-dimensional global embeddings without MRL. Qwen 2B produces 2048-dimensional global embeddings and permit MRL dimensions from 64 through native. Unsupported truncation is rejected. |
-| Images | Use the selected model's returned preprocessing transform and do not preprocess twice. EmbeddingGemma and dino.txt use float32 `[B, 3, H, W]` tensors. SigLIP 2 FixRes uses a tensor; NaFlex uses a mapping with pixel values, attention mask, and spatial shapes. Qwen uses processor-aware PIL images. |
-| Text | `get_tokenizer()` returns model-specific token IDs for supported token-ID backends; `encode_texts()` accepts strings, and Qwen also accepts an instruction. Qwen does not support `get_tokenizer()`/token-ID `encode_text()`. EmbeddingGemma task prompts are not applied to dino.txt or SigLIP 2. Token IDs are model-specific and not interchangeable. |
-| Similarity | EmbeddingGemma and Qwen cosine modes return scale-1 similarities. dino.txt and SigLIP 2 strict modes preserve their official scaled logits and learned parameters; cosine mode is distinct. These values are not calibrated probabilities. |
+| Embeddings | EmbeddingGemma 2 produces 768 dimensions with MRL outputs of 512, 256, or 128. dino.txt produces 2048-dimensional global embeddings and 1024-dimensional patch features. SigLIP 2 variants produce 768, 1024, or 1152-dimensional global embeddings without MRL. PE-Core T/S produce 512-dimensional global embeddings. Qwen 2B produces 2048-dimensional global embeddings and permits MRL dimensions from 64 through native. Unsupported truncation is rejected. |
+| Images | Use the selected model's returned preprocessing transform and do not preprocess twice. EmbeddingGemma, dino.txt, PE-Core, and SigLIP 2 FixRes use model-specific float32 `[B, 3, H, W]` tensors. NaFlex uses a mapping with pixel values, attention mask, and spatial shapes. Qwen uses processor-aware PIL images. |
+| Text | `get_tokenizer()` returns model-specific token IDs for supported token-ID backends; `encode_texts()` accepts strings, and Qwen also accepts an instruction. Qwen does not support `get_tokenizer()`/token-ID `encode_text()`. EmbeddingGemma task prompts are not applied to dino.txt, SigLIP 2, or PE-Core. Token IDs are model-specific and not interchangeable. |
+| Similarity | EmbeddingGemma and Qwen cosine modes return scale-1 similarities. dino.txt, SigLIP 2, and PE-Core strict modes preserve their official scaled logits and learned parameters; cosine mode is distinct. These values are not calibrated probabilities. |
 | Factory discovery | `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()` resolve the registered backends and their checkpoints. |
-| Selective loading | Selective loading is supported by EmbeddingGemma 2. dino.txt and SigLIP 2 require their complete image/text models. |
-| Capabilities | `model.capabilities` is immutable and model-specific. dino.txt exposes patch embeddings and text similarity maps; SigLIP 2 NaFlex exposes variable-resolution input; Qwen exposes video and multimodal embeddings. Unsupported features are reported as unavailable. |
+| Selective loading | Selective loading is supported by EmbeddingGemma 2. dino.txt, SigLIP 2, and PE-Core require their complete image/text models. |
+| Capabilities | `model.capabilities` is immutable and model-specific. dino.txt exposes patch embeddings and text similarity maps; SigLIP 2 NaFlex exposes variable-resolution input; PE-Core exposes image/text features; Qwen exposes video and multimodal embeddings. Unsupported features are reported as unavailable. |
 | Model methods | All registered backends support `eval()` and `to()`, plus image encoding and a model-appropriate text path. Qwen uses `encode_texts()` instead of token-ID `encode_text()` and additionally exposes `encode_video()` and `encode_multimodal()`. Backend-specific optional operations raise `NotImplementedError` when unsupported. |
 | Scope | The core model API does not support training, fine-tuning, audio, or arbitrary architectures. Video-frame search is a separate v0.2.0 API, not a core OpenCLIP-compatible model feature. |
 
@@ -720,26 +724,49 @@ This is an independently developed library, not an official extension of OpenCLI
 The names OpenCLIP and Gemma refer to their respective projects and technologies. No affiliation or endorsement is implied.
 
 
-## v0.8.0 development (not part of published v0.7.1)
+## v0.8.0 source registry and installation
 
-The development branch registers five additional checkpoints alongside the five models in the published v0.7.1 wheel. These changes are source-checkout-only; the v0.7.1 PyPI package remains unchanged.
+The v0.8.0 source registry contains ten checkpoints: the five models from the
+v0.7.1 distribution plus three SigLIP 2 variants and two optional PE-Core
+models. Model availability is version-specific; consult the release notes
+for the package version you install.
 
-| OpenVLCLIP model name | Official checkpoint | Input resolution | Embedding dimension |
-| --- | --- | ---: | ---: |
-| `siglip2-base-384` | `google/siglip2-base-patch16-384` | 384 × 384 | 768 |
-| `siglip2-large-256` | `google/siglip2-large-patch16-256` | 256 × 256 | 1024 |
-| `siglip2-so400m-384` | `google/siglip2-so400m-patch14-384` | 384 × 384 | 1152 |
-| `pe-core-t16-384` | `timm/PE-Core-T-16-384` | 384 × 384 | 512 |
-| `pe-core-s16-384` | `timm/PE-Core-S-16-384` | 384 × 384 | 512 |
+| Registry model | Family | Native global features |
+| --- | --- | --- |
+| `embeddinggemma-2` | EmbeddingGemma 2 | 768D; MRL 768/512/256/128 |
+| `dinov2-dinotxt` | DINOv2 + dino.txt | 2048D; 1024D patch features |
+| `siglip2-base` | SigLIP 2 Base FixRes | 768D |
+| `siglip2-naflex-base` | SigLIP 2 Base NaFlex | 768D |
+| `qwen3-vl-embedding-2b` | Qwen3-VL-Embedding-2B | 2048D; MRL 64–2048 |
+| `siglip2-base-384` | SigLIP 2 Base FixRes | 768D |
+| `siglip2-large-256` | SigLIP 2 Large FixRes | 1024D |
+| `siglip2-so400m-384` | SigLIP 2 SO400M FixRes | 1152D |
+| `pe-core-t16-384` | PE-Core T/16 | 512D |
+| `pe-core-s16-384` | PE-Core S/16 | 512D |
 
-The SigLIP 2 additions use pinned Google revisions and the existing FixRes processor and sigmoid-logit API. PE-Core uses pinned timm OpenCLIP-converted weights and the optional `open-clip-torch` backend. Each checkpoint has a distinct EmbeddingSpace identity; model weights are downloaded only when explicitly loaded and are not included in distributions.
+The three additional SigLIP 2 checkpoints use pinned Google revisions and
+the existing FixRes processor and sigmoid-logit API. PE-Core uses pinned
+timm OpenCLIP-converted weights and the optional `open-clip-torch` backend.
+Each checkpoint has a distinct EmbeddingSpace identity. Model weights are
+downloaded only when explicitly loaded and are not included in distributions.
 
-For a source checkout, install PE-Core's optional dependency with:
+To install the v0.8.0 source and PE-Core's optional dependency:
 
 ```bash
+git clone https://github.com/kotadymo/openvlclip.git
+cd openvlclip
 pip install -e ".[pecore]"
 ```
 
-The `pecore` extra is not present in the published v0.7.1 wheel; `pip install "openvlclip[pecore]"` will apply only after a future release includes it. DINOv3 + dino.txt remains deferred and is not part of v0.8.0. CPU FP32 reference parity has been verified for these five additions; CUDA FP32/BF16 and GPU memory use remain unverified. See the [v0.8.0 validation record](docs/v0.8.0-validation.md), [SigLIP 2 notes](docs/v0.8.0-siglip2-variants.md), and [PE-Core notes](docs/v0.8.0-pe-core.md).
+The `pecore` extra is not present in the published v0.7.1 wheel. The five
+v0.8.0 additions passed CPU FP32 reference parity. SigLIP 2 CUDA BF16 passed
+for all five checkpoints; CUDA FP32 passed for four, with `siglip2-large-256`
+unverified because of shared-GPU memory limits. PE-Core T/S CUDA parity was
+not run. See the [v0.8.0 validation record](docs/v0.8.0-validation.md),
+[SigLIP 2 notes](docs/v0.8.0-siglip2-variants.md), and
+[PE-Core notes](docs/v0.8.0-pe-core.md). DINOv3 + dino.txt remains deferred
+and is not part of v0.8.0.
 
-The exact-search measurement shows multi-fold speedups on low-tie workloads, but the synthetic all-equal-score case is slower because every candidate must still be ordered for exact ties. See the [search benchmark results](docs/v0.8.0-search-optimization.md); no universal speedup is claimed.
+The exact-search measurement shows multi-fold speedups on low-tie workloads,
+but the synthetic all-equal-score case is slower because every candidate
+must still be ordered for exact ties. See the [search benchmark results](docs/v0.8.0-search-optimization.md); no universal speedup is claimed.

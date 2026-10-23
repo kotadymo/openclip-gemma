@@ -1,14 +1,16 @@
 # Changelog
 
-## Unreleased — v0.8.0 development (not published)
+## v0.8.0 — Unreleased (release preparation; not published)
 
-This development version is available from the source repository only. The
-published v0.7.1 package and its five-model registry are unchanged.
+The source package version is being prepared as `0.8.0`; the latest published
+PyPI version remains `0.7.1`. This changelog entry does not indicate a PyPI or
+GitHub Release.
 
 ### Added
 
-- Register three additional fixed-resolution SigLIP 2 checkpoints and PE-Core
-  T/S using pinned model revisions and separate EmbeddingSpace identities.
+- Register three additional fixed-resolution SigLIP 2 checkpoints and
+  optional PE-Core T/S, bringing the source registry to ten checkpoints with
+  pinned model revisions and separate EmbeddingSpace identities.
 - Add the optional `[pecore]` dependency, bounded to
   `open-clip-torch>=3.3.0,<3.4.0`; model weights remain external downloads.
 - Use partition-based exact top-k selection for image, frame-video, and
@@ -23,8 +25,10 @@ published v0.7.1 package and its five-model registry are unchanged.
 - Exact-search ordering and scores matched the prior full-sort baseline in all
   54 benchmark cases. Low-tie workloads improved; a synthetic all-equal-score
   workload regressed and is documented without a universal speedup claim.
-- CUDA FP32/BF16 validation is not complete. See the
-  [v0.8.0 validation record](docs/v0.8.0-validation.md).
+- SigLIP 2 CUDA BF16 parity passed for all five checkpoints. CUDA FP32 passed
+  for four; `siglip2-large-256` FP32 remains unverified because of shared-GPU
+  memory constraints. PE-Core CUDA parity was not run. These results are
+  detailed in the [v0.8.0 validation record](docs/v0.8.0-validation.md).
 
 ## v0.7.1 — 2026-10-23
 
