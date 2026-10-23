@@ -1,104 +1,27 @@
-# GitHub Copilot Instructions
+# GitHub Copilot Instructions — OpenVLCLIP
 
-## Project Overview
+## Repository identity and source of truth
 
-This repository develops the `openclip-gemma` Python package (import name: `openclip_gemma`), an independent library providing an OpenCLIP-inspired inference API for Google's EmbeddingGemma 2.
+This project is **openvlclip** (Python import: `openvlclip`), not the older `openclip-gemma` project. Preserve the OpenCLIP-inspired multi-backend API and existing released behavior. Before any v0.8.0 work, read **`docs/v0.8.0-copilot-handoff.md`** and **`docs/v0.8.0-scope.md`**. Use the current source code as the authority on what is already implemented; do not reimplement merged work. Consult `docs/openclip-compatibility-v0.3.0.md` and `docs/compatibility-spec-v0.1.0.md` for baseline historical behavior, resolving any discrepancies in favor of currently documented released contracts unless explicitly directed otherwise.
 
-The primary objective is to enable existing OpenCLIP inference code to run with minimal modifications while preserving the correctness of EmbeddingGemma 2 embeddings.
+## v0.8.0 guardrails
 
-## Source of Truth
+- In scope: validate three already-registered SigLIP 2 FixRes checkpoints, finish optional PE-Core T/S integration, validate measured NumPy exact top-k search improvement, prepare documentation and package release.
+- OUT of scope: DINOv3 and DINOv3+dino.txt, FAISS/ANN, new model families, training, fine-tuning, new CLI/UI, unrelated refactors.
+- Existing model/image/video APIs, scoring/ranking/tie ordering, checkpoint identity, EmbeddingSpace validation, and index on-disk formats must remain compatible.
+- Preserve pinned Hugging Face commit revisions and load weights only on explicit request; never redistribute model weights or licenses as if they were part of the package.
+- Keep PE-Core's `open-clip-torch` optional; importing `openvlclip` or listing models must not require it.
+- Validate the **actual** preprocessing pipeline before fixing PE-Core preprocessing identity. Do not claim real-weight numerical parity from mocked tests. Clearly distinguish PE-Core's OpenCLIP-converted checkpoint from the independently packaged Meta originals.
+- Python support: respect `pyproject.toml`; FP32 numerical reference, BF16 only when measured.
 
-Read `docs/openclip-compatibility-v0.3.0.md` before changing the Factory or Model compatibility APIs. Read `docs/compatibility-spec-v0.1.0.md` for the historical core inference contract and its confirmed numerical behavior.
+## Fast development workflow
 
-The compatibility specification is the project's primary requirements document.
+1. Inspect code and git state, then list only truly unfinished requirements from the handoff.
+2. Implement minimal changes with focused commits; avoid unrelated formatting, generated files and new abstractions.
+3. Run narrow, deterministic unit/regression checks for changed modules, plus only essential lint/build/smoke checks. Do **not** run full matrices, heavyweight downloads or all-model integration in normal CI.
+4. Real-checkpoint comparisons are manual/opt-in release gates; if hardware or network is unavailable, write the exact command and an honest BLOCKED status. Never fabricate parity or performance numbers and never declare the release ready until required checks have actually passed.
+5. Benchmark search against previous implementation using representative sizes, tie cases and end-to-end and top-k-only latency; report hardware/software conditions and whether any improvement is real.
+6. Report progress and results in Japanese, with changed files, tests executed, pending blockers, and evidence.
+7. Do not publish PyPI, create a release or version tag without explicit user authorization. Normal feature commits/PRs and merges are permitted only when explicitly requested for that task.
 
-Verify uncertain behaviors against the official OpenCLIP source code and the official EmbeddingGemma 2 documentation.
-
-If the specification conflicts with the upstream implementation, report the conflict before changing the intended behavior.
-
-Do not silently modify the specification.
-
-## Supported inference API
-
-- Python 3.12-3.14 are supported, excluding Python 3.14.1 as declared in `pyproject.toml`.
-- FP32 is the numerical baseline; BF16 has separate CPU and CUDA validation.
-- `pretrained=None` must raise an explicit error; do not silently load official weights or create random weights.
-
-Implement:
-
-- `create_model()`
-- `create_model_and_transforms()`
-- `create_model_from_pretrained()`
-- `list_models()` and `list_pretrained()`
-- `get_tokenizer()`
-- `model.encode_image()`
-- `model.encode_text()`
-- `model.forward()` and `model.get_logits()` only with explicit `logit_scale_mode="cosine"`; strict mode is the default because the model has no trained OpenCLIP logit scale.
-- `model.eval()` and `model.to()`
-- Image and text batch inference
-- CPU and CUDA inference
-
-Do not implement training, fine-tuning, audio, arbitrary OpenCLIP architectures, or numerical emulation of a trained CLIP `logit_scale`.
-
-Optional APIs must not delay the required inference functionality.
-
-## Architecture
-
-- Use a standard Python `src/` package layout.
-- Separate model loading, image preprocessing, text tokenization, and inference.
-- Prefer official Hugging Face Transformers and Sentence Transformers implementations.
-- Avoid reimplementing the EmbeddingGemma 2 neural network.
-- Preserve PyTorch Tensor input/output contracts wherever OpenCLIP compatibility is claimed.
-- Do not decode and re-encode token IDs or reconstruct PIL images from normalized tensors unless the approach has been explicitly validated.
-- Do not introduce unnecessary dependencies or abstractions.
-
-## Numerical Correctness
-
-- Treat official EmbeddingGemma 2 outputs as the reference.
-- Use FP32 as the baseline; validate BF16 separately before claiming support.
-- Do not assume that FP16 is safe.
-- Do not invent a learned CLIP `logit_scale`.
-- Distinguish API compatibility from numerical equivalence with OpenCLIP.
-- Validate preprocessing, prompting, pooling, normalization, and output shapes.
-- Preserve batch semantics and input ordering.
-
-## Development Workflow
-
-1. Read the relevant specification and existing code.
-2. Explain the implementation plan and affected files.
-3. Make the smallest change necessary for the requested feature.
-4. Add unit tests and relevant integration tests.
-5. Run applicable tests and lint checks.
-6. Report what passed, failed, or could not be executed.
-7. Summarize changes and known limitations.
-
-Do not proceed to unrelated features without an explicit request.
-
-Do not automatically create commits, push changes, publish packages, or modify repository settings.
-
-## Testing
-
-- Use pytest.
-- Mock heavyweight components in unit tests.
-- Separate tests requiring actual model weights from lightweight tests.
-- Check output shapes, dtypes, devices, finiteness, and normalization.
-- Compare actual embeddings against the official implementation where applicable.
-- Do not claim numerical correctness from shape-only tests.
-- Mark GPU-dependent tests and skip them when CUDA is unavailable.
-
-## Code Quality
-
-- Use Python type hints.
-- Write concise docstrings in English.
-- Follow Ruff formatting and linting conventions.
-- Use clear error messages for unsupported functionality.
-- Keep public APIs documented.
-- Do not claim compatibility for untested behaviors.
-
-## Communication
-
-Explain implementation decisions and testing results in Japanese.
-
-Keep code identifiers, docstrings, and public documentation in English.
-
-When a design decision is uncertain, state the alternatives and recommend one before proceeding.
+See `docs/v0.8.0-copilot-handoff.md` for prioritized actions and acceptance criteria.
