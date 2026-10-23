@@ -350,7 +350,7 @@ class Siglip2Backend:
         dimension = validate_positive_embedding_dimension(value, name=name)
         if dimension != self.native_dimension:
             raise ValueError(
-                f"{name} must be {self.native_dimension}; SigLIP 2 does not 
+                f"{name} must be {self.native_dimension}; SigLIP 2 does not "
                 f"support MRL or truncation. Received {dimension}."
             )
         return dimension
