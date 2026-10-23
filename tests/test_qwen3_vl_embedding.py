@@ -198,6 +198,7 @@ def _install_fake_vision_utils(
     vision_module = ModuleType("qwen_vl_utils.vision_process")
     vision_module.MODEL_SEQ_LEN = 128_000
     vision_module.SPATIAL_MERGE_SIZE = 2
+    vision_module.get_video_reader_backend = Mock(return_value="torchcodec")
     vision_module.process_vision_info = Mock(side_effect=process_vision_info)
     package_module = ModuleType("qwen_vl_utils")
     package_module.__path__ = []
@@ -210,6 +211,7 @@ def _install_fake_vision_utils(
         lambda package: {
             "transformers": "5.20.1",
             "qwen-vl-utils": "0.0.14",
+            "torchcodec": "0.17.0",
         }[package],
     )
     return vision_module.process_vision_info
@@ -465,7 +467,10 @@ def test_file_video_records_and_uses_the_processor_pixel_budget(
 
     assert features.shape == (1, QWEN3VL_2B_DIMENSION)
     assert model.native_video_processing_metadata == {
-        "processor_version": "transformers==5.20.1;qwen-vl-utils==0.0.14",
+        "processor_version": (
+            "transformers==5.20.1;qwen-vl-utils==0.0.14;"
+            "video-reader=torchcodec==0.17.0"
+        ),
         "total_pixels": 117_964_800.0,
     }
     video_item = next(
@@ -476,6 +481,7 @@ def test_file_video_records_and_uses_the_processor_pixel_budget(
     assert video_item["fps"] == 2.0
     assert video_item["max_frames"] == 12
     assert video_item["total_pixels"] == 117_964_800.0
+    assert video_item["video"] == str(video_path.resolve())
 
 
 def test_qwen_batching_passes_pil_images_to_processor(

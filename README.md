@@ -70,6 +70,11 @@ install the development and optional dependencies with:
 uv sync --locked --group dev --extra dinotxt --extra qwen3vl
 ```
 
+Qwen native-video inputs use TorchCodec through `qwen-vl-utils`. On Windows,
+install an FFmpeg **full-shared** build and make its DLL directory available on
+`PATH`; the `ffmpeg.exe` command alone is not sufficient. See the
+[TorchCodec installation guide](https://github.com/meta-pytorch/torchcodec#installing-torchcodec).
+
 The first model or tokenizer load downloads the required files unless they
 are already cached. EmbeddingGemma 2 is pinned to revision
 `914f7f89142e33e77833254d9c9b90c3cef7303b`; dino.txt code and weight hashes

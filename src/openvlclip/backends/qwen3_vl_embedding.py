@@ -110,11 +110,30 @@ class Qwen3VLCLIP(nn.Module):
     def native_video_processing_metadata(self) -> Mapping[str, object]:
         """Return the exact processor version and file-video pixel budget."""
         try:
+            from qwen_vl_utils import vision_process
+
+            reader_backend = vision_process.get_video_reader_backend()
+            reader_package = {
+                "torchcodec": "torchcodec",
+                "decord": "decord",
+                "torchvision": "torchvision",
+            }.get(reader_backend)
+            if reader_package is None:
+                raise RuntimeError(
+                    f"Unsupported Qwen video reader backend: {reader_backend}."
+                )
             processor_version = (
                 f"transformers=={version('transformers')};"
-                f"qwen-vl-utils=={version('qwen-vl-utils')}"
+                f"qwen-vl-utils=={version('qwen-vl-utils')};"
+                f"video-reader={reader_backend}=={version(reader_package)}"
             )
         except PackageNotFoundError as error:
+            raise RuntimeError(
+                "Native video indexing requires the optional 'qwen3vl' extra "
+                "and its selected video reader; "
+                'install it with `pip install "openvlclip[qwen3vl]"`.'
+            ) from error
+        except ImportError as error:
             raise RuntimeError(
                 "Native video indexing requires the optional 'qwen3vl' extra; "
                 'install it with `pip install "openvlclip[qwen3vl]"`.'
@@ -830,7 +849,7 @@ def _normalize_video(
     if isinstance(value, (str, PathLike)):
         return {
             "type": "video",
-            "video": _local_file_uri(value, name=f"video at input index {index}"),
+            "video": str(_local_file_path(value, name=f"video at input index {index}")),
             "fps": _validate_fps(fps),
             "max_frames": resolved_max_frames,
             "total_pixels": _default_file_video_total_pixels(),
@@ -923,6 +942,10 @@ def _validate_max_frames(value: object) -> int:
 
 
 def _local_file_uri(value: str | PathLike[str], *, name: str) -> str:
+    return _local_file_path(value, name=name).as_uri()
+
+
+def _local_file_path(value: str | PathLike[str], *, name: str) -> Path:
     path_value = fspath(value)
     if not isinstance(path_value, str):
         raise TypeError(f"{name} path must be a string path.")
@@ -931,7 +954,7 @@ def _local_file_uri(value: str | PathLike[str], *, name: str) -> str:
     path = Path(path_value).expanduser()
     if not path.is_file():
         raise FileNotFoundError(f"The {name} file does not exist: {path}.")
-    return path.resolve().as_uri()
+    return path.resolve()
 
 
 def _format_conversation(
