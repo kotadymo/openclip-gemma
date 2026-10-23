@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.7.1 — Unreleased
+
+This backward-compatible patch release hardens native-video indexing without
+changing registered models or embedding calculations.
+
+### Fixed
+
+- Add opt-in SHA-256 content verification to Native Video Index updates and
+  `native-index --verify-contents`; strict updates re-embed content changes even
+  when file size and modification time are unchanged.
+- Expose and enforce the Qwen3-VL-Embedding-2B native-video frame limit of 64
+  before scanning or decoding videos, and reject existing indexes above the
+  loaded model's limit during search.
+- Preserve compatibility with v0.7.0 Native Video Index metadata; legacy
+  records without hashes remain readable and are re-embedded when strict
+  verification is first enabled.
+- Keep distribution verification aligned with the five registered v0.7.0
+  models and derive its default expected version from the project metadata.
+
+See [v0.7.1 release notes](docs/release-notes-v0.7.1.md).
+
 ## v0.7.0 — 2026-10-23
 
 This minor release expands OpenVLCLIP to **five officially registered checkpoints**: EmbeddingGemma 2, DINOv2 + dino.txt, two SigLIP 2 Base variants (FixRes and NaFlex), and **Qwen3-VL-Embedding-2B**. Qwen3-VL-Embedding-8B is explicitly **deferred**; it is **not** registered or supported in v0.7.0.
