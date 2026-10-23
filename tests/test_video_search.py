@@ -13,7 +13,8 @@ import torch
 from PIL import Image
 from torch import nn
 
-from openvlclip import video_search
+from openvlclip import image_search, video_search
+from openvlclip.backends.dinov2_dinotxt import DinoV2DinoTxtBackend
 from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
 from openvlclip.embedding_space import EmbeddingSpaceMetadata
 from openvlclip.index_storage import _save_numpy_archive_atomic
@@ -22,10 +23,13 @@ from openvlclip.video_search import (
     VideoSearchError,
     _build_or_update_video_index,
     _iter_sampled_frames,
+    _load_native_video_index,
     _load_video_index,
     _validate_interval,
+    build_or_update_native_video_index,
     build_or_update_video_index,
     convert_video_index,
+    search_native_video,
     search_video,
 )
 
@@ -120,6 +124,7 @@ class FakeVideoModel(nn.Module):
             embedding_space_metadata or EmbeddingGemma2Backend.embedding_space_metadata
         )
         self._dimension_backend = EmbeddingGemma2Backend()
+        self.capabilities = self._dimension_backend.capabilities
 
     def validate_embedding_dimension(
         self,
@@ -168,6 +173,134 @@ class FakeVideoModel(nn.Module):
         return (
             torch.nn.functional.normalize(features, dim=-1) if normalize else features
         )
+
+
+class FakeNativeVideoModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.anchor = nn.Parameter(torch.zeros(()))
+        self.capabilities = {
+            "image_embedding": False,
+            "text_embedding": True,
+            "image_text_similarity": False,
+            "patch_embedding": False,
+            "text_similarity_map": False,
+            "mrl": True,
+            "selective_loading": False,
+            "video_embedding": True,
+            "multimodal_embedding": True,
+            "instruction_aware": True,
+            "variable_resolution": False,
+            "sigmoid_logits": False,
+        }
+        self.embedding_space_metadata = EmbeddingSpaceMetadata(
+            backend_id="test-qwen-video",
+            model_id="test/qwen-video",
+            model_revision="test-revision",
+            embedding_strategy="qwen-chat-template-v1",
+            normalization="truncate-then-l2-v1",
+            preprocessing_id="qwen-test-video-processor-v1",
+            index_prompt=None,
+            query_prompt_name=None,
+            query_prompt=None,
+        )
+        self.native_video_processing_metadata = {
+            "processor_version": "transformers=5.20.1;qwen-vl-utils=0.0.14",
+            "total_pixels": 117_964_800,
+        }
+        self.encoded_videos: list[tuple[Path, float, int]] = []
+        self.received_instructions: list[str | None] = []
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        if value is None:
+            return 4
+        if type(value) is not int or value != 4:
+            raise ValueError(f"{name} must be the native test dimension 4.")
+        return 4
+
+    def encode_video(
+        self,
+        video: Path,
+        *,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+        fps: float | None = None,
+        max_frames: int | None = None,
+    ) -> torch.Tensor:
+        dimension = self.validate_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
+        self.encoded_videos.append((video, float(fps or 1.0), int(max_frames or 64)))
+        content = video.read_bytes()
+        if content.startswith(b"broken"):
+            return torch.zeros((1, dimension - 1), dtype=self.anchor.dtype)
+        vector_index = 0 if b"red" in content else 1
+        features = torch.zeros((1, dimension), dtype=self.anchor.dtype)
+        features[0, vector_index] = 1
+        return (
+            torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        )
+
+    def encode_texts(
+        self,
+        texts: str | list[str],
+        *,
+        instruction: str | None = None,
+        normalize: bool = False,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        dimension = self.validate_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
+        self.received_instructions.append(instruction)
+        text = texts if isinstance(texts, str) else texts[0]
+        features = torch.zeros((1, dimension), dtype=self.anchor.dtype)
+        features[0, 0 if "red" in text else 1] = 1
+        return (
+            torch.nn.functional.normalize(features, dim=-1) if normalize else features
+        )
+
+
+class FakeDinoVideoModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.anchor = nn.Parameter(torch.zeros(()))
+        self.backend = DinoV2DinoTxtBackend()
+        self.capabilities = self.backend.capabilities
+        self.embedding_space_metadata = self.backend.embedding_space_metadata
+
+    def validate_embedding_dimension(
+        self,
+        value: object | None,
+        *,
+        name: str,
+    ) -> int:
+        return self.backend.validate_embedding_dimension(value, name=name)
+
+    def encode_image(
+        self,
+        images: torch.Tensor,
+        *,
+        truncate_dim: int | None = None,
+    ) -> torch.Tensor:
+        dimension = self.validate_embedding_dimension(
+            truncate_dim,
+            name="truncate_dim",
+        )
+        features = torch.zeros(
+            (images.shape[0], dimension),
+            device=images.device,
+            dtype=self.anchor.dtype,
+        )
+        features[:, 0] = 1
+        return features
 
 
 class FakeTokenizer:
@@ -231,6 +364,11 @@ def _rewrite_video_index_version(index_path: Path, version: int) -> None:
                 "query_prompt_name",
                 "query_prompt",
                 "embedding_space_id",
+                "embedding_space_schema_version",
+                "input_type",
+                "index_policy",
+                "query_policy",
+                "processing_parameters",
             )
             if version == 2
             else ()
@@ -549,7 +687,7 @@ def test_video_index_round_trip_search_and_incremental_file_changes(
         prompt_names.append(prompt_name)
         return tokenizer
 
-    monkeypatch.setattr(video_search, "get_tokenizer", fake_tokenizer)
+    monkeypatch.setattr(image_search, "get_tokenizer", fake_tokenizer)
     results = search_video(model, index_dir, "赤いドリル", top_k=2)
     assert prompt_names == ["SearchQuery"]
     assert tokenizer.texts == ["赤いドリル"]
@@ -584,7 +722,7 @@ def test_video_index_builds_and_searches_at_requested_dimension(
     )
     loaded = _load_video_index(index_dir)
     monkeypatch.setattr(
-        video_search,
+        image_search,
         "get_tokenizer",
         lambda *, prompt_name: FakeTokenizer(),
     )
@@ -599,6 +737,29 @@ def test_video_index_builds_and_searches_at_requested_dimension(
     assert metadata["format_version"] == 3
     assert metadata["embedding_dimension"] == embedding_dim
     assert metadata["embedding_strategy"] == "leading-dimensions-l2-v1"
+
+
+def test_frame_video_index_defaults_to_backend_native_dimension(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4")
+    monkeypatch.setattr(
+        video_search,
+        "_load_av",
+        lambda: FakeAV({video_path: FakeContainer([FakeFrame(0, (255, 0, 0))])}),
+    )
+
+    update = build_or_update_video_index(
+        FakeDinoVideoModel(),
+        _preprocess,
+        videos_dir,
+        tmp_path / "index",
+    )
+
+    assert update.frame_count == 1
+    assert _load_video_index(tmp_path / "index").embeddings.shape == (1, 2048)
 
 
 def test_video_search_rejects_model_with_same_dimension_but_different_space(
@@ -624,7 +785,7 @@ def test_video_search_rejects_model_with_same_dimension_but_different_space(
         model_id="different/model",
     )
     monkeypatch.setattr(
-        video_search,
+        image_search,
         "get_tokenizer",
         lambda **kwargs: pytest.fail("incompatible model must fail before tokenizing"),
     )
@@ -930,3 +1091,198 @@ def test_old_absolute_timestamp_index_version_requires_rebuild(
 
     with pytest.raises(VideoIndexCompatibilityError, match="format version: 1"):
         _load_video_index(index_dir)
+
+
+def test_native_video_index_updates_searches_and_sorts_results(
+    tmp_path: Path,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    _write_video(videos_dir / "red-a.mp4", b"red-a")
+    red_b = _write_video(videos_dir / "red-b.mp4", b"red-b")
+    blue = _write_video(videos_dir / "blue.mp4", b"blue")
+    index_dir = tmp_path / "index"
+    model = FakeNativeVideoModel()
+    instruction = "Represent this user's video query."
+
+    first = build_or_update_native_video_index(
+        model,
+        videos_dir,
+        index_dir,
+        fps=2.0,
+        max_frames=12,
+        query_instruction=instruction,
+    )
+
+    assert (
+        first.added_videos,
+        first.updated_videos,
+        first.removed_videos,
+        first.unchanged_videos,
+    ) == (3, 0, 0, 0)
+    assert first.index_path.name == "native-video-index.npz"
+    assert not (index_dir / "video-index.npz").exists()
+    assert all(call[1:] == (2.0, 12) for call in model.encoded_videos)
+    loaded = _load_native_video_index(
+        index_dir,
+        expected_fps=2.0,
+        expected_max_frames=12,
+    )
+    assert loaded.embeddings.shape == (3, 4)
+    assert json.loads(loaded.embedding_space.processing_parameters or "") == {
+        "fps": 2.0,
+        "max_frames": 12,
+        "processor_version": "transformers=5.20.1;qwen-vl-utils=0.0.14",
+        "total_pixels": 117_964_800,
+    }
+
+    unchanged = build_or_update_native_video_index(
+        model,
+        videos_dir,
+        index_dir,
+        fps=2.0,
+        max_frames=12,
+        query_instruction=instruction,
+    )
+    assert unchanged.unchanged_videos == 3
+    assert len(model.encoded_videos) == 3
+
+    results = search_native_video(
+        model,
+        index_dir,
+        "red video",
+        top_k=2,
+        query_instruction=instruction,
+    )
+    assert [result.video_path.name for result in results] == ["red-a.mp4", "red-b.mp4"]
+    assert [result.rank for result in results] == [1, 2]
+    assert [result.score for result in results] == pytest.approx([1.0, 1.0])
+    assert model.received_instructions == [instruction]
+    assert not hasattr(results[0], "timestamp_seconds")
+
+    red_b.unlink()
+    blue.write_bytes(b"red-updated")
+    green = _write_video(videos_dir / "green.mp4", b"green")
+    updated = build_or_update_native_video_index(
+        model,
+        videos_dir,
+        index_dir,
+        fps=2.0,
+        max_frames=12,
+        query_instruction=instruction,
+    )
+    assert (
+        updated.added_videos,
+        updated.updated_videos,
+        updated.removed_videos,
+        updated.unchanged_videos,
+    ) == (1, 1, 1, 1)
+    assert green.exists()
+    assert len(model.encoded_videos) == 5
+    assert [
+        result.video_path.name
+        for result in search_native_video(
+            model,
+            index_dir,
+            "red video",
+            top_k=2,
+            query_instruction=instruction,
+        )
+    ] == ["blue.mp4", "red-a.mp4"]
+
+
+def test_native_video_index_rejects_incompatible_policies_and_unsupported_models(
+    tmp_path: Path,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    _write_video(videos_dir / "one.mp4", b"red")
+    index_dir = tmp_path / "index"
+    model = FakeNativeVideoModel()
+    build_or_update_native_video_index(
+        model,
+        videos_dir,
+        index_dir,
+        query_instruction="Describe the video.",
+    )
+
+    with pytest.raises(VideoIndexCompatibilityError, match="query policy"):
+        search_native_video(
+            model,
+            index_dir,
+            "red",
+            query_instruction="Use a different query policy.",
+        )
+    with pytest.raises(VideoIndexCompatibilityError, match="query policy"):
+        build_or_update_native_video_index(
+            model,
+            videos_dir,
+            index_dir,
+            query_instruction="Use a different query policy.",
+        )
+    model.native_video_processing_metadata["total_pixels"] += 1
+    with pytest.raises(VideoIndexCompatibilityError, match="processor"):
+        search_native_video(
+            model,
+            index_dir,
+            "red",
+            query_instruction="Describe the video.",
+        )
+    with pytest.raises(NotImplementedError, match="video_embedding capability"):
+        build_or_update_native_video_index(
+            FakeVideoModel(),
+            videos_dir,
+            tmp_path / "unsupported-index",
+        )
+
+
+def test_native_video_index_requires_processor_pixel_metadata(
+    tmp_path: Path,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    _write_video(videos_dir / "one.mp4", b"red")
+    model = FakeNativeVideoModel()
+    del model.native_video_processing_metadata
+
+    with pytest.raises(VideoSearchError, match="processor version and total-pixel"):
+        build_or_update_native_video_index(
+            model,
+            videos_dir,
+            tmp_path / "index",
+        )
+
+
+def test_failed_native_video_update_preserves_existing_index(
+    tmp_path: Path,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "one.mp4", b"red")
+    index_dir = tmp_path / "index"
+    model = FakeNativeVideoModel()
+    update = build_or_update_native_video_index(model, videos_dir, index_dir)
+    original = update.index_path.read_bytes()
+
+    video_path.write_bytes(b"broken-video")
+    with pytest.raises(VideoSearchError, match="invalid embedding"):
+        build_or_update_native_video_index(model, videos_dir, index_dir)
+
+    assert update.index_path.read_bytes() == original
+
+
+def test_native_video_index_rejects_corrupted_embedding_checksum(
+    tmp_path: Path,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    _write_video(videos_dir / "one.mp4", b"red")
+    index_dir = tmp_path / "index"
+    update = build_or_update_native_video_index(
+        FakeNativeVideoModel(),
+        videos_dir,
+        index_dir,
+    )
+    with np.load(update.index_path, allow_pickle=False) as archive:
+        metadata = json.loads(archive["metadata"].tobytes().decode("utf-8"))
+        embeddings = archive["embeddings"].copy()
+    embeddings[0, 0] = 0.5
+    _save_numpy_archive_atomic(update.index_path, metadata, {"embeddings": embeddings})
+
+    with pytest.raises(VideoSearchError, match="checksum"):
+        _load_native_video_index(index_dir)

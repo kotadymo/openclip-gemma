@@ -25,7 +25,25 @@ _SIGNATURE_FIELDS = (
     "sampling_method",
 )
 
+_VERSIONED_SIGNATURE_FIELDS = (
+    *_SIGNATURE_FIELDS,
+    "embedding_space_schema_version",
+    "input_type",
+    "index_policy",
+    "query_policy",
+    "processing_parameters",
+)
+
 _SPACE_METADATA_FIELDS = frozenset((*_SIGNATURE_FIELDS, "embedding_space_id"))
+_VERSIONED_SPACE_METADATA_FIELDS = frozenset(
+    {
+        "embedding_space_schema_version",
+        "input_type",
+        "index_policy",
+        "query_policy",
+        "processing_parameters",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +63,11 @@ class EmbeddingSpace:
     model_precision: str
     storage_dtype: str = "float32"
     sampling_method: str | None = None
+    schema_version: int = 1
+    input_type: str | None = None
+    index_policy: str | None = None
+    query_policy: str | None = None
+    processing_parameters: str | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -91,8 +114,59 @@ class EmbeddingSpace:
             not isinstance(self.sampling_method, str) or not self.sampling_method
         ):
             raise ValueError("sampling_method must be a non-empty string or None.")
+        if type(self.schema_version) is not int or self.schema_version not in {1, 2}:
+            raise ValueError("schema_version must be 1 or 2.")
+        if self.schema_version == 1:
+            if any(
+                value is not None
+                for value in (
+                    self.input_type,
+                    self.index_policy,
+                    self.query_policy,
+                    self.processing_parameters,
+                )
+            ):
+                raise ValueError(
+                    "Schema version 1 cannot include version 2 identity fields."
+                )
+            return
+        if self.input_type not in {
+            "image",
+            "text",
+            "mixed",
+            "sampled-frame",
+            "native-video",
+        }:
+            raise ValueError(
+                "input_type must be image, text, mixed, sampled-frame, or native-video."
+            )
+        for name in ("index_policy", "query_policy"):
+            value = getattr(self, name)
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(f"{name} must be a non-empty string or None.")
+        if (
+            not isinstance(self.processing_parameters, str)
+            or not self.processing_parameters
+        ):
+            raise ValueError("processing_parameters must be a non-empty string.")
 
     def _signature_payload(self) -> list[tuple[str, str | int | None]]:
+        fields = (
+            _SIGNATURE_FIELDS
+            if self.schema_version == 1
+            else _VERSIONED_SIGNATURE_FIELDS
+        )
+        return [
+            (
+                name,
+                self.schema_version
+                if name == "embedding_space_schema_version"
+                else getattr(self, name),
+            )
+            for name in fields
+        ]
+
+    def _legacy_signature_payload(self) -> list[tuple[str, str | int | None]]:
         return [(name, getattr(self, name)) for name in _SIGNATURE_FIELDS]
 
     @property
@@ -114,7 +188,21 @@ class EmbeddingSpace:
     @classmethod
     def from_metadata(cls, metadata: Mapping[str, object]) -> EmbeddingSpace:
         """Parse extended index metadata and verify its embedding-space signature."""
-        missing = _SPACE_METADATA_FIELDS.difference(metadata)
+        schema_version = metadata.get("embedding_space_schema_version", 1)
+        if type(schema_version) is not int or schema_version not in {1, 2}:
+            raise ValueError("embedding_space_schema_version must be 1 or 2.")
+        if schema_version == 1 and _VERSIONED_SPACE_METADATA_FIELDS.intersection(
+            metadata
+        ):
+            raise ValueError(
+                "Version 2 embedding-space fields require an explicit schema version."
+            )
+        required_fields = (
+            _SPACE_METADATA_FIELDS
+            if schema_version == 1
+            else _SPACE_METADATA_FIELDS | _VERSIONED_SPACE_METADATA_FIELDS
+        )
+        missing = required_fields.difference(metadata)
         if missing:
             raise ValueError(
                 f"Embedding-space metadata is incomplete: {', '.join(sorted(missing))}."
@@ -151,6 +239,27 @@ class EmbeddingSpace:
         sampling_method = metadata["sampling_method"]
         if sampling_method is not None and not isinstance(sampling_method, str):
             raise TypeError("sampling_method must be a string or None.")
+        input_type: str | None = None
+        index_policy: str | None = None
+        query_policy: str | None = None
+        processing_parameters: str | None = None
+        if schema_version == 2:
+            input_type_value = metadata["input_type"]
+            if not isinstance(input_type_value, str):
+                raise TypeError("input_type must be a string.")
+            input_type = input_type_value
+            for name in ("index_policy", "query_policy"):
+                value = metadata[name]
+                if value is not None and not isinstance(value, str):
+                    raise TypeError(f"{name} must be a string or None.")
+                if name == "index_policy":
+                    index_policy = value
+                else:
+                    query_policy = value
+            processing_parameters_value = metadata["processing_parameters"]
+            if not isinstance(processing_parameters_value, str):
+                raise TypeError("processing_parameters must be a string.")
+            processing_parameters = processing_parameters_value
         space = cls(
             backend_id=metadata["backend_id"],
             model_id=metadata["model_id"],
@@ -165,6 +274,11 @@ class EmbeddingSpace:
             model_precision=metadata["model_precision"],
             storage_dtype=metadata["storage_dtype"],
             sampling_method=sampling_method,
+            schema_version=schema_version,
+            input_type=input_type,
+            index_policy=index_policy,
+            query_policy=query_policy,
+            processing_parameters=processing_parameters,
         )
         signature = metadata["embedding_space_id"]
         if not isinstance(signature, str) or signature != space.embedding_space_id:
@@ -193,6 +307,11 @@ class EmbeddingSpaceMetadata:
         model_precision: str,
         sampling_method: str | None = None,
         storage_dtype: str = "float32",
+        schema_version: int = 1,
+        input_type: str | None = None,
+        index_policy: str | None = None,
+        query_policy: str | None = None,
+        processing_parameters: str | None = None,
     ) -> EmbeddingSpace:
         """Create the complete identity used by one index."""
         return EmbeddingSpace(
@@ -209,12 +328,55 @@ class EmbeddingSpaceMetadata:
             model_precision=model_precision,
             storage_dtype=storage_dtype,
             sampling_method=sampling_method,
+            schema_version=schema_version,
+            input_type=input_type,
+            index_policy=index_policy,
+            query_policy=query_policy,
+            processing_parameters=processing_parameters,
         )
+
+
+def embedding_spaces_compatible(
+    actual: EmbeddingSpace,
+    expected: EmbeddingSpace,
+    *,
+    legacy_input_type: str,
+    legacy_processing_parameters: str = "{}",
+) -> bool:
+    """Match a v1 index to an equivalent v2 identity without weakening policy checks."""
+    if actual == expected:
+        return True
+    if actual.schema_version != 1 or expected.schema_version != 2:
+        return False
+    if (
+        expected.input_type != legacy_input_type
+        or expected.processing_parameters != legacy_processing_parameters
+    ):
+        return False
+    if expected.index_policy is not None or expected.query_policy is not None:
+        legacy_index_policy = json.dumps(
+            {
+                "input_type": legacy_input_type,
+                "instruction": "backend-default",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if (
+            expected.query_prompt_name is None
+            or expected.index_policy != legacy_index_policy
+            or expected.query_policy != '{"instruction":null}'
+        ):
+            return False
+    return actual._signature_payload() == expected._legacy_signature_payload()
 
 
 def has_embedding_space_metadata(metadata: Mapping[str, object]) -> bool:
     """Return whether any extension identity field is present in an archive."""
-    extension_fields = _SPACE_METADATA_FIELDS.difference(
+    extension_fields = (
+        _SPACE_METADATA_FIELDS | _VERSIONED_SPACE_METADATA_FIELDS
+    ).difference(
         {
             "model_id",
             "model_revision",

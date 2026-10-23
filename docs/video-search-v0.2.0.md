@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-The APIs index sampled video frames and search them with Japanese or English text from `openvlclip.video_search`. They are not re-exported from the package root. They reuse the image encoder, preprocessing transform, `SearchQuery` tokenizer prompt, and safe index archive helpers. The default is 768 dimensions; v0.4.0 also supports 512, 256, and 128 dimensions through MRL truncation and re-normalization.
+The APIs index sampled video frames and search them with Japanese or English text from `openvlclip.video_search`. They are not re-exported from the package root. Frame indexing reuses the selected model's image encoder and preprocessing; the backend's native embedding dimension is the default. EmbeddingGemma 2 also supports its 512, 256, and 128-dimensional MRL outputs. Other models accept only dimensions their backend explicitly validates.
 
 The prototype indexes frames independently. It does not recognize motion, event order, or temporal relationships across frames. Search scores are cosine similarities, not probabilities or calibrated confidence.
 
@@ -35,7 +35,7 @@ The decoder processes frames sequentially and does not retain the whole video or
 
 Each sample retains the original PTS and rational frame time base, along with the exact rational playback origin used to calculate its relative timestamp. A frame time base is preferred; the video stream time base is used only when the frame time base is unavailable. Times are not estimated from FPS. VFR streams therefore retain the decoder's actual presentation time, and sampling targets can be unevenly spaced in the selected output. A large interval can miss short-lived scenes.
 
-Frame images are converted to RGB and passed through the existing official image preprocessing transform. Frames are grouped by processed Tensor shape and encoded in bounded batches. `--batch-size` limits the number of image Tensors sent through the model together; decoded-frame and index memory still depend on video duration and index size.
+Frame images are converted to RGB and passed through the selected backend's official image preprocessing. Tensor, processor-mapping, and PIL-image outputs are grouped by compatible shape and encoded in bounded batches. `--batch-size` limits the number of processed frames sent through the model together; decoded-frame and index memory still depend on video duration and index size.
 
 ## Indexing and updates
 
@@ -44,12 +44,13 @@ Create or update an index, optionally including subdirectories:
 ```bash
 uv run python examples/video_search.py index \
   --videos ./videos --output ./video-index --interval 1.0 \
-  --batch-size 8 --embedding-dim 256 --device cpu --recursive
+  --model embeddinggemma-2 --batch-size 8 \
+  --embedding-dim 256 --device cpu --recursive
 ```
 
 Omit `--recursive` to scan only the selected directory. `--device` accepts `cpu` or `cuda`; CPU is the default. Model weights are downloaded from Hugging Face on first use unless already cached. Reduce the batch size if CUDA runs out of memory; the reported error identifies the video and batch being encoded.
 
-The output is a version-3 `video-index.npz` archive distinct from the image-search `index.npz`. Version 2 stored playback-relative timestamps and exact timestamp origins and remains readable at 768 dimensions. Version-1 indexes used absolute PTS-derived timestamps and are rejected; rebuild them rather than reusing them. Version 3 stores UTF-8 JSON metadata and an `N x D` float32 embedding matrix, where `D` is 128, 256, 512, or 768. Metadata records:
+The output is a version-3 `video-index.npz` archive distinct from the image-search `index.npz` and native-video archive. Version 2 stored playback-relative timestamps and exact timestamp origins and remains readable at 768 dimensions. Version-1 indexes used absolute PTS-derived timestamps and are rejected; rebuild them rather than reusing them. Version 3 stores UTF-8 JSON metadata and an `N x D` float32 embedding matrix, where `D` is the selected model's validated output dimension. Metadata records:
 
 - Index kind and format version.
 - Model ID and pinned model revision, precision, embedding dimension, and preprocessing identifier.
@@ -58,14 +59,14 @@ The output is a version-3 `video-index.npz` archive distinct from the image-sear
 - Each sampled frame's video path, PTS, time base, playback origin, and relative timestamp in seconds.
 - The embedding matrix checksum.
 
-New version-3 indexes include a deterministic `embedding_space_id` over the
+New version-3 indexes include a versioned `embedding_space_id` over the
 backend, model and revision, dimension and strategy, normalization,
-preprocessing, prompts, precision, storage dtype, and sampling method. Its
-SHA-256 input is a compact UTF-8 JSON array of field/value pairs in a fixed
-order; null values are explicit and Python's randomized `hash()` is not used.
-Search and updates reject same-dimension indexes from a different embedding
-space. Existing version-2 and v0.4.0 version-3 indexes remain readable only
-when their legacy fields identify the pinned EmbeddingGemma 2 configuration.
+preprocessing, input type, instruction policies, sampling parameters,
+precision, storage dtype, and sampling method. The historical schema-1
+signature remains available to preserve old IDs. Search and updates reject
+same-dimension indexes from a different embedding space. Existing version-2
+and v0.4.0 version-3 EmbeddingGemma indexes remain readable when their legacy
+fields identify the compatible pinned configuration.
 
 The loader preflights ZIP member names, NPY array headers, archive size, expanded member size, and metadata size before loading arrays; NumPy loading also has pickle disabled. It then validates metadata, paths, counts, dimensions, finite values, checksum, model revision, precision, preprocessing, and requested sampling interval. The archive and expanded members are each limited to 512 MiB, and metadata is limited to 64 MiB. Image and video archives are not interchangeable. Writes use a temporary file followed by an atomic replacement, so a failed decode or embedding does not replace the previous complete index.
 
@@ -73,7 +74,8 @@ Re-running the index command reconciles additions, modifications, and removals. 
 
 ## Text search
 
-Search a saved index:
+Search a saved index with the same registered model and, for an
+instruction-aware backend, the same query-instruction policy:
 
 ```bash
 uv run python examples/video_search.py search \
@@ -81,14 +83,16 @@ uv run python examples/video_search.py search \
   --top-k 5 --device cpu
 ```
 
-The query is encoded with `get_tokenizer(prompt_name="SearchQuery")` and `encode_text()` at the dimension stored in the index. The normalized query is compared against normalized frame embeddings by dot product. Results are sorted by descending cosine similarity; ties are resolved deterministically by relative path, timestamp, and PTS. `top_k` must be positive, and an empty index or blank query is an error.
+The query is encoded by the selected backend at the dimension stored in the index. EmbeddingGemma 2 uses its registered `SearchQuery` task prompt; other models use their own tokenizer/processor path. A supported `--query-instruction` is recorded in the index policy and must be supplied unchanged at search time. EmbeddingGemma's task prompts are not free-form instructions. The normalized query is compared against normalized frame embeddings by dot product. Results are sorted by descending cosine similarity; ties are resolved deterministically by relative path, timestamp, and PTS. `top_k` must be positive, and an empty index or blank query is an error.
 
 ## Embedding dimensions and migration
 
-Pass `embedding_dim=128`, `256`, `512`, or `768` to
+Pass an `embedding_dim` supported by the selected backend to
 `build_or_update_video_index()` or `--embedding-dim` to the CLI. The default is
-768. An existing index cannot be incrementally updated at a different
-dimension; build the alternate dimension in a separate directory.
+the backend's native dimension. EmbeddingGemma 2 supports its MRL dimensions
+768, 512, 256, and 128; non-MRL backends reject unsupported truncation. An
+existing index cannot be incrementally updated at a different dimension;
+build the alternate dimension in a separate directory.
 
 `convert_video_index(source, destination, embedding_dim=...)` converts stored
 frame vectors without decoding video or loading the model. The destination
@@ -100,9 +104,38 @@ indexes remain unsupported.
 
 Output includes the rank, video path, timestamp (`HH:MM:SS.mmm`), and raw cosine score. Use the timestamp to seek in the original video. Scores must not be interpreted as probabilities. This prototype does not create frame previews or clip-level summaries.
 
+## Native whole-video embeddings
+
+`build_or_update_native_video_index()` and `search_native_video()` provide a
+separate path for a backend that advertises `video_embedding` and implements
+`encode_video()`. The encoder returns one vector per video; results do not
+include timestamps and do not use the frame sampler. The index is stored as
+`native-video-index.npz`, with a distinct archive kind and
+`input_type="native-video"` so it cannot be read as or mixed with a sampled
+frame index. The backend revision, preprocessing identity, FPS, frame limit,
+query instruction, processor version, total pixel budget, precision, and
+embedding dimension are checked before reuse or search. Native-video backends
+must expose explicit processor-version and total-pixel metadata; missing policy
+metadata is rejected rather than guessed. A model without the capability raises
+`NotImplementedError`.
+
+The native-video CLI is `native-index` / `native-search` in
+`examples/video_search.py`. The Qwen3-VL backend is still in Draft PR #44, so
+the native API has unit coverage with a fake capability-bearing model but no
+Qwen real-model integration result yet. It should not be treated as a usable
+Qwen workflow until that backend is merged and its CUDA parity gate passes.
+
 ## Validation
 
-The APIs are `build_or_update_video_index()` and `search_video()` in `openvlclip.video_search`. Model-independent tests mock PyAV and the image encoder to cover PTS/VFR sampling, zero and nonzero start times, interval validation, corrupt and empty inputs, archive round trips, incremental changes, compatibility checks, stable ranking, and safe errors.
+The APIs are `build_or_update_video_index()`, `search_video()`,
+`build_or_update_native_video_index()`, and `search_native_video()` in
+`openvlclip.video_search`. Model-independent tests mock PyAV and model
+encoders to cover PTS/VFR sampling, zero and nonzero start times, interval
+validation, corrupt and empty inputs, archive round trips, incremental
+changes, compatibility checks, stable ranking, and safe errors. Frame-based
+video indexing is model-generic; actual dino.txt/Qwen frame preprocessing and
+native Qwen video inference remain unverified until their dedicated integration
+tests run.
 
 Opt-in integration tests create a small synthetic MP4 and use the pinned real model to exercise CPU indexing and Japanese text search, plus CUDA/CPU FP32 comparison when CUDA is available:
 

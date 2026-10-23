@@ -42,6 +42,7 @@ class FakeImageSearchModel(nn.Module):
             embedding_space_metadata or EmbeddingGemma2Backend.embedding_space_metadata
         )
         self._dimension_backend = EmbeddingGemma2Backend()
+        self.capabilities = self._dimension_backend.capabilities
 
     def validate_embedding_dimension(
         self,
@@ -104,6 +105,7 @@ class FakeDinoImageSearchModel(nn.Module):
             embedding_space_metadata
             or self._dimension_backend.embedding_space_metadata
         )
+        self.capabilities = self._dimension_backend.capabilities
         self.received_prompt_names: list[str | None] = []
         self.tokenizer = FakeTokenizer()
 
@@ -243,6 +245,11 @@ def _rewrite_index_version(index_path: Path, version: int) -> None:
                 "query_prompt",
                 "sampling_method",
                 "embedding_space_id",
+                "embedding_space_schema_version",
+                "input_type",
+                "index_policy",
+                "query_policy",
+                "processing_parameters",
             )
             if version == 1
             else ()
@@ -746,6 +753,23 @@ def test_search_uses_search_query_prompt_and_stable_top_k(
     assert [result.path.name for result in results] == ["red-a.png", "red-b.png"]
     assert [result.score for result in results] == pytest.approx([1.0, 1.0])
     assert len(model.received_tokens) == 1
+
+
+def test_embeddinggemma_rejects_unregistered_query_instructions(
+    tmp_path: Path,
+) -> None:
+    model = FakeImageSearchModel()
+    images_dir = tmp_path / "photos"
+    images_dir.mkdir()
+
+    with pytest.raises(NotImplementedError, match="does not support query instructions"):
+        build_or_update_image_index(
+            model,
+            _preprocess,
+            images_dir,
+            tmp_path / "index",
+            query_instruction="Search for this query.",
+        )
 
 
 def test_search_returns_all_results_when_top_k_exceeds_index_size(

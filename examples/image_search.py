@@ -63,6 +63,10 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Hash file contents to detect changes with unchanged size and mtime.",
     )
+    index_parser.add_argument(
+        "--query-instruction",
+        help="Fix a text-query instruction for instruction-aware models.",
+    )
 
     search_parser = commands.add_parser("search", help="Search a saved image index.")
     search_parser.add_argument(
@@ -85,6 +89,10 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("cpu", "cuda"),
         default="cpu",
         help="Inference device (default: cpu).",
+    )
+    search_parser.add_argument(
+        "--query-instruction",
+        help="Text-query instruction; match the instruction stored in the index.",
     )
     return parser
 
@@ -112,6 +120,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 recursive=args.recursive,
                 embedding_dim=embedding_dim,
                 verify_contents=args.verify_contents,
+                query_instruction=args.query_instruction,
             )
             print(
                 "Image index updated: "
@@ -127,6 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.index,
             args.query,
             top_k=args.top_k,
+            query_instruction=args.query_instruction,
         )
     except (ImageIndexError, OSError, RuntimeError, TypeError, ValueError) as error:
         parser.error(str(error))

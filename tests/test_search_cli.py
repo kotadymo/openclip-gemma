@@ -34,7 +34,7 @@ def test_search_cli_uses_model_native_embedding_dimension_by_default(
     module = _load_cli(script_name)
     args = module["_build_parser"]().parse_args(arguments)  # type: ignore[operator]
 
-    assert args.embedding_dim == (None if script_name == "image_search" else 768)
+    assert args.embedding_dim is None
 
 
 @pytest.mark.parametrize(
@@ -50,6 +50,8 @@ def test_search_cli_uses_model_native_embedding_dimension_by_default(
                 "image-index",
                 "--embedding-dim",
                 "256",
+                "--query-instruction",
+                "Represent the user's image query.",
             ],
         ),
         (
@@ -62,6 +64,8 @@ def test_search_cli_uses_model_native_embedding_dimension_by_default(
                 "video-index",
                 "--embedding-dim",
                 "256",
+                "--query-instruction",
+                "Represent the user's video query.",
             ],
         ),
     ],
@@ -98,6 +102,12 @@ def test_search_cli_forwards_embedding_dimension(
     assert module["main"](arguments) == 0  # type: ignore[operator]
 
     assert builder.call_args.kwargs["embedding_dim"] == 256
+    expected_instruction = (
+        "Represent the user's image query."
+        if script_name == "image_search"
+        else "Represent the user's video query."
+    )
+    assert builder.call_args.kwargs["query_instruction"] == expected_instruction
     loader.assert_called_once()
 
 
@@ -135,6 +145,204 @@ def test_image_search_cli_uses_dino_native_dimension(
 
     assert loader.call_args.args[0] == "dinov2-dinotxt"
     assert builder.call_args.kwargs["embedding_dim"] == 2048
+
+
+def test_video_search_cli_uses_registered_model_native_dimension(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_cli("video_search")
+    index_update = SimpleNamespace(
+        index_path=Path("video-index.npz"),
+        added_videos=0,
+        updated_videos=0,
+        removed_videos=0,
+        unchanged_videos=0,
+        frame_count=0,
+    )
+    loader = Mock(return_value=(object(), object(), object()))
+    builder = Mock(return_value=index_update)
+    namespace = module["main"].__globals__  # type: ignore[union-attr]
+    monkeypatch.setitem(namespace, "create_model_and_transforms", loader)
+    monkeypatch.setitem(namespace, "build_or_update_video_index", builder)
+
+    assert (
+        module["main"](
+            [
+                "index",
+                "--model",
+                "dinov2-dinotxt",
+                "--videos",
+                "videos",
+                "--output",
+                "video-index",
+            ]
+        )
+        == 0
+    )
+
+    assert loader.call_args.args[0] == "dinov2-dinotxt"
+    assert builder.call_args.kwargs["embedding_dim"] == 2048
+
+
+def test_native_video_cli_forwards_model_and_video_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_cli("video_search")
+    namespace = module["main"].__globals__  # type: ignore[union-attr]
+    validator = Mock(return_value=2048)
+    backend = SimpleNamespace(validate_embedding_dimension=validator)
+    registry = SimpleNamespace(resolve=Mock(return_value=SimpleNamespace(backend=backend)))
+    monkeypatch.setitem(namespace, "list_models", lambda: ["qwen-test"])
+    monkeypatch.setitem(namespace, "get_default_registry", lambda: registry)
+    model = object()
+    loader = Mock(return_value=model)
+    update = SimpleNamespace(
+        index_path=Path("native-video-index.npz"),
+        added_videos=1,
+        updated_videos=0,
+        removed_videos=0,
+        unchanged_videos=0,
+    )
+    builder = Mock(return_value=update)
+    monkeypatch.setitem(namespace, "create_model", loader)
+    monkeypatch.setitem(namespace, "build_or_update_native_video_index", builder)
+
+    assert (
+        module["main"](
+            [
+                "native-index",
+                "--model",
+                "qwen-test",
+                "--videos",
+                "videos",
+                "--output",
+                "native-index",
+                "--fps",
+                "2",
+                "--max-frames",
+                "12",
+                "--query-instruction",
+                "Represent this user's video query.",
+            ]
+        )
+        == 0
+    )
+
+    assert loader.call_args.kwargs["device"] == "cpu"
+    assert builder.call_args.args == (model, Path("videos"), Path("native-index"))
+    assert builder.call_args.kwargs == {
+        "fps": 2.0,
+        "max_frames": 12,
+        "recursive": False,
+        "embedding_dim": 2048,
+        "query_instruction": "Represent this user's video query.",
+    }
+    validator.assert_called_once_with(None, name="embedding_dim")
+
+
+def test_native_video_cli_forwards_search_instruction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_cli("video_search")
+    namespace = module["main"].__globals__  # type: ignore[union-attr]
+    monkeypatch.setitem(namespace, "list_models", lambda: ["qwen-test"])
+    model = object()
+    loader = Mock(return_value=model)
+    result = SimpleNamespace(
+        rank=1,
+        video_path=Path("videos/one.mp4"),
+        score=0.75,
+    )
+    search = Mock(return_value=[result])
+    monkeypatch.setitem(namespace, "create_model", loader)
+    monkeypatch.setitem(namespace, "search_native_video", search)
+
+    assert (
+        module["main"](
+            [
+                "native-search",
+                "--model",
+                "qwen-test",
+                "--index",
+                "native-index",
+                "--query",
+                "a clip",
+                "--query-instruction",
+                "Represent this user's video query.",
+            ]
+        )
+        == 0
+    )
+
+    assert search.call_args.args == (model, Path("native-index"), "a clip")
+    assert search.call_args.kwargs == {
+        "top_k": 5,
+        "query_instruction": "Represent this user's video query.",
+    }
+
+
+@pytest.mark.parametrize(
+    ("script_name", "arguments", "result"),
+    [
+        (
+            "image_search",
+            [
+                "search",
+                "--index",
+                "index",
+                "--query",
+                "a mountain",
+                "--query-instruction",
+                "Represent the user's image query.",
+            ],
+            SimpleNamespace(path=Path("photos/mountain.jpg"), score=0.9),
+        ),
+        (
+            "video_search",
+            [
+                "search",
+                "--index",
+                "index",
+                "--query",
+                "a mountain",
+                "--query-instruction",
+                "Represent the user's video query.",
+            ],
+            SimpleNamespace(
+                rank=1,
+                video_path=Path("videos/mountain.mp4"),
+                timestamp_seconds=1.5,
+                score=0.9,
+            ),
+        ),
+    ],
+)
+def test_image_and_frame_search_cli_forward_query_instructions(
+    script_name: str,
+    arguments: list[str],
+    result: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_cli(script_name)
+    namespace = module["main"].__globals__  # type: ignore[union-attr]
+    model = object()
+    loader = Mock(return_value=model)
+    search_name = "search_images" if script_name == "image_search" else "search_video"
+    search = Mock(return_value=[result])
+    monkeypatch.setitem(namespace, "create_model", loader)
+    monkeypatch.setitem(namespace, search_name, search)
+
+    assert module["main"](arguments) == 0  # type: ignore[operator]
+
+    assert search.call_args.args == (model, Path("index"), "a mountain")
+    assert search.call_args.kwargs == {
+        "top_k": 5,
+        "query_instruction": (
+            "Represent the user's image query."
+            if script_name == "image_search"
+            else "Represent the user's video query."
+        ),
+    }
 
 
 def test_image_search_cli_verify_contents_is_opt_in_and_forwarded(
@@ -231,12 +439,8 @@ def test_search_cli_rejects_unsupported_embedding_dimension(
     arguments: list[str],
 ) -> None:
     module = _load_cli(script_name)
-    if script_name == "image_search":
-        with pytest.raises(SystemExit, match="2"):
-            module["main"](arguments)  # type: ignore[operator]
-    else:
-        with pytest.raises(SystemExit, match="2"):
-            module["_build_parser"]().parse_args(arguments)  # type: ignore[operator]
+    with pytest.raises(SystemExit, match="2"):
+        module["main"](arguments)  # type: ignore[operator]
 
 
 @pytest.mark.parametrize("script_name", ["image_search", "video_search"])
@@ -280,6 +484,21 @@ def test_search_cli_delegates_dimension_validation_to_backend(
         validator.assert_called_once_with(384, name="embedding_dim")
         return
 
-    args = module["_build_parser"]().parse_args(arguments)
-    assert args.embedding_dim == 384
+    index_update = SimpleNamespace(
+        index_path=Path("index.npz"),
+        added_videos=0,
+        updated_videos=0,
+        removed_videos=0,
+        unchanged_videos=0,
+        frame_count=0,
+    )
+    loader = Mock(return_value=(object(), object(), object()))
+    builder = Mock(return_value=index_update)
+    module_namespace = module["main"].__globals__  # type: ignore[union-attr]
+    monkeypatch.setitem(module_namespace, "create_model_and_transforms", loader)
+    monkeypatch.setitem(module_namespace, "build_or_update_video_index", builder)
+
+    assert module["main"](arguments) == 0  # type: ignore[operator]
+    assert builder.call_args.kwargs["embedding_dim"] == 384
     validator.assert_called_once_with(384, name="embedding_dim")
+    loader.assert_called_once()

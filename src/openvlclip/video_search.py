@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path, PurePosixPath
@@ -20,7 +21,10 @@ from openvlclip._dimensions import (
     EMBEDDING_STRATEGY,
     validate_positive_embedding_dimension,
 )
-from openvlclip.backends.base import validate_model_embedding_dimension
+from openvlclip.backends.base import (
+    ProcessedImage,
+    validate_model_embedding_dimension,
+)
 from openvlclip.batching import _iter_preprocessed_embeddings
 from openvlclip.constants import (
     BACKEND_ID,
@@ -31,16 +35,18 @@ from openvlclip.constants import (
 )
 from openvlclip.embedding_space import (
     EmbeddingSpace,
+    embedding_spaces_compatible,
     has_embedding_space_metadata,
 )
 from openvlclip.image_search import (
     _PREPROCESSING_ID,
     ImageIndexCompatibilityError,
-    _get_search_tokenizer,
+    _encode_search_query,
     _ImageSearchModel,
     _model_embedding_space,
     _model_settings,
     _path_key,
+    _policy_json,
     _validate_batch_size,
 )
 from openvlclip.index_storage import (
@@ -50,25 +56,34 @@ from openvlclip.index_storage import (
     _save_numpy_archive_atomic,
 )
 from openvlclip.registry import get_default_registry
-from openvlclip.tokenizer import OFFICIAL_PROMPTS, get_tokenizer
+from openvlclip.tokenizer import OFFICIAL_PROMPTS
 
 _VIDEO_INDEX_FILENAME = "video-index.npz"
 _VIDEO_INDEX_KIND = "openclip-gemma.video-index"
 _VIDEO_INDEX_FORMAT_VERSION = 3
 _LEGACY_VIDEO_INDEX_FORMAT_VERSION = 2
+_NATIVE_VIDEO_INDEX_FILENAME = "native-video-index.npz"
+_NATIVE_VIDEO_INDEX_KIND = "openvlclip.native-video-index"
+_NATIVE_VIDEO_INDEX_FORMAT_VERSION = 1
 _SAMPLING_METHOD = "first-presentation-frame-at-or-after-playback-origin-target-v2"
+_DEFAULT_NATIVE_VIDEO_FPS = 1.0
+_DEFAULT_NATIVE_VIDEO_MAX_FRAMES = 64
 _SUPPORTED_VIDEO_SUFFIXES = frozenset({".mp4", ".m4v", ".mov", ".mkv", ".webm", ".avi"})
 
 type _EmbeddingMatrix = NDArray[np.float32]
-type _ImagePreprocess = Callable[[Image.Image], torch.Tensor]
+type _ImagePreprocess = Callable[[Image.Image], ProcessedImage]
 
 __all__ = [
+    "NativeVideoIndexUpdate",
+    "NativeVideoSearchResult",
     "VideoIndexCompatibilityError",
     "VideoIndexUpdate",
     "VideoSearchError",
     "VideoSearchResult",
+    "build_or_update_native_video_index",
     "build_or_update_video_index",
     "convert_video_index",
+    "search_native_video",
     "search_video",
 ]
 
@@ -137,6 +152,38 @@ class VideoSearchResult:
     video_path: Path
     timestamp_seconds: float
     score: float
+
+
+@dataclass(frozen=True)
+class NativeVideoIndexUpdate:
+    """Summary of videos added, updated, removed, or reused in a native index."""
+
+    index_path: Path
+    added_videos: int
+    updated_videos: int
+    removed_videos: int
+    unchanged_videos: int
+
+
+@dataclass(frozen=True)
+class NativeVideoSearchResult:
+    """A matching video and its cosine similarity, without a frame timestamp."""
+
+    rank: int
+    video_path: Path
+    score: float
+
+
+@dataclass(frozen=True)
+class _NativeVideoIndex:
+    video_root: Path
+    recursive: bool
+    fps: float
+    max_frames: int
+    videos: tuple[_VideoRecord, ...]
+    embeddings: _EmbeddingMatrix
+    precision: str
+    embedding_space: EmbeddingSpace
 
 
 def _load_av() -> Any:
@@ -361,10 +408,12 @@ def _iter_frame_tensors(
     relative_path: str,
     interval: Fraction,
     preprocess: _ImagePreprocess,
-) -> Iterator[tuple[_FrameRecord, torch.Tensor]]:
+) -> Iterator[tuple[_FrameRecord, ProcessedImage]]:
     for sampled_frame in _iter_sampled_frames(video_path, interval):
         try:
-            tensor = preprocess(sampled_frame.image)
+            processed_image = preprocess(sampled_frame.image)
+            if processed_image is sampled_frame.image:
+                processed_image = sampled_frame.image.copy()
         finally:
             sampled_frame.image.close()
         frame_record = _FrameRecord(
@@ -376,7 +425,7 @@ def _iter_frame_tensors(
             timestamp_origin_numerator=sampled_frame.record.timestamp_origin_numerator,
             timestamp_origin_denominator=sampled_frame.record.timestamp_origin_denominator,
         )
-        yield frame_record, tensor
+        yield frame_record, processed_image
 
 
 def _frame_sort_key(record: _FrameRecord) -> tuple[str, float, str, int]:
@@ -393,6 +442,8 @@ def _video_embedding_space(
     *,
     embedding_dimension: int,
     precision: str,
+    interval_seconds: float,
+    query_instruction: str | None = None,
 ) -> EmbeddingSpace:
     try:
         return _model_embedding_space(
@@ -400,9 +451,21 @@ def _video_embedding_space(
             embedding_dimension=embedding_dimension,
             precision=precision,
             sampling_method=_SAMPLING_METHOD,
+            input_type="sampled-frame",
+            query_instruction=query_instruction,
+            processing_parameters=_video_processing_parameters(interval_seconds),
         )
     except ImageIndexCompatibilityError as error:
         raise VideoIndexCompatibilityError(str(error)) from error
+
+
+def _video_processing_parameters(interval_seconds: float) -> str:
+    return json.dumps(
+        {"interval_seconds": interval_seconds},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _embedding_space_from_video_metadata(
@@ -412,20 +475,88 @@ def _embedding_space_from_video_metadata(
     precision: str,
 ) -> EmbeddingSpace:
     if has_embedding_space_metadata(metadata):
+        backend_id = metadata.get("backend_id")
+        model_id = metadata.get("model_id")
+        model_revision = metadata.get("model_revision")
+        if not all(isinstance(value, str) for value in (backend_id, model_id, model_revision)):
+            raise VideoIndexCompatibilityError(
+                "Video index embedding-space identity is invalid."
+            )
+        try:
+            backend = get_default_registry().resolve_backend_for_embedding_space(
+                backend_id=backend_id,
+                model_id=model_id,
+                revision=model_revision,
+            )
+        except ValueError as error:
+            raise VideoIndexCompatibilityError(
+                "Video index model identity is not registered."
+            ) from error
+        expected_metadata = backend.embedding_space_metadata
+        if metadata.get("embedding_strategy") != expected_metadata.embedding_strategy:
+            raise VideoIndexCompatibilityError(
+                "Video index embedding_strategy is missing or unsupported."
+            )
         try:
             embedding_space = EmbeddingSpace.from_metadata(metadata)
         except (TypeError, ValueError) as error:
             raise VideoIndexCompatibilityError(
                 f"Video index embedding-space metadata is invalid: {error}"
             ) from error
-        if embedding_space.embedding_strategy != EMBEDDING_STRATEGY:
+        expected_space = expected_metadata.for_index(
+            embedding_dimension=embedding_dimension,
+            model_precision=precision,
+            storage_dtype=embedding_space.storage_dtype,
+            sampling_method=_SAMPLING_METHOD,
+        )
+        embedding_space_core = replace(
+            embedding_space,
+            schema_version=1,
+            input_type=None,
+            index_policy=None,
+            query_policy=None,
+            processing_parameters=None,
+        )
+        if embedding_space_core != expected_space:
             raise VideoIndexCompatibilityError(
-                "Video index embedding_strategy is missing or unsupported."
+                "Video index embedding-space metadata does not match its registered "
+                "model configuration."
             )
         if embedding_space.sampling_method != _SAMPLING_METHOD:
             raise VideoIndexCompatibilityError(
                 "Video index sampling_method does not match the current configuration."
             )
+        if embedding_space.schema_version == 2:
+            capabilities = getattr(backend, "capabilities", {})
+            instruction_aware = (
+                isinstance(capabilities, Mapping)
+                and capabilities.get("instruction_aware") is True
+            )
+            expected_index_policy = (
+                _policy_json(
+                    {
+                        "input_type": "sampled-frame",
+                        "instruction": "backend-default",
+                    }
+                )
+                if instruction_aware
+                else None
+            )
+            if (
+                embedding_space.input_type != "sampled-frame"
+                or embedding_space.index_policy != expected_index_policy
+                or (
+                    instruction_aware
+                    and embedding_space.query_policy is None
+                )
+                or (
+                    not instruction_aware
+                    and embedding_space.query_policy is not None
+                )
+            ):
+                raise VideoIndexCompatibilityError(
+                    "Video index input or instruction policy is unsupported."
+                )
         return embedding_space
 
     for name, expected in (
@@ -652,7 +783,7 @@ def _validate_video_metadata(
         )
     if (
         version == _VIDEO_INDEX_FORMAT_VERSION
-        and metadata.get("embedding_strategy") != EMBEDDING_STRATEGY
+        and not isinstance(metadata.get("embedding_strategy"), str)
     ):
         raise VideoIndexCompatibilityError(
             "Video index embedding_strategy is missing or unsupported."
@@ -708,6 +839,14 @@ def _validate_video_metadata(
             "Video index metadata contains an invalid sampling interval."
         )
     interval_seconds = float(interval)
+    if (
+        embedding_space.schema_version == 2
+        and embedding_space.processing_parameters
+        != _video_processing_parameters(interval_seconds)
+    ):
+        raise VideoIndexCompatibilityError(
+            "Video index sampling parameters do not match its embedding space."
+        )
     if expected_interval is not None and interval_seconds != expected_interval:
         raise VideoIndexCompatibilityError(
             "Video index sampling interval differs from the requested interval; "
@@ -859,9 +998,11 @@ def _load_video_index(
                 f"dimension {expected_embedding_dimension}; convert it or use a new "
                 "index directory."
             )
-    if (
-        expected_embedding_space is not None
-        and embedding_space != expected_embedding_space
+    if expected_embedding_space is not None and not embedding_spaces_compatible(
+        embedding_space,
+        expected_embedding_space,
+        legacy_input_type="sampled-frame",
+        legacy_processing_parameters=_video_processing_parameters(interval),
     ):
         raise VideoIndexCompatibilityError(
             "Video index embedding space does not match the requested model, "
@@ -946,7 +1087,8 @@ def _build_or_update_video_index(
     interval: float = 1.0,
     batch_size: int = 8,
     recursive: bool = False,
-    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
+    embedding_dim: int | None = None,
+    query_instruction: str | None = None,
 ) -> VideoIndexUpdate:
     """Create or incrementally update a versioned index of sampled video frames."""
     interval_seconds, interval_fraction = _validate_interval(interval)
@@ -966,6 +1108,8 @@ def _build_or_update_video_index(
         model,
         embedding_dimension=embedding_dim,
         precision=precision,
+        interval_seconds=interval_seconds,
+        query_instruction=query_instruction,
     )
 
     previous: _VideoIndex | None = None
@@ -1087,6 +1231,7 @@ def _search_video_index(
     query: str,
     *,
     top_k: int = 5,
+    query_instruction: str | None = None,
 ) -> list[VideoSearchResult]:
     """Search sampled frames using normalized cosine similarity."""
     if isinstance(top_k, bool) or not isinstance(top_k, int):
@@ -1106,44 +1251,30 @@ def _search_video_index(
         model,
         embedding_dimension=index.embeddings.shape[1],
         precision=precision,
+        interval_seconds=index.interval_seconds,
+        query_instruction=query_instruction,
     )
-    if index.embedding_space != expected_embedding_space:
+    if not embedding_spaces_compatible(
+        index.embedding_space,
+        expected_embedding_space,
+        legacy_input_type="sampled-frame",
+        legacy_processing_parameters=_video_processing_parameters(
+            index.interval_seconds
+        ),
+    ):
         raise VideoIndexCompatibilityError(
             "Video index embedding space does not match the search model, revision, "
-            "preprocessing, prompt, sampling, or precision."
+            "preprocessing, prompt, instruction policy, sampling, or precision."
         )
 
-    prompt_name = index.embedding_space.query_prompt_name
-    if prompt_name is None:
-        raise VideoIndexCompatibilityError(
-            "Video index does not define a compatible text query prompt."
-        )
-    tokenizer = _get_search_tokenizer(model, prompt_name, get_tokenizer)
-    tokens = tokenizer(query).to(device)
-    with torch.inference_mode():
-        embedding_dimension = index.embeddings.shape[1]
-        if embedding_dimension == DEFAULT_EMBEDDING_DIMENSION:
-            query_features = model.encode_text(tokens, normalize=True)
-        else:
-            query_features = model.encode_text(
-                tokens,
-                normalize=True,
-                truncate_dim=embedding_dimension,
-            )
-    expected_shape = (1, embedding_dimension)
-    if (
-        not isinstance(query_features, torch.Tensor)
-        or tuple(query_features.shape) != expected_shape
-    ):
-        actual_shape = (
-            tuple(query_features.shape)
-            if isinstance(query_features, torch.Tensor)
-            else type(query_features).__name__
-        )
-        raise VideoSearchError(
-            f"Text encoder returned an invalid query embedding: expected "
-            f"{expected_shape}, received {actual_shape}."
-        )
+    query_features = _encode_search_query(
+        model,
+        query,
+        device=device,
+        embedding_dimension=index.embeddings.shape[1],
+        embedding_space=index.embedding_space,
+        query_instruction=query_instruction,
+    )
     query_vector = (
         query_features.detach().to(device="cpu", dtype=torch.float32).numpy()[0]
     )
@@ -1196,12 +1327,15 @@ def build_or_update_video_index(
     interval_seconds: float = 1.0,
     batch_size: int = 8,
     recursive: bool = False,
-    embedding_dim: int = DEFAULT_EMBEDDING_DIMENSION,
+    embedding_dim: int | None = None,
+    query_instruction: str | None = None,
 ) -> VideoIndexUpdate:
     """Build or incrementally update an index of sampled video frames.
 
     Requires the optional PyAV dependency. Timestamps in the index are relative
     to the container playback start, or the video stream start when unavailable.
+    If ``embedding_dim`` is omitted, the model backend's native dimension is used.
+    ``query_instruction`` fixes the text-query policy for instruction-aware models.
     """
     return _build_or_update_video_index(
         model,
@@ -1212,6 +1346,7 @@ def build_or_update_video_index(
         batch_size=batch_size,
         recursive=recursive,
         embedding_dim=embedding_dim,
+        query_instruction=query_instruction,
     )
 
 
@@ -1309,10 +1444,672 @@ def search_video(
     query: str,
     *,
     top_k: int = 5,
+    query_instruction: str | None = None,
 ) -> list[VideoSearchResult]:
     """Search a video-frame index with a Japanese or English text query.
 
     Results are ordered by descending cosine similarity and include playback-
     relative timestamps in seconds. Scores are not probabilities.
     """
-    return _search_video_index(model, index_dir, query, top_k=top_k)
+    return _search_video_index(
+        model,
+        index_dir,
+        query,
+        top_k=top_k,
+        query_instruction=query_instruction,
+    )
+
+
+def _native_video_processing_parameters(
+    model: object,
+    fps: float,
+    max_frames: int,
+) -> str:
+    processor_metadata = getattr(model, "native_video_processing_metadata", None)
+    if not isinstance(processor_metadata, Mapping):
+        raise VideoSearchError(
+            "Native video indexing requires explicit processor version and "
+            "total-pixel metadata from the backend."
+        )
+    processor_version = processor_metadata.get("processor_version")
+    total_pixels = processor_metadata.get("total_pixels")
+    if not isinstance(processor_version, str) or not processor_version:
+        raise VideoSearchError(
+            "Native video processor metadata must include a non-empty "
+            "processor_version."
+        )
+    if (
+        isinstance(total_pixels, bool)
+        or not isinstance(total_pixels, (int, float))
+    ):
+        raise VideoSearchError(
+            "Native video processor metadata must include a finite positive "
+            "total_pixels value."
+        )
+    try:
+        total_pixels_value = float(total_pixels)
+    except OverflowError as error:
+        raise VideoSearchError(
+            "Native video processor metadata must include a finite positive "
+            "total_pixels value."
+        ) from error
+    if not math.isfinite(total_pixels_value) or total_pixels_value <= 0:
+        raise VideoSearchError(
+            "Native video processor metadata must include a finite positive "
+            "total_pixels value."
+        )
+    parameters: dict[str, object] = {
+        "fps": fps,
+        "max_frames": max_frames,
+        "processor_version": processor_version,
+        "total_pixels": total_pixels,
+    }
+    return json.dumps(
+        parameters,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _validate_native_video_processing_parameters(
+    processing_parameters: str,
+    *,
+    fps: float,
+    max_frames: int,
+) -> None:
+    try:
+        parameters = json.loads(processing_parameters)
+    except json.JSONDecodeError as error:
+        raise VideoSearchError(
+            "Native-video processing parameters are invalid JSON."
+        ) from error
+    if not isinstance(parameters, dict):
+        raise VideoSearchError(
+            "Native-video settings conflict with its embedding-space metadata."
+        )
+    parameter_fps = parameters.get("fps")
+    parameter_max_frames = parameters.get("max_frames")
+    if (
+        isinstance(parameter_fps, bool)
+        or not isinstance(parameter_fps, (int, float))
+        or not math.isfinite(parameter_fps)
+        or parameter_fps != fps
+        or type(parameter_max_frames) is not int
+        or parameter_max_frames != max_frames
+    ):
+        raise VideoSearchError(
+            "Native-video settings conflict with its embedding-space metadata."
+        )
+    processor_version = parameters.get("processor_version")
+    total_pixels = parameters.get("total_pixels")
+    if not isinstance(processor_version, str) or not processor_version:
+        raise VideoSearchError(
+            "Native-video processing metadata has no valid processor version."
+        )
+    if (
+        isinstance(total_pixels, bool)
+        or not isinstance(total_pixels, (int, float))
+    ):
+        raise VideoSearchError(
+            "Native-video processing metadata has an invalid total pixel budget."
+        )
+    try:
+        total_pixels_value = float(total_pixels)
+    except OverflowError as error:
+        raise VideoSearchError(
+            "Native-video processing metadata has an invalid total pixel budget."
+        ) from error
+    if not math.isfinite(total_pixels_value) or total_pixels_value <= 0:
+        raise VideoSearchError(
+            "Native-video processing metadata has an invalid total pixel budget."
+        )
+
+
+def _validate_native_video_settings(fps: object, max_frames: object) -> tuple[float, int]:
+    if isinstance(fps, bool) or not isinstance(fps, (int, float)):
+        raise TypeError("fps must be a finite positive number.")
+    fps_value = float(fps)
+    if not math.isfinite(fps_value) or fps_value <= 0:
+        raise ValueError("fps must be a finite positive number.")
+    if isinstance(max_frames, bool) or not isinstance(max_frames, int):
+        raise TypeError("max_frames must be a positive integer.")
+    if max_frames <= 0:
+        raise ValueError("max_frames must be greater than zero.")
+    return fps_value, max_frames
+
+
+def _require_native_video_model(model: object) -> Callable[..., torch.Tensor]:
+    capabilities = getattr(model, "capabilities", None)
+    if (
+        not isinstance(capabilities, Mapping)
+        or capabilities.get("video_embedding") is not True
+    ):
+        raise NotImplementedError(
+            "Native video indexing requires a backend with video_embedding capability."
+        )
+    encoder = getattr(model, "encode_video", None)
+    if not callable(encoder):
+        raise NotImplementedError(
+            "Native video indexing requires the model's encode_video() API."
+        )
+    if not callable(getattr(model, "validate_embedding_dimension", None)):
+        raise VideoSearchError(
+            "Native video indexing requires a backend-native embedding dimension."
+        )
+    return encoder
+
+
+def _native_video_embedding_space(
+    model: _ImageSearchModel,
+    *,
+    embedding_dimension: int,
+    precision: str,
+    fps: float,
+    max_frames: int,
+    query_instruction: str | None,
+) -> EmbeddingSpace:
+    try:
+        return _model_embedding_space(
+            model,
+            embedding_dimension=embedding_dimension,
+            precision=precision,
+            input_type="native-video",
+            query_instruction=query_instruction,
+            processing_parameters=_native_video_processing_parameters(
+                model,
+                fps,
+                max_frames,
+            ),
+        )
+    except ImageIndexCompatibilityError as error:
+        raise VideoIndexCompatibilityError(str(error)) from error
+
+
+def _metadata_for_native_video_index(
+    index: _NativeVideoIndex,
+) -> dict[str, object]:
+    return {
+        "kind": _NATIVE_VIDEO_INDEX_KIND,
+        "format_version": _NATIVE_VIDEO_INDEX_FORMAT_VERSION,
+        **index.embedding_space.to_metadata(),
+        "video_root": str(index.video_root),
+        "recursive": index.recursive,
+        "fps": index.fps,
+        "max_frames": index.max_frames,
+        "video_count": len(index.videos),
+        "videos": [
+            {
+                "path": video.relative_path,
+                "size_bytes": video.size_bytes,
+                "mtime_ns": video.mtime_ns,
+            }
+            for video in index.videos
+        ],
+        "embedding_sha256": _array_sha256(index.embeddings),
+    }
+
+
+def _save_native_video_index(
+    index_dir: Path,
+    index: _NativeVideoIndex,
+) -> Path:
+    if index.embedding_space.schema_version != 2 or (
+        index.embedding_space.input_type != "native-video"
+    ):
+        raise VideoSearchError("Refusing to save an untyped native-video index.")
+    if (
+        index.embeddings.ndim != 2
+        or index.embeddings.shape
+        != (len(index.videos), index.embedding_space.embedding_dimension)
+    ):
+        raise VideoSearchError(
+            "Refusing to save a native-video index with inconsistent dimensions."
+        )
+    if index.embeddings.dtype != np.float32 or not np.isfinite(index.embeddings).all():
+        raise VideoSearchError("Refusing to save invalid native-video embeddings.")
+    try:
+        index_dir.mkdir(parents=True, exist_ok=True)
+        return _save_numpy_archive_atomic(
+            index_dir / _NATIVE_VIDEO_INDEX_FILENAME,
+            _metadata_for_native_video_index(index),
+            {"embeddings": index.embeddings},
+        )
+    except IndexArchiveError as error:
+        raise VideoSearchError(str(error)) from error
+
+
+def _load_native_video_index(
+    index_dir: str | os.PathLike[str],
+    *,
+    expected_root: Path | None = None,
+    expected_precision: str | None = None,
+    expected_fps: float | None = None,
+    expected_max_frames: int | None = None,
+    expected_embedding_dimension: int | None = None,
+    expected_embedding_space: EmbeddingSpace | None = None,
+) -> _NativeVideoIndex:
+    index_path = Path(index_dir).expanduser() / _NATIVE_VIDEO_INDEX_FILENAME
+    try:
+        with _open_numpy_archive(
+            index_path,
+            expected_arrays=frozenset({"embeddings"}),
+        ) as (metadata, archive):
+            if (
+                metadata.get("kind") != _NATIVE_VIDEO_INDEX_KIND
+                or type(metadata.get("format_version")) is not int
+                or metadata.get("format_version") != _NATIVE_VIDEO_INDEX_FORMAT_VERSION
+            ):
+                raise VideoIndexCompatibilityError(
+                    "The archive is not a supported native-video index."
+                )
+            try:
+                embedding_space = EmbeddingSpace.from_metadata(metadata)
+            except (TypeError, ValueError) as error:
+                raise VideoSearchError(
+                    f"Native-video embedding-space metadata is invalid: {error}"
+                ) from error
+            if (
+                embedding_space.schema_version != 2
+                or embedding_space.input_type != "native-video"
+            ):
+                raise VideoIndexCompatibilityError(
+                    "Native-video index has an incompatible embedding-space schema."
+                )
+            try:
+                dimension = validate_positive_embedding_dimension(
+                    metadata.get("embedding_dimension"),
+                    name="embedding_dimension",
+                )
+            except (TypeError, ValueError) as error:
+                raise VideoSearchError(
+                    "Native-video index contains an invalid embedding dimension."
+                ) from error
+            if dimension != embedding_space.embedding_dimension:
+                raise VideoSearchError(
+                    "Native-video embedding dimension conflicts with its space metadata."
+                )
+            if (
+                expected_embedding_dimension is not None
+                and dimension != expected_embedding_dimension
+            ):
+                raise VideoIndexCompatibilityError(
+                    "Native-video index embedding dimension does not match the "
+                    "requested dimension."
+                )
+            precision = metadata.get("model_precision")
+            if not isinstance(precision, str) or precision not in {"fp32", "bf16"}:
+                raise VideoSearchError(
+                    "Native-video index contains an invalid model precision."
+                )
+            if expected_precision is not None and precision != expected_precision:
+                raise VideoIndexCompatibilityError(
+                    "Native-video index precision does not match the loaded model."
+                )
+            fps_value = metadata.get("fps")
+            max_frames_value = metadata.get("max_frames")
+            try:
+                fps, max_frames = _validate_native_video_settings(
+                    fps_value,
+                    max_frames_value,
+                )
+            except (TypeError, ValueError) as error:
+                raise VideoSearchError(
+                    "Native-video index contains invalid sampling settings."
+                ) from error
+            _validate_native_video_processing_parameters(
+                embedding_space.processing_parameters or "",
+                fps=fps,
+                max_frames=max_frames,
+            )
+            if expected_fps is not None and fps != expected_fps:
+                raise VideoIndexCompatibilityError(
+                    "Native-video index fps differs from the requested fps."
+                )
+            if expected_max_frames is not None and max_frames != expected_max_frames:
+                raise VideoIndexCompatibilityError(
+                    "Native-video index max_frames differs from the requested value."
+                )
+            recursive = metadata.get("recursive")
+            if not isinstance(recursive, bool):
+                raise VideoSearchError(
+                    "Native-video index contains an invalid recursion setting."
+                )
+            root_value = metadata.get("video_root")
+            if not isinstance(root_value, str) or not root_value:
+                raise VideoSearchError(
+                    "Native-video index contains an invalid video root."
+                )
+            video_root = Path(root_value)
+            if expected_root is not None and os.path.normcase(
+                str(video_root)
+            ) != os.path.normcase(str(expected_root)):
+                raise VideoIndexCompatibilityError(
+                    "Native-video index was created for a different video directory."
+                )
+            video_values = metadata.get("videos")
+            if not isinstance(video_values, list):
+                raise VideoSearchError(
+                    "Native-video index contains invalid video records."
+                )
+            videos = tuple(_parse_video_record(value) for value in video_values)
+            video_keys = [_path_key(video.relative_path) for video in videos]
+            if len(set(video_keys)) != len(video_keys):
+                raise VideoSearchError(
+                    "Native-video index contains duplicate video paths."
+                )
+            if videos != tuple(
+                sorted(
+                    videos,
+                    key=lambda video: (
+                        _path_key(video.relative_path),
+                        video.relative_path,
+                    ),
+                )
+            ):
+                raise VideoSearchError(
+                    "Native-video index records are not in canonical path order."
+                )
+            video_count = metadata.get("video_count")
+            if (
+                isinstance(video_count, bool)
+                or not isinstance(video_count, int)
+                or video_count != len(videos)
+            ):
+                raise VideoSearchError(
+                    "Native-video index count does not match its metadata."
+                )
+            if (
+                expected_embedding_space is not None
+                and embedding_space != expected_embedding_space
+            ):
+                raise VideoIndexCompatibilityError(
+                    "Native-video embedding space does not match the requested model, "
+                    "revision, processor, query policy, or video settings."
+                )
+            checksum = metadata.get("embedding_sha256")
+            if (
+                not isinstance(checksum, str)
+                or len(checksum) != 64
+                or any(character not in "0123456789abcdef" for character in checksum)
+            ):
+                raise VideoSearchError(
+                    "Native-video index contains an invalid embedding checksum."
+                )
+            embeddings = archive["embeddings"]
+    except IndexArchiveError as error:
+        if not index_path.exists():
+            raise VideoSearchError(
+                f"Native-video index not found: {index_path}"
+            ) from error
+        raise VideoSearchError(
+            f"Could not read native-video index {index_path}: {error}"
+        ) from error
+
+    if embeddings.dtype != np.float32 or embeddings.shape != (len(videos), dimension):
+        raise VideoSearchError(
+            "Native-video embeddings have an invalid dtype or shape: "
+            f"expected float32{(len(videos), dimension)}, "
+            f"received {embeddings.dtype}{embeddings.shape}."
+        )
+    if not np.isfinite(embeddings).all():
+        raise VideoSearchError("Native-video index contains non-finite embeddings.")
+    if _array_sha256(embeddings) != checksum:
+        raise VideoSearchError(
+            "Native-video embedding checksum does not match its metadata."
+        )
+    return _NativeVideoIndex(
+        video_root,
+        recursive,
+        fps,
+        max_frames,
+        videos,
+        embeddings,
+        precision,
+        embedding_space,
+    )
+
+
+def _native_video_vector(
+    encoder: Callable[..., torch.Tensor],
+    video_path: Path,
+    *,
+    embedding_dimension: int,
+    fps: float,
+    max_frames: int,
+) -> np.ndarray:
+    with torch.inference_mode():
+        features = encoder(
+            video_path,
+            normalize=True,
+            truncate_dim=embedding_dimension,
+            fps=fps,
+            max_frames=max_frames,
+        )
+    if not isinstance(features, torch.Tensor) or tuple(features.shape) != (
+        1,
+        embedding_dimension,
+    ):
+        actual_shape = (
+            tuple(features.shape)
+            if isinstance(features, torch.Tensor)
+            else type(features).__name__
+        )
+        raise VideoSearchError(
+            "Video encoder returned an invalid embedding: "
+            f"expected {(1, embedding_dimension)}, received {actual_shape}."
+        )
+    vector = features.detach().to(device="cpu", dtype=torch.float32).numpy()[0]
+    norm = float(np.linalg.norm(vector))
+    if not np.isfinite(vector).all() or not np.isfinite(norm) or norm <= 0:
+        raise VideoSearchError(
+            f"Video encoder returned an invalid embedding for {video_path}."
+        )
+    return np.ascontiguousarray(vector / norm, dtype=np.float32)
+
+
+def build_or_update_native_video_index(
+    model: torch.nn.Module,
+    videos_dir: str | os.PathLike[str],
+    index_dir: str | os.PathLike[str],
+    *,
+    fps: float = _DEFAULT_NATIVE_VIDEO_FPS,
+    max_frames: int = _DEFAULT_NATIVE_VIDEO_MAX_FRAMES,
+    recursive: bool = False,
+    embedding_dim: int | None = None,
+    query_instruction: str | None = None,
+) -> NativeVideoIndexUpdate:
+    """Build or incrementally update a model-native video-embedding index."""
+    encoder = _require_native_video_model(model)
+    fps, max_frames = _validate_native_video_settings(fps, max_frames)
+    if not callable(getattr(model, "validate_embedding_dimension", None)):
+        raise VideoSearchError(
+            "Native video indexing requires a backend-native embedding dimension."
+        )
+    embedding_dim = validate_model_embedding_dimension(
+        model,
+        embedding_dim,
+        name="embedding_dim",
+    )
+    root, videos = _scan_video_files(videos_dir, recursive=recursive)
+    output_dir = Path(index_dir).expanduser()
+    if output_dir.exists() and not output_dir.is_dir():
+        raise ValueError(f"Native-video index output path is not a directory: {output_dir}")
+    index_path = output_dir / _NATIVE_VIDEO_INDEX_FILENAME
+    _, precision = _model_settings(model)
+    embedding_space = _native_video_embedding_space(
+        model,
+        embedding_dimension=embedding_dim,
+        precision=precision,
+        fps=fps,
+        max_frames=max_frames,
+        query_instruction=query_instruction,
+    )
+
+    previous: _NativeVideoIndex | None = None
+    if index_path.exists():
+        previous = _load_native_video_index(
+            output_dir,
+            expected_root=root,
+            expected_precision=precision,
+            expected_fps=fps,
+            expected_max_frames=max_frames,
+            expected_embedding_dimension=embedding_dim,
+            expected_embedding_space=embedding_space,
+        )
+    elif not videos:
+        raise ValueError(f"No supported video files were found in {root}.")
+
+    previous_rows = (
+        {
+            _path_key(video.relative_path): row
+            for row, video in enumerate(previous.videos)
+        }
+        if previous is not None
+        else {}
+    )
+    current_keys = {_path_key(video.relative_path) for video in videos}
+    removed = (
+        sum(
+            _path_key(video.relative_path) not in current_keys
+            for video in previous.videos
+        )
+        if previous is not None
+        else 0
+    )
+    embeddings_by_key: dict[str, np.ndarray] = {}
+    added = 0
+    updated = 0
+    unchanged = 0
+    for video in videos:
+        key = _path_key(video.relative_path)
+        previous_row = previous_rows.get(key)
+        if previous is not None and previous_row is not None:
+            previous_video = previous.videos[previous_row]
+            if (previous_video.size_bytes, previous_video.mtime_ns) == (
+                video.size_bytes,
+                video.mtime_ns,
+            ):
+                embeddings_by_key[key] = previous.embeddings[previous_row]
+                unchanged += 1
+                continue
+            updated += 1
+        else:
+            added += 1
+        video_path = root / PurePosixPath(video.relative_path)
+        embeddings_by_key[key] = _native_video_vector(
+            encoder,
+            video_path,
+            embedding_dimension=embedding_dim,
+            fps=fps,
+            max_frames=max_frames,
+        )
+
+    for video in videos:
+        video_path = root / PurePosixPath(video.relative_path)
+        if _file_signature(video_path) != (video.size_bytes, video.mtime_ns):
+            raise VideoSearchError(
+                f"Video changed during indexing: {video_path}. Run the index command again."
+            )
+
+    if previous is not None and previous.recursive == recursive and (
+        added == 0 and updated == 0 and removed == 0 and videos == previous.videos
+    ):
+        return NativeVideoIndexUpdate(index_path, added, updated, removed, unchanged)
+
+    matrix = (
+        np.stack(
+            [embeddings_by_key[_path_key(video.relative_path)] for video in videos]
+        ).astype(np.float32, copy=False)
+        if videos
+        else np.empty((0, embedding_dim), dtype=np.float32)
+    )
+    saved_path = _save_native_video_index(
+        output_dir,
+        _NativeVideoIndex(
+            root,
+            recursive,
+            fps,
+            max_frames,
+            videos,
+            matrix,
+            precision,
+            embedding_space,
+        ),
+    )
+    return NativeVideoIndexUpdate(saved_path, added, updated, removed, unchanged)
+
+
+def search_native_video(
+    model: torch.nn.Module,
+    index_dir: str | os.PathLike[str],
+    query: str,
+    *,
+    top_k: int = 5,
+    query_instruction: str | None = None,
+) -> list[NativeVideoSearchResult]:
+    """Search native video embeddings with text; scores are cosine similarities."""
+    if isinstance(top_k, bool) or not isinstance(top_k, int):
+        raise TypeError("top_k must be a positive integer.")
+    if top_k <= 0:
+        raise ValueError("top_k must be greater than zero.")
+    if not isinstance(query, str):
+        raise TypeError("query must be a string.")
+    if not query.strip():
+        raise ValueError("query must contain non-whitespace text.")
+    _require_native_video_model(model)
+    device, precision = _model_settings(model)
+    index = _load_native_video_index(index_dir, expected_precision=precision)
+    if not index.videos:
+        raise ValueError("The native-video index is empty; run the index command first.")
+    expected_embedding_space = _native_video_embedding_space(
+        model,
+        embedding_dimension=index.embeddings.shape[1],
+        precision=precision,
+        fps=index.fps,
+        max_frames=index.max_frames,
+        query_instruction=query_instruction,
+    )
+    if index.embedding_space != expected_embedding_space:
+        raise VideoIndexCompatibilityError(
+            "Native-video embedding space does not match the search model, revision, "
+            "processor, query policy, or video settings."
+        )
+    query_features = _encode_search_query(
+        model,
+        query,
+        device=device,
+        embedding_dimension=index.embeddings.shape[1],
+        embedding_space=index.embedding_space,
+        query_instruction=query_instruction,
+    )
+    query_vector = (
+        query_features.detach().to(device="cpu", dtype=torch.float32).numpy()[0]
+    )
+    query_norm = float(np.linalg.norm(query_vector))
+    if not np.isfinite(query_vector).all() or not np.isfinite(query_norm) or (
+        query_norm <= 0
+    ):
+        raise VideoSearchError("Text encoder returned an invalid query embedding.")
+    query_vector = query_vector / query_norm
+    scores = index.embeddings @ query_vector
+    if not np.isfinite(scores).all():
+        raise VideoSearchError("Native-video index produced non-finite similarity scores.")
+    best = sorted(
+        ((float(score), row) for row, score in enumerate(scores)),
+        key=lambda item: (
+            -item[0],
+            _path_key(index.videos[item[1]].relative_path),
+            index.videos[item[1]].relative_path,
+        ),
+    )[: min(top_k, len(index.videos))]
+    return [
+        NativeVideoSearchResult(
+            rank=rank,
+            video_path=index.video_root
+            / PurePosixPath(index.videos[row].relative_path),
+            score=score,
+        )
+        for rank, (score, row) in enumerate(best, start=1)
+    ]
