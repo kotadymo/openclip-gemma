@@ -33,6 +33,19 @@ SIGLIP2_NAFLEX_MODEL_NAME = "siglip2-naflex-base"
 SIGLIP2_NAFLEX_MODEL_ID = "google/siglip2-base-patch16-naflex"
 SIGLIP2_NAFLEX_REVISION = "b53b807d3a2d5e2b3911292f2d69e5341cdc064c"
 
+# Additional v0.8.0 fixed-resolution checkpoints (official Hugging Face revisions).
+SIGLIP2_BASE_384_MODEL_NAME = "siglip2-base-384"
+SIGLIP2_BASE_384_MODEL_ID = "google/siglip2-base-patch16-384"
+SIGLIP2_BASE_384_REVISION = "f775b65a79762255128c981547af89addcfe0f88"
+
+SIGLIP2_LARGE_256_MODEL_NAME = "siglip2-large-256"
+SIGLIP2_LARGE_256_MODEL_ID = "google/siglip2-large-patch16-256"
+SIGLIP2_LARGE_256_REVISION = "787800c8990e6f058423089178e718139608408c"
+
+SIGLIP2_SO400M_384_MODEL_NAME = "siglip2-so400m-384"
+SIGLIP2_SO400M_384_MODEL_ID = "google/siglip2-so400m-patch14-384"
+SIGLIP2_SO400M_384_REVISION = "e8e487298228002f3d8a82e0cd5c8ea9c567f57f"
+
 _SIGLIP2_NATIVE_DIMENSION = 768
 _MAX_CONTEXT_LENGTH = 64
 _FIXRES_IMAGE_SHAPE = (3, 224, 224)
@@ -114,9 +127,12 @@ class Siglip2Tokenizer:
 class Siglip2ImagePreprocess:
     """Apply the pinned official FixRes or NaFlex image processor."""
 
-    def __init__(self, processor: Any, *, variant: _SiglipVariant) -> None:
+    def __init__(
+        self, processor: Any, *, variant: _SiglipVariant, image_size: int = 224
+    ) -> None:
         self.processor = processor
         self.variant = variant
+        self.image_shape = (3, image_size, image_size)
 
     def __call__(self, image: Image.Image) -> ProcessedImage:
         if not isinstance(image, Image.Image):
@@ -136,13 +152,14 @@ class Siglip2ImagePreprocess:
             pixel_values = features.get("pixel_values")
             if (
                 not isinstance(pixel_values, torch.Tensor)
-                or tuple(pixel_values.shape) != (1, *_FIXRES_IMAGE_SHAPE)
+                or tuple(pixel_values.shape) != (1, *self.image_shape)
                 or not pixel_values.is_floating_point()
                 or not torch.isfinite(pixel_values).all().item()
             ):
                 raise RuntimeError(
                     "The pinned FixRes processor must return finite "
-                    "FloatTensor[1,3,224,224]."
+                    f"FloatTensor[1,{self.image_shape[0]},"
+                    f"{self.image_shape[1]},{self.image_shape[2]}]."
                 )
             return pixel_values[0]
 
@@ -269,14 +286,25 @@ class Siglip2Backend:
         model_id: str,
         revision: str,
         variant: _SiglipVariant,
+        native_dimension: int = _SIGLIP2_NATIVE_DIMENSION,
+        image_size: int = 224,
     ) -> None:
         if variant not in {"fixres", "naflex"}:
             raise ValueError("variant must be 'fixres' or 'naflex'.")
+        if type(native_dimension) is not int or native_dimension <= 0:
+            raise ValueError("native_dimension must be a positive integer.")
+        if type(image_size) is not int or image_size <= 0:
+            raise ValueError("image_size must be a positive integer.")
+        if variant == "naflex" and (native_dimension != 768 or image_size != 224):
+            raise ValueError("NaFlex Base requires its existing 768D/224 configuration.")
         self.backend_id = SIGLIP2_BACKEND_ID
         self.model_name = model_name
         self.model_id = model_id
         self.revision = revision
         self.variant = variant
+        self.native_dimension = native_dimension
+        self.image_size = image_size
+        self.fixres_image_shape = (3, image_size, image_size)
         self.capabilities: Mapping[str, bool] = freeze_capabilities(
             {
                 "image_embedding": True,
@@ -294,7 +322,7 @@ class Siglip2Backend:
             }
         )
         preprocessing_id = (
-            "siglip2-fixres-rgb224-bilinear-rescale1-255-normalize-0.5-v1"
+            f"siglip2-fixres-rgb{image_size}-bilinear-rescale1-255-normalize-0.5-v1"
             if variant == "fixres"
             else "siglip2-naflex-rgb-patch16-max256-aspect-mask-spatial-v1"
         )
@@ -316,13 +344,13 @@ class Siglip2Backend:
         *,
         name: str,
     ) -> int:
-        """Reject truncation because neither registered SigLIP 2 checkpoint has MRL."""
+        """Reject truncation because SigLIP 2 checkpoints do not use MRL."""
         if value is None:
-            return _SIGLIP2_NATIVE_DIMENSION
+            return self.native_dimension
         dimension = validate_positive_embedding_dimension(value, name=name)
-        if dimension != _SIGLIP2_NATIVE_DIMENSION:
+        if dimension != self.native_dimension:
             raise ValueError(
-                f"{name} must be {_SIGLIP2_NATIVE_DIMENSION}; SigLIP 2 does not "
+                f"{name} must be {self.native_dimension}; SigLIP 2 does not 
                 f"support MRL or truncation. Received {dimension}."
             )
         return dimension
@@ -473,7 +501,9 @@ class Siglip2Backend:
     def create_preprocess(self, model: Siglip2CLIP) -> Siglip2ImagePreprocess:
         if not isinstance(model, Siglip2CLIP):
             raise TypeError("The SigLIP 2 backend requires a Siglip2CLIP model.")
-        return Siglip2ImagePreprocess(model.processor, variant=self.variant)
+        return Siglip2ImagePreprocess(
+            model.processor, variant=self.variant, image_size=self.image_size
+        )
 
     def encode_image(
         self,
@@ -606,11 +636,13 @@ class Siglip2Backend:
                 pixel_values = pixel_values.unsqueeze(0)
             if (
                 pixel_values.ndim != 4
-                or tuple(pixel_values.shape[1:]) != _FIXRES_IMAGE_SHAPE
+                or tuple(pixel_values.shape[1:]) != self.fixres_image_shape
                 or pixel_values.shape[0] == 0
             ):
                 raise ValueError(
-                    "FixRes pixel_values must have shape [B,3,224,224] or [3,224,224]."
+                    "FixRes pixel_values must have shape "
+                    f"[B,3,{self.image_size},{self.image_size}] or "
+                    f"[3,{self.image_size},{self.image_size}]."
                 )
             if not pixel_values.is_floating_point():
                 raise TypeError("FixRes pixel_values must use a floating dtype.")
@@ -740,15 +772,15 @@ class Siglip2Backend:
             )
         return features
 
-    @staticmethod
     def _validate_features(
+        self,
         features: torch.Tensor,
         *,
         batch_size: int,
         modality: str,
         normalize: bool,
     ) -> torch.Tensor:
-        expected_shape = (batch_size, _SIGLIP2_NATIVE_DIMENSION)
+        expected_shape = (batch_size, self.native_dimension)
         if tuple(features.shape) != expected_shape:
             raise RuntimeError(
                 f"The official SigLIP 2 {modality} feature API returned shape "

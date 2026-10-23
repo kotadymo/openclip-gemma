@@ -267,6 +267,9 @@ def test_default_registry_lists_models_without_loading_weights(
         DINO_MODEL_NAME,
         "siglip2-base",
         "siglip2-naflex-base",
+        "siglip2-base-384",
+        "siglip2-large-256",
+        "siglip2-so400m-384",
         QWEN3VL_2B_MODEL_NAME,
     ]
     assert registry.list_pretrained() == [
@@ -274,6 +277,9 @@ def test_default_registry_lists_models_without_loading_weights(
         (DINO_MODEL_NAME, "official"),
         ("siglip2-base", "official"),
         ("siglip2-naflex-base", "official"),
+        ("siglip2-base-384", "official"),
+        ("siglip2-large-256", "official"),
+        ("siglip2-so400m-384", "official"),
         (QWEN3VL_2B_MODEL_NAME, "official"),
     ]
     assert registry.resolve(" EMBEDDINGGEMMA_2 ") is registry.descriptors[0]
