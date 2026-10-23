@@ -19,8 +19,8 @@ from openvlclip.backends import pe_core
 from openvlclip.registry import get_default_registry
 
 _CASES = (
-    ("pe-core-t16-384", "timm/PE-Core-T-16-384", "7fe539e"),
-    ("pe-core-s16-384", "timm/PE-Core-S-16-384", "3249a38"),
+    ("pe-core-t16-384", "timm/PE-Core-T-16-384", "7fe539ed578ac49a1c2b4f946e4b0747704c825a"),
+    ("pe-core-s16-384", "timm/PE-Core-S-16-384", "3249a38eb1c432ec19231c6fe1774acb6a4e4efe"),
 )
 
 
