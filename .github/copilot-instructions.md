@@ -1,5 +1,9 @@
 # GitHub Copilot Instructions — OpenVLCLIP
 
+## Current patch focus (v0.8.1)
+
+**For work targeting v0.8.1, read and follow [`docs/v0.8.1-spec.md`](../docs/v0.8.1-spec.md) first.** It supersedes the v0.8.0 implementation checklist below for patch scope, release gates and minimal testing. Implement only the release-documentation correction, selected corrected-path SigLIP 2 CPU FP32 parity, and exact-32-token PE-Core text validation. Keep the ten v0.8.0 models and public/index contracts unchanged. Do not add DINOv3, FAISS, search re-benchmarks, heavy CI, unrelated refactors or model families. A v0.8.1 tag push invokes production PyPI publication; **do not push the tag, publish, or create a GitHub Release without a separate explicit request.** Report results and blockers in Japanese.
+
 ## Repository identity and source of truth
 
 This project is **openvlclip** (Python import: `openvlclip`), not the older `openclip-gemma` project. Preserve the OpenCLIP-inspired multi-backend API and existing released behavior. Before any v0.8.0 work, read **`docs/v0.8.0-copilot-handoff.md`** and **`docs/v0.8.0-scope.md`**. Use the current source code as the authority on what is already implemented; do not reimplement merged work. Consult `docs/openclip-compatibility-v0.3.0.md` and `docs/compatibility-spec-v0.1.0.md` for baseline historical behavior, resolving any discrepancies in favor of currently documented released contracts unless explicitly directed otherwise.
