@@ -219,12 +219,21 @@ def get_default_registry() -> ModelRegistry:
         Qwen3VLBackend,
     )
     from openvlclip.backends.siglip2 import (
+        SIGLIP2_BASE_384_MODEL_ID,
+        SIGLIP2_BASE_384_MODEL_NAME,
+        SIGLIP2_BASE_384_REVISION,
         SIGLIP2_FIXRES_MODEL_ID,
         SIGLIP2_FIXRES_MODEL_NAME,
         SIGLIP2_FIXRES_REVISION,
+        SIGLIP2_LARGE_256_MODEL_ID,
+        SIGLIP2_LARGE_256_MODEL_NAME,
+        SIGLIP2_LARGE_256_REVISION,
         SIGLIP2_NAFLEX_MODEL_ID,
         SIGLIP2_NAFLEX_MODEL_NAME,
         SIGLIP2_NAFLEX_REVISION,
+        SIGLIP2_SO400M_384_MODEL_ID,
+        SIGLIP2_SO400M_384_MODEL_NAME,
+        SIGLIP2_SO400M_384_REVISION,
         Siglip2Backend,
     )
 
@@ -241,6 +250,30 @@ def get_default_registry() -> ModelRegistry:
         model_id=SIGLIP2_NAFLEX_MODEL_ID,
         revision=SIGLIP2_NAFLEX_REVISION,
         variant="naflex",
+    )
+    siglip2_base_384_backend = Siglip2Backend(
+        model_name=SIGLIP2_BASE_384_MODEL_NAME,
+        model_id=SIGLIP2_BASE_384_MODEL_ID,
+        revision=SIGLIP2_BASE_384_REVISION,
+        variant="fixres",
+        native_dimension=768,
+        image_size=384,
+    )
+    siglip2_large_256_backend = Siglip2Backend(
+        model_name=SIGLIP2_LARGE_256_MODEL_NAME,
+        model_id=SIGLIP2_LARGE_256_MODEL_ID,
+        revision=SIGLIP2_LARGE_256_REVISION,
+        variant="fixres",
+        native_dimension=1024,
+        image_size=256,
+    )
+    siglip2_so400m_384_backend = Siglip2Backend(
+        model_name=SIGLIP2_SO400M_384_MODEL_NAME,
+        model_id=SIGLIP2_SO400M_384_MODEL_ID,
+        revision=SIGLIP2_SO400M_384_REVISION,
+        variant="fixres",
+        native_dimension=1152,
+        image_size=384,
     )
     qwen3vl_2b_backend = Qwen3VLBackend(
         model_name=QWEN3VL_2B_MODEL_NAME,
@@ -301,6 +334,42 @@ def get_default_registry() -> ModelRegistry:
                     siglip2_naflex_backend.embedding_space_metadata
                 ),
                 backend=siglip2_naflex_backend,
+            ),
+            ModelDescriptor(
+                model_name=SIGLIP2_BASE_384_MODEL_NAME,
+                aliases=(),
+                backend_id=siglip2_base_384_backend.backend_id,
+                model_id=SIGLIP2_BASE_384_MODEL_ID,
+                revision=SIGLIP2_BASE_384_REVISION,
+                pretrained_tags={"official": SIGLIP2_BASE_384_MODEL_ID},
+                pretrained_aliases={},
+                capabilities=siglip2_base_384_backend.capabilities,
+                embedding_space_metadata=siglip2_base_384_backend.embedding_space_metadata,
+                backend=siglip2_base_384_backend,
+            ),
+            ModelDescriptor(
+                model_name=SIGLIP2_LARGE_256_MODEL_NAME,
+                aliases=(),
+                backend_id=siglip2_large_256_backend.backend_id,
+                model_id=SIGLIP2_LARGE_256_MODEL_ID,
+                revision=SIGLIP2_LARGE_256_REVISION,
+                pretrained_tags={"official": SIGLIP2_LARGE_256_MODEL_ID},
+                pretrained_aliases={},
+                capabilities=siglip2_large_256_backend.capabilities,
+                embedding_space_metadata=siglip2_large_256_backend.embedding_space_metadata,
+                backend=siglip2_large_256_backend,
+            ),
+            ModelDescriptor(
+                model_name=SIGLIP2_SO400M_384_MODEL_NAME,
+                aliases=(),
+                backend_id=siglip2_so400m_384_backend.backend_id,
+                model_id=SIGLIP2_SO400M_384_MODEL_ID,
+                revision=SIGLIP2_SO400M_384_REVISION,
+                pretrained_tags={"official": SIGLIP2_SO400M_384_MODEL_ID},
+                pretrained_aliases={},
+                capabilities=siglip2_so400m_384_backend.capabilities,
+                embedding_space_metadata=siglip2_so400m_384_backend.embedding_space_metadata,
+                backend=siglip2_so400m_384_backend,
             ),
             ModelDescriptor(
                 model_name=QWEN3VL_2B_MODEL_NAME,

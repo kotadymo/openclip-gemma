@@ -718,3 +718,16 @@ The name OpenVLCLIP reflects the goal of providing familiar interfaces across vi
 This is an independently developed library, not an official extension of OpenCLIP, Google, or Meta.
 
 The names OpenCLIP and Gemma refer to their respective projects and technologies. No affiliation or endorsement is implied.
+
+
+## v0.8.0 development (not part of published v0.7.1)
+
+The development branch for v0.8.0 adds three **fixed-resolution** Google SigLIP 2 checkpoints to the five models in the published v0.7.1 wheel:
+
+| OpenVLCLIP model name | Official checkpoint | Input resolution | Embedding dimension |
+| --- | --- | ---: | ---: |
+| `siglip2-base-384` | `google/siglip2-base-patch16-384` | 384 × 384 | 768 |
+| `siglip2-large-256` | `google/siglip2-large-patch16-256` | 256 × 256 | 1024 |
+| `siglip2-so400m-384` | `google/siglip2-so400m-patch14-384` | 384 × 384 | 1152 |
+
+All use separately pinned official Hugging Face revisions, the existing SigLIP 2 image/text and sigmoid-logit APIs, and distinct index embedding-space metadata. They do **not** share indexes with the 224-pixel or NaFlex checkpoints. Model weights are downloaded only on explicit model creation and are not included in the distribution. Real-model numerical parity and actual VRAM usage are **not yet validated**; see [v0.8.0 checkpoint implementation notes](docs/v0.8.0-siglip2-variants.md).

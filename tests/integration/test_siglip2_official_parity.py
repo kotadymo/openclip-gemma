@@ -21,13 +21,21 @@ _CHECKPOINTS = (
         "google/siglip2-base-patch16-224",
         "75de2d55ec2d0b4efc50b3e9ad70dba96a7b2fa2",
         "fixres",
+        768,
     ),
     (
         "siglip2-naflex-base",
         "google/siglip2-base-patch16-naflex",
         "b53b807d3a2d5e2b3911292f2d69e5341cdc064c",
         "naflex",
+        768,
     ),
+    ("siglip2-base-384", "google/siglip2-base-patch16-384",
+     "f775b65a79762255128c981547af89addcfe0f88", "fixres", 768),
+    ("siglip2-large-256", "google/siglip2-large-patch16-256",
+     "787800c8990e6f058423089178e718139608408c", "fixres", 1024),
+    ("siglip2-so400m-384", "google/siglip2-so400m-patch14-384",
+     "e8e487298228002f3d8a82e0cd5c8ea9c567f57f", "fixres", 1152),
 )
 _DEVICES_AND_PRECISIONS = (
     ("cpu", "fp32"),
@@ -68,7 +76,7 @@ def _move_image_inputs(
 
 
 @pytest.mark.parametrize(
-    ("model_name", "model_id", "revision", "variant"),
+    ("model_name", "model_id", "revision", "variant", "dimension"),
     _CHECKPOINTS,
 )
 @pytest.mark.parametrize(("device", "precision"), _DEVICES_AND_PRECISIONS)
@@ -78,6 +86,7 @@ def test_siglip2_wrapper_matches_pinned_official_model(
     model_id: str,
     revision: str,
     variant: str,
+    dimension: int,
     device: str,
     precision: str,
 ) -> None:
@@ -215,10 +224,10 @@ def test_siglip2_wrapper_matches_pinned_official_model(
     ):
         torch.testing.assert_close(actual, reference, rtol=tolerance, atol=tolerance)
         assert torch.isfinite(actual).all()
-    assert actual_images.shape == (len(images), 768)
-    assert actual_text.shape == (len(_TEXTS), 768)
-    assert actual_images_normalized.shape == (len(images), 768)
-    assert actual_text_normalized.shape == (len(_TEXTS), 768)
+    assert actual_images.shape == (len(images), dimension)
+    assert actual_text.shape == (len(_TEXTS), dimension)
+    assert actual_images_normalized.shape == (len(images), dimension)
+    assert actual_text_normalized.shape == (len(_TEXTS), dimension)
 
     if device == "cpu" and precision == "fp32":
         image_dir = tmp_path / model_name / "images"

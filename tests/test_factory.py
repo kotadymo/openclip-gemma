@@ -474,6 +474,9 @@ def test_list_apis_do_not_load_model_or_processor(
         "dinov2-dinotxt",
         "siglip2-base",
         "siglip2-naflex-base",
+        "siglip2-base-384",
+        "siglip2-large-256",
+        "siglip2-so400m-384",
         "qwen3-vl-embedding-2b",
     ]
     assert list_pretrained() == [
@@ -481,6 +484,9 @@ def test_list_apis_do_not_load_model_or_processor(
         ("dinov2-dinotxt", "official"),
         ("siglip2-base", "official"),
         ("siglip2-naflex-base", "official"),
+        ("siglip2-base-384", "official"),
+        ("siglip2-large-256", "official"),
+        ("siglip2-so400m-384", "official"),
         ("qwen3-vl-embedding-2b", "official"),
     ]
     assert list_pretrained(as_str=True) == [
@@ -488,6 +494,9 @@ def test_list_apis_do_not_load_model_or_processor(
         "dinov2-dinotxt:official",
         "siglip2-base:official",
         "siglip2-naflex-base:official",
+        "siglip2-base-384:official",
+        "siglip2-large-256:official",
+        "siglip2-so400m-384:official",
         "qwen3-vl-embedding-2b:official",
     ]
     model_loader.assert_not_called()
