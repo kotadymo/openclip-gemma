@@ -54,6 +54,9 @@ dinotxt = [
     "ftfy>=6.3.1,<7",
     "regex>=2024.11.6",
 ]
+pecore = [
+    "open-clip-torch>=3.3.0,<3.4.0",
+]
 qwen3vl = [
     "qwen-vl-utils>=0.0.14,<0.1.0",
     "torchcodec>=0.17.0,<0.18.0",

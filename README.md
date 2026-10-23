@@ -722,16 +722,24 @@ The names OpenCLIP and Gemma refer to their respective projects and technologies
 
 ## v0.8.0 development (not part of published v0.7.1)
 
-The development branch for v0.8.0 adds three **fixed-resolution** Google SigLIP 2 checkpoints to the five models in the published v0.7.1 wheel:
+The development branch registers five additional checkpoints alongside the five models in the published v0.7.1 wheel. These changes are source-checkout-only; the v0.7.1 PyPI package remains unchanged.
 
 | OpenVLCLIP model name | Official checkpoint | Input resolution | Embedding dimension |
 | --- | --- | ---: | ---: |
 | `siglip2-base-384` | `google/siglip2-base-patch16-384` | 384 × 384 | 768 |
 | `siglip2-large-256` | `google/siglip2-large-patch16-256` | 256 × 256 | 1024 |
 | `siglip2-so400m-384` | `google/siglip2-so400m-patch14-384` | 384 × 384 | 1152 |
+| `pe-core-t16-384` | `timm/PE-Core-T-16-384` | 384 × 384 | 512 |
+| `pe-core-s16-384` | `timm/PE-Core-S-16-384` | 384 × 384 | 512 |
 
-All use separately pinned official Hugging Face revisions, the existing SigLIP 2 image/text and sigmoid-logit APIs, and distinct index embedding-space metadata. They do **not** share indexes with the 224-pixel or NaFlex checkpoints. Model weights are downloaded only on explicit model creation and are not included in the distribution. Real-model numerical parity and actual VRAM usage are **not yet validated**; see [v0.8.0 checkpoint implementation notes](docs/v0.8.0-siglip2-variants.md).
+The SigLIP 2 additions use pinned Google revisions and the existing FixRes processor and sigmoid-logit API. PE-Core uses pinned timm OpenCLIP-converted weights and the optional `open-clip-torch` backend. Each checkpoint has a distinct EmbeddingSpace identity; model weights are downloaded only when explicitly loaded and are not included in distributions.
 
-**v0.8.0 scope decision (2026-10-23):** DINOv3 + dino.txt is deferred and is **not** a v0.8.0 target or release gate because Meta's model-weight access process remains a dependency. The remaining planned items are PE-Core T/S and optional search acceleration; the three SigLIP 2 variants above are already merged in the development source. See [v0.8.0 scope](docs/v0.8.0-scope.md).
+For a source checkout, install PE-Core's optional dependency with:
 
-PE-Core v0.8.0 development support (source checkout only): `pe-core-t16-384` and `pe-core-s16-384` provide 512-dimensional image/text embeddings using converted [OpenCLIP checkpoints](https://huggingface.co/timm/PE-Core-T-16-384). Install the optional `open-clip-torch` dependency explicitly before creating either model; weights are downloaded from pinned HF snapshots and are not bundled. These are not in the published v0.7.1 wheel. See [PE-Core implementation notes](docs/v0.8.0-pe-core.md) for parity limitations.
+```bash
+pip install -e ".[pecore]"
+```
+
+The `pecore` extra is not present in the published v0.7.1 wheel; `pip install "openvlclip[pecore]"` will apply only after a future release includes it. DINOv3 + dino.txt remains deferred and is not part of v0.8.0. CPU FP32 reference parity has been verified for these five additions; CUDA FP32/BF16 and GPU memory use remain unverified. See the [v0.8.0 validation record](docs/v0.8.0-validation.md), [SigLIP 2 notes](docs/v0.8.0-siglip2-variants.md), and [PE-Core notes](docs/v0.8.0-pe-core.md).
+
+The exact-search measurement shows multi-fold speedups on low-tie workloads, but the synthetic all-equal-score case is slower because every candidate must still be ordered for exact ties. See the [search benchmark results](docs/v0.8.0-search-optimization.md); no universal speedup is claimed.

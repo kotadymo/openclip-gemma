@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — v0.8.0 development (not published)
+
+This development version is available from the source repository only. The
+published v0.7.1 package and its five-model registry are unchanged.
+
+### Added
+
+- Register three additional fixed-resolution SigLIP 2 checkpoints and PE-Core
+  T/S using pinned model revisions and separate EmbeddingSpace identities.
+- Add the optional `[pecore]` dependency, bounded to
+  `open-clip-torch>=3.3.0,<3.4.0`; model weights remain external downloads.
+- Use partition-based exact top-k selection for image, frame-video, and
+  native-video retrieval without changing index formats or tie ordering.
+
+### Validation
+
+- CPU FP32 independent-reference checks for the three added SigLIP 2
+  checkpoints and both PE-Core converted checkpoints produced zero maximum
+  absolute error for raw and normalized embeddings and logits on the recorded
+  deterministic inputs.
+- Exact-search ordering and scores matched the prior full-sort baseline in all
+  54 benchmark cases. Low-tie workloads improved; a synthetic all-equal-score
+  workload regressed and is documented without a universal speedup claim.
+- CUDA FP32/BF16 validation is not complete. See the
+  [v0.8.0 validation record](docs/v0.8.0-validation.md).
+
 ## v0.7.1 — 2026-10-23
 
 Released on [PyPI](https://pypi.org/project/openvlclip/0.7.1/) and as a

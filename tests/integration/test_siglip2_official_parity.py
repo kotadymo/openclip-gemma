@@ -253,6 +253,12 @@ def test_siglip2_wrapper_matches_pinned_official_model(
     errors = {
         "image_max_abs_error": float((actual_images - reference_images).abs().max()),
         "text_max_abs_error": float((actual_text - reference_text).abs().max()),
+        "normalized_image_max_abs_error": float(
+            (actual_images_normalized - reference_images_normalized).abs().max()
+        ),
+        "normalized_text_max_abs_error": float(
+            (actual_text_normalized - reference_text_normalized).abs().max()
+        ),
         "logit_max_abs_error": float(
             (actual_logits[0] - reference_output.logits_per_image).abs().max()
         ),
