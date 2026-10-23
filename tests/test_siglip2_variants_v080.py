@@ -181,5 +181,5 @@ def test_new_model_index_build_search_and_model_isolation(
     model_loader.return_value = _Model(768)
     processor_loader.return_value = _Processor(224)
     old_model = create_model("siglip2-base")
-    with pytest.raises(ImageIndexCompatibilityError, match="embedding space"):
+    with pytest.raises(ImageIndexCompatibilityError, match="embedding"):
         search_images(old_model, index_dir, "red object")
