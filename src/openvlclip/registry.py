@@ -211,6 +211,13 @@ def get_default_registry() -> ModelRegistry:
         DinoV2DinoTxtBackend,
     )
     from openvlclip.backends.embeddinggemma2 import EmbeddingGemma2Backend
+    from openvlclip.backends.qwen3_vl_embedding import (
+        QWEN3VL_2B_DIMENSION,
+        QWEN3VL_2B_MODEL_ID,
+        QWEN3VL_2B_MODEL_NAME,
+        QWEN3VL_2B_REVISION,
+        Qwen3VLBackend,
+    )
     from openvlclip.backends.siglip2 import (
         SIGLIP2_FIXRES_MODEL_ID,
         SIGLIP2_FIXRES_MODEL_NAME,
@@ -234,6 +241,12 @@ def get_default_registry() -> ModelRegistry:
         model_id=SIGLIP2_NAFLEX_MODEL_ID,
         revision=SIGLIP2_NAFLEX_REVISION,
         variant="naflex",
+    )
+    qwen3vl_2b_backend = Qwen3VLBackend(
+        model_name=QWEN3VL_2B_MODEL_NAME,
+        model_id=QWEN3VL_2B_MODEL_ID,
+        revision=QWEN3VL_2B_REVISION,
+        native_dimension=QWEN3VL_2B_DIMENSION,
     )
     return ModelRegistry(
         (
@@ -288,6 +301,18 @@ def get_default_registry() -> ModelRegistry:
                     siglip2_naflex_backend.embedding_space_metadata
                 ),
                 backend=siglip2_naflex_backend,
+            ),
+            ModelDescriptor(
+                model_name=QWEN3VL_2B_MODEL_NAME,
+                aliases=(),
+                backend_id=qwen3vl_2b_backend.backend_id,
+                model_id=QWEN3VL_2B_MODEL_ID,
+                revision=QWEN3VL_2B_REVISION,
+                pretrained_tags={"official": QWEN3VL_2B_MODEL_ID},
+                pretrained_aliases={},
+                capabilities=qwen3vl_2b_backend.capabilities,
+                embedding_space_metadata=qwen3vl_2b_backend.embedding_space_metadata,
+                backend=qwen3vl_2b_backend,
             ),
         )
     )

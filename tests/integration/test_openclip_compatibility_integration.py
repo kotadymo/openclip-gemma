@@ -65,14 +65,29 @@ def test_openclip_compatibility_scenarios(
     precision: str,
     dtype: torch.dtype,
 ) -> None:
-    assert set(list_models()) == {"embeddinggemma-2", "dinov2-dinotxt"}
+    assert set(list_models()) == {
+        "embeddinggemma-2",
+        "dinov2-dinotxt",
+        "siglip2-base",
+        "siglip2-naflex-base",
+        "qwen3-vl-embedding-2b",
+        "qwen3-vl-embedding-8b",
+    }
     assert set(list_pretrained()) == {
         ("embeddinggemma-2", "official"),
         ("dinov2-dinotxt", "official"),
+        ("siglip2-base", "official"),
+        ("siglip2-naflex-base", "official"),
+        ("qwen3-vl-embedding-2b", "official"),
+        ("qwen3-vl-embedding-8b", "official"),
     }
     assert set(list_pretrained(as_str=True)) == {
         "embeddinggemma-2:official",
         "dinov2-dinotxt:official",
+        "siglip2-base:official",
+        "siglip2-naflex-base:official",
+        "qwen3-vl-embedding-2b:official",
+        "qwen3-vl-embedding-8b:official",
     }
 
     model, preprocess = create_model_from_pretrained(
@@ -164,9 +179,7 @@ def test_openclip_compatibility_scenarios(
                 "similarity_shape": list(similarities.shape),
                 "top_labels": classification_scores.argmax(dim=-1).cpu().tolist(),
                 "cuda_peak_allocated_bytes": (
-                    torch.cuda.max_memory_allocated()
-                    if device == "cuda"
-                    else None
+                    torch.cuda.max_memory_allocated() if device == "cuda" else None
                 ),
             },
             sort_keys=True,

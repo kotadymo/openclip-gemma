@@ -17,6 +17,13 @@ from openvlclip.backends.dinov2_dinotxt import (
     DINO_MODEL_NAME,
     DINO_MODEL_REVISION,
 )
+from openvlclip.backends.qwen3_vl_embedding import (
+    QWEN3VL_2B_DIMENSION,
+    QWEN3VL_2B_MODEL_ID,
+    QWEN3VL_2B_MODEL_NAME,
+    QWEN3VL_2B_REVISION,
+    Qwen3VLBackend,
+)
 from openvlclip.capabilities import (
     CAPABILITY_KEYS,
     capabilities_for_modalities,
@@ -260,12 +267,14 @@ def test_default_registry_lists_models_without_loading_weights(
         DINO_MODEL_NAME,
         "siglip2-base",
         "siglip2-naflex-base",
+        QWEN3VL_2B_MODEL_NAME,
     ]
     assert registry.list_pretrained() == [
         (MODEL_NAME, "official"),
         (DINO_MODEL_NAME, "official"),
         ("siglip2-base", "official"),
         ("siglip2-naflex-base", "official"),
+        (QWEN3VL_2B_MODEL_NAME, "official"),
     ]
     assert registry.resolve(" EMBEDDINGGEMMA_2 ") is registry.descriptors[0]
     assert registry.descriptors[0].model_id == MODEL_ID
@@ -274,6 +283,11 @@ def test_default_registry_lists_models_without_loading_weights(
     assert dinotxt.backend_id == DINO_BACKEND_ID
     assert dinotxt.model_id == DINO_HUB_MODEL_ID
     assert dinotxt.revision == DINO_MODEL_REVISION
+    qwen_2b = registry.resolve(QWEN3VL_2B_MODEL_NAME)
+    assert qwen_2b.model_id == QWEN3VL_2B_MODEL_ID
+    assert qwen_2b.revision == QWEN3VL_2B_REVISION
+    with pytest.raises(ValueError, match="Unsupported model_name"):
+        registry.resolve("qwen3-vl-embedding-8b")
     model_loader.assert_not_called()
 
 
@@ -448,6 +462,7 @@ def test_registered_backends_declare_the_extended_capability_contract() -> None:
     registry = get_default_registry()
     gemma = registry.resolve(MODEL_NAME)
     dinotxt = registry.resolve(DINO_MODEL_NAME)
+    qwen_2b = registry.resolve(QWEN3VL_2B_MODEL_NAME)
 
     assert tuple(gemma.backend.capabilities) == CAPABILITY_KEYS
     assert gemma.capabilities_for_full_model()["instruction_aware"] is True
@@ -462,3 +477,20 @@ def test_registered_backends_declare_the_extended_capability_contract() -> None:
     assert dinotxt.capabilities_for_full_model()["video_embedding"] is False
     assert dinotxt.capabilities_for_full_model()["multimodal_embedding"] is False
     assert dinotxt.capabilities_for_full_model()["sigmoid_logits"] is False
+
+    for descriptor, dimension in (
+        (qwen_2b, QWEN3VL_2B_DIMENSION),
+    ):
+        assert isinstance(descriptor.backend, Qwen3VLBackend)
+        assert descriptor.backend.native_dimension == dimension
+        capabilities = descriptor.capabilities_for_full_model()
+        assert capabilities["image_embedding"] is True
+        assert capabilities["text_embedding"] is True
+        assert capabilities["image_text_similarity"] is True
+        assert capabilities["mrl"] is True
+        assert capabilities["selective_loading"] is False
+        assert capabilities["video_embedding"] is True
+        assert capabilities["multimodal_embedding"] is True
+        assert capabilities["instruction_aware"] is True
+        assert capabilities["patch_embedding"] is False
+        assert capabilities["text_similarity_map"] is False

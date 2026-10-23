@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from os import PathLike
 from pathlib import Path
 from typing import Protocol
@@ -209,8 +209,11 @@ def _load_preprocessed_image(
             with Image.open(path) as image:
                 image.load()
                 image_tensor = preprocess(image)
-                if image_tensor is image:
-                    image_tensor = image.copy()
+                return _validate_processed_image(
+                    image_tensor,
+                    input_index=input_index,
+                    source=f"Preprocessing image ({path})",
+                )
     except (
         OSError,
         Image.DecompressionBombError,
@@ -219,12 +222,6 @@ def _load_preprocessed_image(
         raise ValueError(
             f"Could not read image at input index {input_index} ({path}): {error}"
         ) from error
-
-    return _validate_processed_image(
-        image_tensor,
-        input_index=input_index,
-        source=f"Preprocessing image ({path})",
-    )
 
 
 def _validate_processed_image(
@@ -241,7 +238,7 @@ def _validate_processed_image(
             )
         return image
     if isinstance(image, Image.Image):
-        return image
+        return image.copy()
     if not isinstance(image, Mapping):
         raise TypeError(
             f"{source} at input index {input_index} did not return a Tensor, "
@@ -307,10 +304,14 @@ def _encode_image_chunk[EmbeddingKey](
     for group in groups.values():
         positions = [position for position, _ in group]
         input_indices = [item[0] for _, item in group]
-        image_batch = stack_processed_images(
-            [item[2] for _, item in group],
-            backend_name="image",
-        )
+        processed_images = [item[2] for _, item in group]
+        if all(isinstance(image, Image.Image) for image in processed_images):
+            image_batch = processed_images
+        else:
+            image_batch = stack_processed_images(
+                processed_images,
+                backend_name="image",
+            )
         try:
             if isinstance(image_batch, torch.Tensor):
                 image_batch = image_batch.to(model_device)
@@ -318,6 +319,13 @@ def _encode_image_chunk[EmbeddingKey](
                 image_batch = {
                     key: value.to(model_device) for key, value in image_batch.items()
                 }
+            elif not (
+                isinstance(image_batch, Sequence)
+                and all(isinstance(image, Image.Image) for image in image_batch)
+            ):
+                raise TypeError(
+                    "Image batching requires Tensor, processor mapping, or PIL inputs."
+                )
             with torch.inference_mode():
                 if embedding_dim == DEFAULT_EMBEDDING_DIMENSION:
                     features = model.encode_image(image_batch)
