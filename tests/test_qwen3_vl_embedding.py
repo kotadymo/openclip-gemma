@@ -232,6 +232,9 @@ def test_qwen_registry_and_capabilities_are_pinned_and_side_effect_free() -> Non
         "dinov2-dinotxt",
         "siglip2-base",
         "siglip2-naflex-base",
+        "siglip2-base-384",
+        "siglip2-large-256",
+        "siglip2-so400m-384",
         QWEN3VL_2B_MODEL_NAME,
     ]
     assert list_pretrained()[-1:] == [
