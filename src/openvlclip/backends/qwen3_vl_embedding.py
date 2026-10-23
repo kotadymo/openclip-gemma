@@ -93,6 +93,11 @@ class Qwen3VLCLIP(nn.Module):
         return self._processor
 
     @property
+    def native_video_max_frames(self) -> int:
+        """Return the maximum number of frames supported by this checkpoint."""
+        return _DEFAULT_MAX_FRAMES
+
+    @property
     def capabilities(self) -> Mapping[str, bool]:
         """Return the full set of supported Qwen embedding operations."""
         return self._inference_backend.capabilities_for(self.modalities)

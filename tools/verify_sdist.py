@@ -9,6 +9,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 
 from readme_validation import (
+    read_project_config,
     validate_distribution_metadata,
     validate_readme,
 )
@@ -24,6 +25,8 @@ REQUIRED_PATHS = {
     "src/openvlclip/backends/dinov2_dinotxt.py",
     "src/openvlclip/backends/dinotxt_tokenizer.py",
     "src/openvlclip/backends/embeddinggemma2.py",
+    "src/openvlclip/backends/qwen3_vl_embedding.py",
+    "src/openvlclip/backends/siglip2.py",
     "src/openvlclip/batching.py",
     "src/openvlclip/capabilities.py",
     "src/openvlclip/constants.py",
@@ -48,9 +51,17 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_ARCHIVE_FILE_SIZE = 50_000_000
 
 
-def verify_sdist(archive_path: Path, expected_version: str = "0.6.0") -> None:
+def verify_sdist(archive_path: Path, expected_version: str | None = None) -> None:
     if not archive_path.is_file() or not archive_path.name.endswith(".tar.gz"):
         raise ValueError(f"Not a source distribution archive: {archive_path}")
+
+    project_root = Path(__file__).resolve().parents[1]
+    if expected_version is None:
+        project = read_project_config(project_root / "pyproject.toml")
+        project_version = project.get("version")
+        if not isinstance(project_version, str) or not project_version:
+            raise ValueError("Project pyproject.toml does not declare a version.")
+        expected_version = project_version
 
     with tarfile.open(archive_path, mode="r:gz") as archive:
         members = [member for member in archive.getmembers() if member.isfile()]
@@ -70,7 +81,6 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.6.0") -> None:
         if missing:
             raise ValueError(f"Source distribution is missing files: {sorted(missing)}")
 
-        project_root = Path(__file__).resolve().parents[1]
         readme_path = project_root / "README.md"
         readme_members = [
             member
@@ -104,6 +114,10 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.6.0") -> None:
         project = tomllib.loads(
             archive.extractfile(pyproject_members[0]).read().decode("utf-8")
         )["project"]
+        if project.get("version") != expected_version:
+            raise ValueError(
+                "Source distribution pyproject.toml has an unexpected version."
+            )
 
         metadata_members = [
             member
@@ -198,7 +212,7 @@ def verify_sdist(archive_path: Path, expected_version: str = "0.6.0") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
-    parser.add_argument("--expected-version", default="0.6.0")
+    parser.add_argument("--expected-version")
     args = parser.parse_args()
     try:
         verify_sdist(args.archive, expected_version=args.expected_version)

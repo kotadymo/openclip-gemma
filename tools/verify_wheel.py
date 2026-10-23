@@ -21,6 +21,8 @@ REQUIRED_MODULES = {
     "openvlclip/backends/dinov2_dinotxt.py",
     "openvlclip/backends/dinotxt_tokenizer.py",
     "openvlclip/backends/embeddinggemma2.py",
+    "openvlclip/backends/qwen3_vl_embedding.py",
+    "openvlclip/backends/siglip2.py",
     "openvlclip/batching.py",
     "openvlclip/capabilities.py",
     "openvlclip/constants.py",
@@ -38,15 +40,20 @@ WEIGHT_SUFFIXES = {".bin", ".ckpt", ".onnx", ".pt", ".pth", ".safetensors"}
 MAX_WHEEL_FILE_SIZE = 50_000_000
 
 
-def verify_wheel(wheel_path: Path, expected_version: str = "0.6.0") -> None:
+def verify_wheel(wheel_path: Path, expected_version: str | None = None) -> None:
     if not wheel_path.is_file() or wheel_path.suffix != ".whl":
         raise ValueError(f"Not a wheel file: {wheel_path}")
 
     project_root = Path(__file__).resolve().parents[1]
+    project = read_project_config(project_root / "pyproject.toml")
+    if expected_version is None:
+        project_version = project.get("version")
+        if not isinstance(project_version, str) or not project_version:
+            raise ValueError("Project pyproject.toml does not declare a version.")
+        expected_version = project_version
     readme_path = project_root / "README.md"
     readme = readme_path.read_text(encoding="utf-8")
     validate_readme(readme, readme_path, "README.md", expected_version)
-    project = read_project_config(project_root / "pyproject.toml")
 
     with zipfile.ZipFile(wheel_path) as archive:
         entries = archive.infolist()
@@ -135,7 +142,7 @@ def verify_wheel(wheel_path: Path, expected_version: str = "0.6.0") -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
-    parser.add_argument("--expected-version", default="0.6.0")
+    parser.add_argument("--expected-version")
     args = parser.parse_args()
     try:
         verify_wheel(args.wheel, expected_version=args.expected_version)

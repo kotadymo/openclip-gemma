@@ -14,6 +14,7 @@ _VALIDATION_MODULE = importlib.util.module_from_spec(_VALIDATION_SPEC)
 _VALIDATION_SPEC.loader.exec_module(_VALIDATION_MODULE)
 validate_distribution_metadata = _VALIDATION_MODULE.validate_distribution_metadata
 validate_local_links = _VALIDATION_MODULE.validate_local_links
+validate_registry_status = _VALIDATION_MODULE.validate_registry_status
 validate_release_wording = _VALIDATION_MODULE.validate_release_wording
 
 
@@ -53,6 +54,43 @@ def test_validates_local_markdown_links(tmp_path: Path) -> None:
     validate_local_links("[Guide](guide.md)", readme_path)
     with pytest.raises(ValueError, match="broken local link"):
         validate_local_links("[Missing](missing.md)", readme_path)
+
+
+def test_validates_current_registry_and_qwen_8b_status() -> None:
+    readme = (
+        "`embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, "
+        "`siglip2-naflex-base`, and `qwen3-vl-embedding-2b` are registered. "
+        "Qwen 8B is deferred and is not available through the Registry."
+    )
+
+    validate_registry_status(readme, "README")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The development registry contains the current models.",
+        "SigLIP 2 and Qwen3-VL are not in the published v0.6.1 distribution.",
+        "Qwen3-VL is still in Draft PR #44.",
+    ],
+)
+def test_rejects_stale_registry_wording(text: str) -> None:
+    readme = (
+        "`embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, "
+        "`siglip2-naflex-base`, and `qwen3-vl-embedding-2b` are registered. "
+        "Qwen 8B is deferred and is not available through the Registry. "
+        f"{text}"
+    )
+
+    with pytest.raises(ValueError, match="stale model-registry wording"):
+        validate_registry_status(readme, "README")
+
+
+def test_repository_readme_documents_the_published_model_registry() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    readme = (repository_root / "README.md").read_text(encoding="utf-8")
+
+    validate_registry_status(readme, "README.md")
 
 
 def test_checks_metadata_against_project_and_readme(tmp_path: Path) -> None:

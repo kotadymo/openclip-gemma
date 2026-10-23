@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import json
+import os
 from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
@@ -1188,6 +1190,162 @@ def test_native_video_index_updates_searches_and_sorts_results(
             query_instruction=instruction,
         )
     ] == ["blue.mp4", "red-a.mp4"]
+
+
+def test_native_video_index_strict_hash_reuses_and_detects_content_changes(
+    tmp_path: Path,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    video_path = _write_video(videos_dir / "clip.mp4", b"red")
+    index_dir = tmp_path / "index"
+    model = FakeNativeVideoModel()
+
+    build_or_update_native_video_index(
+        model,
+        videos_dir,
+        index_dir,
+        verify_contents=True,
+    )
+    first_stat = video_path.stat()
+    loaded = _load_native_video_index(index_dir)
+    assert loaded.videos[0].content_sha256 == hashlib.sha256(b"red").hexdigest()
+
+    unchanged = build_or_update_native_video_index(
+        model,
+        videos_dir,
+        index_dir,
+        verify_contents=True,
+    )
+    assert unchanged.unchanged_videos == 1
+    assert len(model.encoded_videos) == 1
+
+    video_path.write_bytes(b"blu")
+    os.utime(
+        video_path,
+        ns=(first_stat.st_atime_ns, first_stat.st_mtime_ns),
+    )
+    assert video_path.stat().st_size == first_stat.st_size
+    assert video_path.stat().st_mtime_ns == first_stat.st_mtime_ns
+
+    updated = build_or_update_native_video_index(
+        model,
+        videos_dir,
+        index_dir,
+        verify_contents=True,
+    )
+
+    assert updated.updated_videos == 1
+    assert updated.unchanged_videos == 0
+    assert len(model.encoded_videos) == 2
+    assert _load_native_video_index(index_dir).videos[0].content_sha256 == (
+        hashlib.sha256(b"blu").hexdigest()
+    )
+
+
+def test_native_video_index_strict_hash_migrates_legacy_records(
+    tmp_path: Path,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    _write_video(videos_dir / "clip.mp4", b"red")
+    index_dir = tmp_path / "index"
+    model = FakeNativeVideoModel()
+
+    first = build_or_update_native_video_index(model, videos_dir, index_dir)
+    assert first.added_videos == 1
+    assert _load_native_video_index(index_dir).videos[0].content_sha256 is None
+
+    unchanged = build_or_update_native_video_index(model, videos_dir, index_dir)
+    assert unchanged.unchanged_videos == 1
+    assert len(model.encoded_videos) == 1
+
+    verified = build_or_update_native_video_index(
+        model,
+        videos_dir,
+        index_dir,
+        verify_contents=True,
+    )
+
+    assert (verified.updated_videos, verified.unchanged_videos) == (1, 0)
+    assert len(model.encoded_videos) == 2
+    assert _load_native_video_index(index_dir).videos[0].content_sha256 == (
+        hashlib.sha256(b"red").hexdigest()
+    )
+
+
+def test_native_video_index_verify_contents_requires_bool_before_scanning(
+    tmp_path: Path,
+) -> None:
+    model = FakeNativeVideoModel()
+    videos_dir = tmp_path / "missing-videos"
+
+    with pytest.raises(TypeError, match="verify_contents"):
+        build_or_update_native_video_index(
+            model,
+            videos_dir,
+            tmp_path / "index",
+            verify_contents=1,  # type: ignore[arg-type]
+        )
+
+    assert not videos_dir.exists()
+
+
+@pytest.mark.parametrize("max_frames", [0, 65, -1, True, 1.5])
+def test_native_video_index_rejects_invalid_model_frame_limit_before_scanning(
+    tmp_path: Path,
+    max_frames: object,
+) -> None:
+    model = FakeNativeVideoModel()
+    model.native_video_max_frames = 64
+    videos_dir = tmp_path / "missing-videos"
+    index_dir = tmp_path / "index"
+
+    with pytest.raises((TypeError, ValueError), match="max_frames"):
+        build_or_update_native_video_index(
+            model,
+            videos_dir,
+            index_dir,
+            max_frames=max_frames,
+        )
+
+    assert not videos_dir.exists()
+    assert not index_dir.exists()
+    assert model.encoded_videos == []
+
+
+def test_native_video_index_accepts_backend_frame_limit(tmp_path: Path) -> None:
+    videos_dir = tmp_path / "videos"
+    _write_video(videos_dir / "clip.mp4", b"red")
+    model = FakeNativeVideoModel()
+    model.native_video_max_frames = 64
+
+    update = build_or_update_native_video_index(
+        model,
+        videos_dir,
+        tmp_path / "index",
+        max_frames=64,
+    )
+
+    assert update.added_videos == 1
+    assert model.encoded_videos[0][2] == 64
+
+
+def test_native_video_index_search_rejects_legacy_frame_limit_above_model_cap(
+    tmp_path: Path,
+) -> None:
+    videos_dir = tmp_path / "videos"
+    _write_video(videos_dir / "clip.mp4", b"red")
+    index_dir = tmp_path / "index"
+    build_or_update_native_video_index(
+        FakeNativeVideoModel(),
+        videos_dir,
+        index_dir,
+        max_frames=65,
+    )
+    model_with_limit = FakeNativeVideoModel()
+    model_with_limit.native_video_max_frames = 64
+
+    with pytest.raises(ValueError, match="max_frames"):
+        search_native_video(model_with_limit, index_dir, "red")
 
 
 def test_native_video_index_rejects_incompatible_policies_and_unsupported_models(

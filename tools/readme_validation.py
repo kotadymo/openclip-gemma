@@ -14,6 +14,25 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 
 MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))")
+REGISTERED_MODEL_IDS = (
+    "embeddinggemma-2",
+    "dinov2-dinotxt",
+    "siglip2-base",
+    "siglip2-naflex-base",
+    "qwen3-vl-embedding-2b",
+)
+STALE_REGISTRY_WORDING = (
+    re.compile(r"\bdevelopment registry\b", re.IGNORECASE),
+    re.compile(
+        r"\bSigLIP\s+2\s+and\s+Qwen3-VL\b[^\n.]{0,100}\bnot\s+in\b"
+        r"[^\n.]{0,100}\bpublished\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bQwen3-VL\b[^\n.]{0,60}\bDraft\s+PR\s*#44\b",
+        re.IGNORECASE,
+    ),
+)
 
 
 def validate_release_wording(readme: str, source: str, version: str) -> None:
@@ -95,6 +114,33 @@ def validate_local_links(readme: str, readme_path: Path) -> None:
             )
 
 
+def validate_registry_status(readme: str, source: str) -> None:
+    missing_models = [
+        model_id for model_id in REGISTERED_MODEL_IDS if f"`{model_id}`" not in readme
+    ]
+    if missing_models:
+        raise ValueError(
+            f"{source} does not document all five v0.7.0 registry models: "
+            f"{missing_models}."
+        )
+    if not re.search(
+        r"\bQwen\s+8B\b.{0,100}\b(?:deferred|not\s+available|not\s+supported|"
+        r"not\s+registered)\b",
+        readme,
+        re.IGNORECASE,
+    ):
+        raise ValueError(
+            f"{source} must state that Qwen 8B is not registered or supported."
+        )
+    for pattern in STALE_REGISTRY_WORDING:
+        match = pattern.search(readme)
+        if match:
+            raise ValueError(
+                f"{source} contains stale model-registry wording: "
+                f"{match.group(0)!r}"
+            )
+
+
 def validate_readme(
     readme: str,
     readme_path: Path,
@@ -102,6 +148,7 @@ def validate_readme(
     version: str,
 ) -> None:
     validate_release_wording(readme, source, version)
+    validate_registry_status(readme, source)
     validate_local_links(readme, readme_path)
 
 
