@@ -46,9 +46,9 @@ class _Model(nn.Module):
         return SimpleNamespace(pooler_output=torch.ones((pixel_values.shape[0], self.dimension)))
 
     def get_text_features(
-        self, *, input_ids: torch.Tensor, attention_mask: torch.Tensor
+        self, *, input_ids: torch.Tensor, **kwargs: torch.Tensor
     ) -> SimpleNamespace:
-        assert attention_mask.shape == input_ids.shape
+        assert not kwargs
         return SimpleNamespace(pooler_output=torch.ones((input_ids.shape[0], self.dimension)))
 
 

@@ -158,9 +158,7 @@ def test_siglip2_wrapper_matches_pinned_official_model(
         max_length=64,
         return_tensors="pt",
     )
-    pad_token_id = official_processor.tokenizer.pad_token_id
-    assert isinstance(pad_token_id, int)
-    reference_attention_mask = reference_text_batch["input_ids"].ne(pad_token_id)
+    assert "attention_mask" not in reference_text_batch
     token_ids = get_tokenizer(model_name)(list(_TEXTS))
     torch.testing.assert_close(
         token_ids,
@@ -183,7 +181,6 @@ def test_siglip2_wrapper_matches_pinned_official_model(
         ).pooler_output
         reference_text = official_model.get_text_features(
             input_ids=reference_text_batch["input_ids"].to(device),
-            attention_mask=reference_attention_mask.to(device),
         ).pooler_output
         reference_images_normalized = F.normalize(reference_images, p=2, dim=-1)
         reference_text_normalized = F.normalize(reference_text, p=2, dim=-1)
@@ -207,9 +204,6 @@ def test_siglip2_wrapper_matches_pinned_official_model(
             )
             for key, value in combined_inputs.items()
         }
-        combined_inputs["attention_mask"] = combined_inputs["input_ids"].ne(
-            pad_token_id
-        )
         reference_output = official_model(**combined_inputs)
         actual_logits = model.get_logits(processed_images, token_ids)
 
