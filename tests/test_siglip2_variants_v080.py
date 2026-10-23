@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from math import log
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -13,6 +14,11 @@ from torch import nn
 
 from openvlclip import create_model, create_model_and_transforms, list_models
 from openvlclip.backends import siglip2
+from openvlclip.image_search import (
+    ImageIndexCompatibilityError,
+    build_or_update_image_index,
+    search_images,
+)
 from openvlclip.registry import get_default_registry
 
 _CASES = (
@@ -134,3 +140,46 @@ def test_new_backend_rejects_incorrect_projection_shape(monkeypatch: pytest.Monk
     model = create_model("siglip2-large-256")
     with pytest.raises(RuntimeError, match="expected"):
         model.encode_image(torch.ones((3, 256, 256)))
+
+
+class _Tokenizer:
+    pad_token_id = 0
+
+    def __call__(self, texts: list[str], **kwargs: object) -> dict[str, torch.Tensor]:
+        assert kwargs["max_length"] == 64
+        token_ids = torch.zeros((len(texts), 64), dtype=torch.long)
+        token_ids[:, :2] = torch.tensor([2, 3])
+        return {"input_ids": token_ids, "attention_mask": token_ids.ne(0).long()}
+
+
+@pytest.mark.parametrize(("name", "checkpoint", "revision", "dimension", "size"), _CASES)
+def test_new_model_index_build_search_and_model_isolation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str, checkpoint: str, revision: str, dimension: int, size: int
+) -> None:
+    del checkpoint, revision
+    model_loader = Mock(return_value=_Model(dimension))
+    processor_loader = Mock(return_value=_Processor(size))
+    monkeypatch.setattr(siglip2.AutoModel, "from_pretrained", model_loader)
+    monkeypatch.setattr(siglip2.AutoProcessor, "from_pretrained", processor_loader)
+    monkeypatch.setattr(
+        siglip2.AutoTokenizer, "from_pretrained", Mock(return_value=_Tokenizer())
+    )
+
+    model, _, preprocess = create_model_and_transforms(name)
+    images = tmp_path / "images"
+    images.mkdir()
+    Image.new("RGB", (42, 68), "red").save(images / "red.png")
+    index_dir = tmp_path / "index"
+    result = build_or_update_image_index(model, preprocess, images, index_dir)
+    assert result.added == 1
+    hits = search_images(model, index_dir, "red object", top_k=1)
+    assert [hit.path.name for hit in hits] == ["red.png"]
+    assert hits[0].score == pytest.approx(1.0, abs=1e-5)
+
+    model_loader.return_value = _Model(768)
+    processor_loader.return_value = _Processor(224)
+    old_model = create_model("siglip2-base")
+    with pytest.raises(ImageIndexCompatibilityError, match="embedding space"):
+        search_images(old_model, index_dir, "red object")
