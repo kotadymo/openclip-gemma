@@ -7,18 +7,18 @@ An independent Python library that provides an OpenCLIP-inspired inference API f
 >
 > `openvlclip` is an independent, unofficial project. It is not affiliated with, endorsed by, sponsored by, or officially maintained by Google, Google DeepMind, Meta, or the OpenCLIP project.
 >
-> The published v0.6.1 distribution provides EmbeddingGemma 2 and DINOv2 + dino.txt. SigLIP 2 and Qwen3-VL-Embedding are unreleased v0.7.0 development features; Qwen 8B CUDA parity is still a required, unmet validation gate. This library is not a drop-in replacement for OpenCLIP and does not claim full API compatibility.
+> The published v0.6.1 distribution provides EmbeddingGemma 2 and DINOv2 + dino.txt. SigLIP 2 and Qwen3-VL-Embedding are unreleased v0.7.0 development features; Qwen 8B is deferred and is not a v0.7.0 supported model. This library is not a drop-in replacement for OpenCLIP and does not claim full API compatibility.
 
 ## Features
 
 - OpenCLIP-style `create_model`, `create_model_and_transforms`, and `get_tokenizer` entry points.
 - Factory discovery with `list_models()`, `list_pretrained()`, and `create_model_from_pretrained()`.
-- A Model Registry, shared Backend interface, and per-model Capabilities for `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, and `siglip2-naflex-base`; the v0.7.0 development branch also registers `qwen3-vl-embedding-2b` and `qwen3-vl-embedding-8b`. This is not a complete drop-in replacement for OpenCLIP.
+- A Model Registry, shared Backend interface, and per-model Capabilities for `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, and `siglip2-naflex-base`; the v0.7.0 development branch also registers `qwen3-vl-embedding-2b`. This is not a complete drop-in replacement for OpenCLIP.
 - EmbeddingGemma uses the official Transformers model/processor and Sentence Transformers numerical reference; dino.txt follows the pinned Meta Hub implementation and checkpoints; SigLIP 2 uses pinned Google checkpoints and Transformers processors.
 - Model API includes `forward()`, `get_logits()`, and factory option `output_dict=True`.
 - EmbeddingGemma `forward()` and `get_logits()` require explicit `logit_scale_mode="cosine"`; dino.txt and SigLIP 2 strict modes preserve their official scaled-logit paths and learned parameters.
 - Cosine mode returns normalized features with scale `1.0`; these scores are not trained OpenCLIP logits or calibrated probabilities.
-- EmbeddingGemma 2's native 768-dimensional output and MRL dimensions 512, 256, and 128; dino.txt's native 2048-dimensional global and 1024-dimensional patch features; SigLIP 2's 768-dimensional global features without MRL; Qwen3-VL's 2048/4096-dimensional native features with MRL (development branch only).
+- EmbeddingGemma 2's native 768-dimensional output and MRL dimensions 512, 256, and 128; dino.txt's native 2048-dimensional global and 1024-dimensional patch features; SigLIP 2's 768-dimensional global features without MRL; Qwen3-VL-Embedding-2B's 2048-dimensional native features with MRL (development branch only).
 - EmbeddingGemma 2 selective text-only or text-and-image loading; the other backends require both image and text components.
 - SigLIP 2 FixRes image processing and NaFlex variable-resolution processing, preserving NaFlex patch masks and spatial shapes through batching and image search.
 - Pinned model revisions; model weights are downloaded at runtime and are not bundled with this package.
@@ -226,7 +226,6 @@ development implementation uses the pinned Qwen processor and chat template:
 | Model ID | Native image/text embedding | MRL range |
 | --- | ---: | ---: |
 | `qwen3-vl-embedding-2b` | 2048 | 64-2048 |
-| `qwen3-vl-embedding-8b` | 4096 | 64-4096 |
 
 The factory's preprocessing function returns an RGB PIL image for the Qwen
 processor; pass it directly to `encode_image()` rather than converting it to
@@ -259,10 +258,10 @@ similarity = image_features @ text_features.T
 
 Qwen has no trained OpenCLIP logit scale; strict logits are unsupported and
 cosine scoring must be requested explicitly. The v0.7.0 source parity results
-and the remaining 8B CUDA gate are recorded in the
+and the deferral of 8B support are recorded in the
 [model provenance report](docs/model-provenance-v0.7.0.md). Synthetic-input
 parity is not a retrieval-quality benchmark; actual video-file pixel-budget
-parity and Qwen 8B CUDA FP32/BF16 remain unverified.
+parity while 8B CUDA FP32/BF16 remain unverified and are outside v0.7.0 scope.
 
 ## Japanese text
 
@@ -537,11 +536,11 @@ Qwen workflow until that backend is merged and its GPU parity gate passes.
 
 ## OpenCLIP differences and compatibility
 
-`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. The development registry contains `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, `siglip2-naflex-base`, `qwen3-vl-embedding-2b`, and `qwen3-vl-embedding-8b`, with model-specific capabilities and embedding spaces. SigLIP 2 and Qwen3-VL are not in the published v0.6.1 distribution.
+`openvlclip` offers a **partial, OpenCLIP-inspired inference API**, not an implementation of OpenCLIP. The development registry contains `embeddinggemma-2`, `dinov2-dinotxt`, `siglip2-base`, `siglip2-naflex-base`, and `qwen3-vl-embedding-2b`, with model-specific capabilities and embedding spaces. SigLIP 2 and Qwen3-VL are not in the published v0.6.1 distribution.
 
 | Area | `openvlclip` behavior |
 | --- | --- |
-| Embeddings | EmbeddingGemma 2 produces 768 dimensions with MRL outputs of 512, 256, or 128. dino.txt produces 2048-dimensional global embeddings and 1024-dimensional patch features. Both SigLIP 2 variants produce 768-dimensional global embeddings without MRL. Qwen 2B/8B produce 2048/4096-dimensional global embeddings and permit MRL dimensions from 64 through native. Unsupported truncation is rejected. |
+| Embeddings | EmbeddingGemma 2 produces 768 dimensions with MRL outputs of 512, 256, or 128. dino.txt produces 2048-dimensional global embeddings and 1024-dimensional patch features. Both SigLIP 2 variants produce 768-dimensional global embeddings without MRL. Qwen 2B produces 2048-dimensional global embeddings and permit MRL dimensions from 64 through native. Unsupported truncation is rejected. |
 | Images | Use the selected model's returned preprocessing transform and do not preprocess twice. EmbeddingGemma and dino.txt use float32 `[B, 3, H, W]` tensors. SigLIP 2 FixRes uses a tensor; NaFlex uses a mapping with pixel values, attention mask, and spatial shapes. Qwen uses processor-aware PIL images. |
 | Text | `get_tokenizer()` returns model-specific token IDs for supported token-ID backends; `encode_texts()` accepts strings, and Qwen also accepts an instruction. Qwen does not support `get_tokenizer()`/token-ID `encode_text()`. EmbeddingGemma task prompts are not applied to dino.txt or SigLIP 2. Token IDs are model-specific and not interchangeable. |
 | Similarity | EmbeddingGemma and Qwen cosine modes return scale-1 similarities. dino.txt and SigLIP 2 strict modes preserve their official scaled logits and learned parameters; cosine mode is distinct. These values are not calibrated probabilities. |
@@ -596,7 +595,7 @@ logits.
 | Ubuntu/Linux real-model inference | Not verified. |
 | CUDA real-model inference for the v0.6.1 released backends | Tested on an NVIDIA GeForce RTX 4070 Ti SUPER (16 GiB), driver 610.88, with Python 3.12.10, PyTorch 2.14.1+cu130, torchvision 0.29.1+cu130, and CUDA runtime 13.0. FP32 and BF16 image and text inference passed. Other GPUs and driver/runtime combinations are not guaranteed. |
 | SigLIP 2 Phase 2 opt-in parity, Windows/Python 3.12.10 | Both pinned checkpoints passed CPU FP32 and CUDA FP32/BF16 comparisons against separate official Transformers instances (6 cases). The tested synthetic inputs had zero observed max absolute error for image/text features and logits; processed inputs and token IDs matched exactly. CPU BF16 was not tested, and this is not a real-world retrieval benchmark. See the [detailed parity record](docs/model-provenance-v0.7.0.md#phase-2-openvlclip-wrapper-parity). |
-| Qwen3-VL v0.7 development parity, Windows/Python 3.12.10 | Six cases passed against separately loaded fixed-revision Transformers models/processors: Qwen 2B CPU FP32/BF16 and CUDA FP32/BF16, and Qwen 8B CPU FP32/BF16. Global outputs and MRL 64/257/1024/native dimensions had max absolute error `0.0`. The two Qwen 8B CUDA cases were skipped because 14,301 MiB free VRAM was below the BF16 checkpoint's 15.17 GiB parameter storage; 8B CUDA remains a release gate. Synthetic frame inputs do not validate real-video retrieval. See the [detailed parity record](docs/model-provenance-v0.7.0.md#qwen3-vl-embedding-phase-3-wrapper-parity). |
+| Qwen3-VL v0.7 development parity, Windows/Python 3.12.10 | Six cases passed against separately loaded fixed-revision Transformers models/processors: Qwen 2B CPU FP32/BF16 and CUDA FP32/BF16, and Qwen 8B CPU FP32/BF16. Global outputs and MRL 64/257/1024/native dimensions had max absolute error `0.0`. The two Qwen 8B (deferred from v0.7.0) CUDA cases were skipped because 14,301 MiB free VRAM was below the BF16 checkpoint's 15.17 GiB parameter storage; 8B is deferred to a later release; its CUDA validation is not a v0.7.0 release gate. Synthetic frame inputs do not validate real-video retrieval. See the [detailed parity record](docs/model-provenance-v0.7.0.md#qwen3-vl-embedding-phase-3-wrapper-parity). |
 | v0.2.0rc1 TestPyPI validation (2026-10-18), CPU | Clean wheel install on Windows 11, Python 3.12.10, PyTorch 2.14.1+cpu, and PyAV 19.0.1. FP32 image/text embeddings, batch embedding, image index/search, and synthetic-MP4 indexing/search passed. |
 | v0.2.0rc1 TestPyPI validation (2026-10-18), CUDA | Clean wheel install on the RTX 4070 Ti SUPER above, with PyTorch 2.14.1+cu130 and CUDA runtime 13.0. FP32 embeddings, batch embedding, image index/search, and synthetic-MP4 indexing/search passed. This is not a real-world retrieval-quality evaluation. |
 | macOS | Not verified. |

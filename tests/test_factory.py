@@ -475,7 +475,6 @@ def test_list_apis_do_not_load_model_or_processor(
         "siglip2-base",
         "siglip2-naflex-base",
         "qwen3-vl-embedding-2b",
-        "qwen3-vl-embedding-8b",
     ]
     assert list_pretrained() == [
         ("embeddinggemma-2", "official"),
@@ -483,7 +482,6 @@ def test_list_apis_do_not_load_model_or_processor(
         ("siglip2-base", "official"),
         ("siglip2-naflex-base", "official"),
         ("qwen3-vl-embedding-2b", "official"),
-        ("qwen3-vl-embedding-8b", "official"),
     ]
     assert list_pretrained(as_str=True) == [
         "embeddinggemma-2:official",
@@ -491,7 +489,6 @@ def test_list_apis_do_not_load_model_or_processor(
         "siglip2-base:official",
         "siglip2-naflex-base:official",
         "qwen3-vl-embedding-2b:official",
-        "qwen3-vl-embedding-8b:official",
     ]
     model_loader.assert_not_called()
     processor_loader.assert_not_called()

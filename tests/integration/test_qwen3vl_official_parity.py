@@ -21,15 +21,10 @@ from openvlclip.backends.qwen3_vl_embedding import (
     QWEN3VL_2B_MODEL_ID,
     QWEN3VL_2B_MODEL_NAME,
     QWEN3VL_2B_REVISION,
-    QWEN3VL_8B_DIMENSION,
-    QWEN3VL_8B_MODEL_ID,
-    QWEN3VL_8B_MODEL_NAME,
-    QWEN3VL_8B_REVISION,
     Qwen3VLCLIP,
 )
 
 _QWEN_SOURCE_REVISION = "393e2978d27852b0d0230d6994f37f9c15bed73c"
-_QWEN8B_PARAMETER_COUNT = 8_144_793_840
 _DEVICE_PRECISIONS = (
     pytest.param("cpu", "fp32", id="cpu-fp32"),
     pytest.param("cpu", "bf16", id="cpu-bf16"),
@@ -273,12 +268,6 @@ def _load_official_reference_model(
             QWEN3VL_2B_REVISION,
             QWEN3VL_2B_DIMENSION,
         ),
-        (
-            QWEN3VL_8B_MODEL_NAME,
-            QWEN3VL_8B_MODEL_ID,
-            QWEN3VL_8B_REVISION,
-            QWEN3VL_8B_DIMENSION,
-        ),
     ],
 )
 @pytest.mark.parametrize(("device", "precision"), _DEVICE_PRECISIONS)
@@ -294,19 +283,6 @@ def test_qwen_wrapper_matches_pinned_official_processor_and_model(
         pytest.skip("CUDA is unavailable.")
     if device == "cuda" and precision == "bf16" and not torch.cuda.is_bf16_supported():
         pytest.skip("CUDA BF16 is unavailable.")
-    if model_name == QWEN3VL_8B_MODEL_NAME and device == "cuda":
-        dtype = torch.bfloat16 if precision == "bf16" else torch.float32
-        free_bytes, _ = torch.cuda.mem_get_info()
-        required_bytes = (
-            _QWEN8B_PARAMETER_COUNT * torch.empty((), dtype=dtype).element_size()
-        )
-        if free_bytes < required_bytes:
-            pytest.skip(
-                "Qwen 8B parity requires at least its checkpoint parameter bytes "
-                f"({required_bytes} bytes); only {free_bytes} bytes are free. "
-                "The required 8B CUDA gate remains unverified."
-            )
-
     dtype = torch.bfloat16 if precision == "bf16" else torch.float32
     model, _, _ = create_model_and_transforms(
         model_name,

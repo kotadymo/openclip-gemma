@@ -19,10 +19,6 @@ from openvlclip.backends.qwen3_vl_embedding import (
     QWEN3VL_2B_MODEL_ID,
     QWEN3VL_2B_MODEL_NAME,
     QWEN3VL_2B_REVISION,
-    QWEN3VL_8B_DIMENSION,
-    QWEN3VL_8B_MODEL_ID,
-    QWEN3VL_8B_MODEL_NAME,
-    QWEN3VL_8B_REVISION,
     Qwen3VLBackend,
     Qwen3VLCLIP,
     Qwen3VLImagePreprocess,
@@ -237,26 +233,19 @@ def test_qwen_registry_and_capabilities_are_pinned_and_side_effect_free() -> Non
         "siglip2-base",
         "siglip2-naflex-base",
         QWEN3VL_2B_MODEL_NAME,
-        QWEN3VL_8B_MODEL_NAME,
     ]
-    assert list_pretrained()[-2:] == [
+    assert list_pretrained()[-1:] == [
         (QWEN3VL_2B_MODEL_NAME, "official"),
-        (QWEN3VL_8B_MODEL_NAME, "official"),
     ]
-
     registry = get_default_registry()
+    with pytest.raises(ValueError, match="Unknown model"):
+        registry.resolve("qwen3-vl-embedding-8b")
     for name, model_id, revision, dimension in (
         (
             QWEN3VL_2B_MODEL_NAME,
             QWEN3VL_2B_MODEL_ID,
             QWEN3VL_2B_REVISION,
             QWEN3VL_2B_DIMENSION,
-        ),
-        (
-            QWEN3VL_8B_MODEL_NAME,
-            QWEN3VL_8B_MODEL_ID,
-            QWEN3VL_8B_REVISION,
-            QWEN3VL_8B_DIMENSION,
         ),
     ):
         descriptor = registry.resolve(name)
@@ -271,23 +260,14 @@ def test_qwen_registry_and_capabilities_are_pinned_and_side_effect_free() -> Non
     ("native_dimension", "name"),
     [
         (QWEN3VL_2B_DIMENSION, QWEN3VL_2B_MODEL_NAME),
-        (QWEN3VL_8B_DIMENSION, QWEN3VL_8B_MODEL_NAME),
     ],
 )
 def test_qwen_mrl_accepts_any_dimension_in_model_card_range(
     native_dimension: int,
     name: str,
 ) -> None:
-    model_id = (
-        QWEN3VL_2B_MODEL_ID
-        if native_dimension == QWEN3VL_2B_DIMENSION
-        else QWEN3VL_8B_MODEL_ID
-    )
-    revision = (
-        QWEN3VL_2B_REVISION
-        if native_dimension == QWEN3VL_2B_DIMENSION
-        else QWEN3VL_8B_REVISION
-    )
+    model_id = QWEN3VL_2B_MODEL_ID
+    revision = QWEN3VL_2B_REVISION
     backend = _make_backend(
         model_name=name,
         model_id=model_id,

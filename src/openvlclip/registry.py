@@ -216,10 +216,6 @@ def get_default_registry() -> ModelRegistry:
         QWEN3VL_2B_MODEL_ID,
         QWEN3VL_2B_MODEL_NAME,
         QWEN3VL_2B_REVISION,
-        QWEN3VL_8B_DIMENSION,
-        QWEN3VL_8B_MODEL_ID,
-        QWEN3VL_8B_MODEL_NAME,
-        QWEN3VL_8B_REVISION,
         Qwen3VLBackend,
     )
     from openvlclip.backends.siglip2 import (
@@ -251,12 +247,6 @@ def get_default_registry() -> ModelRegistry:
         model_id=QWEN3VL_2B_MODEL_ID,
         revision=QWEN3VL_2B_REVISION,
         native_dimension=QWEN3VL_2B_DIMENSION,
-    )
-    qwen3vl_8b_backend = Qwen3VLBackend(
-        model_name=QWEN3VL_8B_MODEL_NAME,
-        model_id=QWEN3VL_8B_MODEL_ID,
-        revision=QWEN3VL_8B_REVISION,
-        native_dimension=QWEN3VL_8B_DIMENSION,
     )
     return ModelRegistry(
         (
@@ -323,18 +313,6 @@ def get_default_registry() -> ModelRegistry:
                 capabilities=qwen3vl_2b_backend.capabilities,
                 embedding_space_metadata=qwen3vl_2b_backend.embedding_space_metadata,
                 backend=qwen3vl_2b_backend,
-            ),
-            ModelDescriptor(
-                model_name=QWEN3VL_8B_MODEL_NAME,
-                aliases=(),
-                backend_id=qwen3vl_8b_backend.backend_id,
-                model_id=QWEN3VL_8B_MODEL_ID,
-                revision=QWEN3VL_8B_REVISION,
-                pretrained_tags={"official": QWEN3VL_8B_MODEL_ID},
-                pretrained_aliases={},
-                capabilities=qwen3vl_8b_backend.capabilities,
-                embedding_space_metadata=qwen3vl_8b_backend.embedding_space_metadata,
-                backend=qwen3vl_8b_backend,
             ),
         )
     )

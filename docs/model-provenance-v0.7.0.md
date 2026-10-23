@@ -1,5 +1,7 @@
 # Model provenance for OpenVLCLIP v0.7.0
 
+> **v0.7.0 scope update (2026-10-23):** Qwen3-VL-Embedding-8B is deferred to a future release due to insufficient GPU VRAM. v0.7.0 supports SigLIP 2 FixRes, SigLIP 2 NaFlex, and Qwen3-VL-Embedding-2B in addition to existing Gemma/dino.txt. Earlier 8B CPU investigations below are retained as historical research, not evidence for v0.7.0 support. The 8B GPU validation is no longer a v0.7.0 release gate.
+
 - **Status:** SigLIP 2 parity and Qwen3-VL wrapper parity have passed for the tested cases; Qwen 8B CUDA FP32/BF16 remains an unmet release gate.
 - **Audit date:** 2026-10-23
 - **OpenVLCLIP implementation base:** `main` at `25a34b008b81b463bac58a1d03fce33beb8fe48c`

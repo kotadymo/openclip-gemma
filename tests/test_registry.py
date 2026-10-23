@@ -22,10 +22,6 @@ from openvlclip.backends.qwen3_vl_embedding import (
     QWEN3VL_2B_MODEL_ID,
     QWEN3VL_2B_MODEL_NAME,
     QWEN3VL_2B_REVISION,
-    QWEN3VL_8B_DIMENSION,
-    QWEN3VL_8B_MODEL_ID,
-    QWEN3VL_8B_MODEL_NAME,
-    QWEN3VL_8B_REVISION,
     Qwen3VLBackend,
 )
 from openvlclip.capabilities import (
@@ -272,7 +268,6 @@ def test_default_registry_lists_models_without_loading_weights(
         "siglip2-base",
         "siglip2-naflex-base",
         QWEN3VL_2B_MODEL_NAME,
-        QWEN3VL_8B_MODEL_NAME,
     ]
     assert registry.list_pretrained() == [
         (MODEL_NAME, "official"),
@@ -280,7 +275,6 @@ def test_default_registry_lists_models_without_loading_weights(
         ("siglip2-base", "official"),
         ("siglip2-naflex-base", "official"),
         (QWEN3VL_2B_MODEL_NAME, "official"),
-        (QWEN3VL_8B_MODEL_NAME, "official"),
     ]
     assert registry.resolve(" EMBEDDINGGEMMA_2 ") is registry.descriptors[0]
     assert registry.descriptors[0].model_id == MODEL_ID
@@ -292,9 +286,8 @@ def test_default_registry_lists_models_without_loading_weights(
     qwen_2b = registry.resolve(QWEN3VL_2B_MODEL_NAME)
     assert qwen_2b.model_id == QWEN3VL_2B_MODEL_ID
     assert qwen_2b.revision == QWEN3VL_2B_REVISION
-    qwen_8b = registry.resolve(QWEN3VL_8B_MODEL_NAME)
-    assert qwen_8b.model_id == QWEN3VL_8B_MODEL_ID
-    assert qwen_8b.revision == QWEN3VL_8B_REVISION
+    with pytest.raises(ValueError, match="Unknown model"):
+        registry.resolve("qwen3-vl-embedding-8b")
     model_loader.assert_not_called()
 
 
@@ -470,7 +463,6 @@ def test_registered_backends_declare_the_extended_capability_contract() -> None:
     gemma = registry.resolve(MODEL_NAME)
     dinotxt = registry.resolve(DINO_MODEL_NAME)
     qwen_2b = registry.resolve(QWEN3VL_2B_MODEL_NAME)
-    qwen_8b = registry.resolve(QWEN3VL_8B_MODEL_NAME)
 
     assert tuple(gemma.backend.capabilities) == CAPABILITY_KEYS
     assert gemma.capabilities_for_full_model()["instruction_aware"] is True
@@ -488,7 +480,6 @@ def test_registered_backends_declare_the_extended_capability_contract() -> None:
 
     for descriptor, dimension in (
         (qwen_2b, QWEN3VL_2B_DIMENSION),
-        (qwen_8b, QWEN3VL_8B_DIMENSION),
     ):
         assert isinstance(descriptor.backend, Qwen3VLBackend)
         assert descriptor.backend.native_dimension == dimension
